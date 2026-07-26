@@ -1,7 +1,7 @@
 # ------------------------------------------------------------------------------
 #  Filename: env.sh
 #
-#  Purpose: SENTENCE (50-80 characters).
+#  Purpose: Sources ROS 2, the Vimba X driver, and project overlays.
 #
 #  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 # ------------------------------------------------------------------------------
