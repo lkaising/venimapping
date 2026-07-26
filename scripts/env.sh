@@ -23,12 +23,12 @@ fi
 
 # --- Configuration ------------------------------------------------------------
 
-VENIMAPPING_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-VENIMAPPING_UPSTREAM="${HOME}/workspace/upstream"
-VENIMAPPING_ROS_SETUP="${VENIMAPPING_UPSTREAM}/ros2-jazzy/install/setup.bash"
-VENIMAPPING_DRIVER_SETUP="${VENIMAPPING_UPSTREAM}/vimbax-ros2-driver/install/setup.bash"
-VENIMAPPING_VIMBAX_SDK="${VENIMAPPING_UPSTREAM}/vimbax-sdk"
-VENIMAPPING_CTI_DIR="${VENIMAPPING_VIMBAX_SDK}/cti"
+_venimapping_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+_venimapping_upstream="${HOME}/workspace/upstream"
+_venimapping_ros_setup="${_venimapping_upstream}/ros2-jazzy/install/setup.bash"
+_venimapping_driver_setup="${_venimapping_upstream}/vimbax-ros2-driver/install/setup.bash"
+_venimapping_vimbax_sdk="${_venimapping_upstream}/vimbax-sdk"
+_venimapping_cti_dir="${_venimapping_vimbax_sdk}/cti"
 
 # --- Diagnostics --------------------------------------------------------------
 
@@ -40,11 +40,11 @@ _vm_print_layout() {
   cat >&2 <<EOF
 [venimapping] expected upstream layout:
   ROS 2 Jazzy underlay:
-    ${VENIMAPPING_ROS_SETUP}
+    ${_venimapping_ros_setup}
   vimbax_ros2_driver overlay:
-    ${VENIMAPPING_DRIVER_SETUP}
+    ${_venimapping_driver_setup}
   Vimba X GenTL producers:
-    ${VENIMAPPING_CTI_DIR}/*.cti
+    ${_venimapping_cti_dir}/*.cti
 EOF
 }
 
@@ -79,11 +79,11 @@ _vm_need_gentl_path() {
 }
 
 _vm_validate() {
-  _vm_need_file "${VENIMAPPING_ROS_SETUP}" "Jazzy underlay" || return 1
-  _vm_need_file "${VENIMAPPING_DRIVER_SETUP}" "driver overlay" || return 1
-  _vm_need_dir "${VENIMAPPING_VIMBAX_SDK}" "Vimba X SDK" || return 1
-  _vm_need_glob "${VENIMAPPING_CTI_DIR}/*.cti" "GenTL producers" || return 1
-  _vm_need_gentl_path "${VENIMAPPING_CTI_DIR}" "GenTL path registration" || return 1
+  _vm_need_file "${_venimapping_ros_setup}" "Jazzy underlay" || return 1
+  _vm_need_file "${_venimapping_driver_setup}" "driver overlay" || return 1
+  _vm_need_dir "${_venimapping_vimbax_sdk}" "Vimba X SDK" || return 1
+  _vm_need_glob "${_venimapping_cti_dir}/*.cti" "GenTL producers" || return 1
+  _vm_need_gentl_path "${_venimapping_cti_dir}" "GenTL path registration" || return 1
 }
 
 _vm_cleanup() {
@@ -93,9 +93,8 @@ _vm_cleanup() {
     _vm_validate _vm_cleanup
 
   unset -v \
-    VENIMAPPING_ROOT VENIMAPPING_UPSTREAM \
-    VENIMAPPING_ROS_SETUP VENIMAPPING_DRIVER_SETUP \
-    VENIMAPPING_VIMBAX_SDK VENIMAPPING_CTI_DIR \
+    _venimapping_root _venimapping_upstream _venimapping_ros_setup \
+    _venimapping_driver_setup _venimapping_vimbax_sdk _venimapping_cti_dir \
     _vm_rmw _vm_overlay _vm_venv
 }
 
@@ -107,14 +106,14 @@ if ! _vm_validate; then
   return 1
 fi
 
-if ! source "${VENIMAPPING_ROS_SETUP}"; then
-  _vm_err "failed to source Jazzy underlay: ${VENIMAPPING_ROS_SETUP}"
+if ! source "${_venimapping_ros_setup}"; then
+  _vm_err "failed to source Jazzy underlay: ${_venimapping_ros_setup}"
   _vm_cleanup
   return 1
 fi
 
-if ! source "${VENIMAPPING_DRIVER_SETUP}"; then
-  _vm_err "failed to source driver overlay: ${VENIMAPPING_DRIVER_SETUP}"
+if ! source "${_venimapping_driver_setup}"; then
+  _vm_err "failed to source driver overlay: ${_venimapping_driver_setup}"
   _vm_cleanup
   return 1
 fi
@@ -134,23 +133,23 @@ else
   _vm_rmw="default"
 fi
 
-if [[ ! -f "${VENIMAPPING_ROOT}/install/setup.bash" ]]; then
+if [[ ! -f "${_venimapping_root}/install/setup.bash" ]]; then
   _vm_overlay="not built"
-elif source "${VENIMAPPING_ROOT}/install/setup.bash"; then
+elif source "${_venimapping_root}/install/setup.bash"; then
   _vm_overlay="active"
 else
-  _vm_err "failed to source project overlay: ${VENIMAPPING_ROOT}/install/setup.bash"
+  _vm_err "failed to source project overlay: ${_venimapping_root}/install/setup.bash"
   _vm_cleanup
   return 1
 fi
 
-if [[ "${VIRTUAL_ENV:-}" == "${VENIMAPPING_ROOT}/.venv" ]]; then
+if [[ "${VIRTUAL_ENV:-}" == "${_venimapping_root}/.venv" ]]; then
   _vm_venv="project"
 elif [[ -n "${VIRTUAL_ENV:-}" ]]; then
   _vm_venv="external"
-elif [[ ! -f "${VENIMAPPING_ROOT}/.venv/bin/activate" ]]; then
+elif [[ ! -f "${_venimapping_root}/.venv/bin/activate" ]]; then
   _vm_venv="none"
-elif source "${VENIMAPPING_ROOT}/.venv/bin/activate"; then
+elif source "${_venimapping_root}/.venv/bin/activate"; then
   _vm_venv="project"
 else
   _vm_err "failed to activate project virtual environment"
