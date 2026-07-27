@@ -2,7 +2,7 @@
 //  Filename: expected.hpp
 //
 //  Purpose:  Defines the shared success/error vocabulary returned by the camera
-//            feature layers.
+//            gateway layers.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
@@ -15,26 +15,56 @@
 #error "venimapping_camera requires std::expected with monadic operations (__cpp_lib_expected >= 202211L)"
 #endif
 
+#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <utility>
 
 namespace venimapping::camera {
 
-// Who reported the failure. Recorded explicitly because the gateway knows it
-// with certainty at the moment each Error is constructed (Section 10.2).
-enum class ErrorOrigin : std::uint8_t {
-  driver,   // reported by vimbax_ros2_driver; code/text are verbatim wire values
-  gateway,  // originated in the gateway; no driver response existed
+// Which layer defines and reports the meaning of a failure.
+enum class ErrorDomain : std::uint8_t {
+  driver,   // vimbax_ros2_driver reported it; code and text are its verbatim wire values
+  gateway,  // the gateway defined it; code is an implementation diagnostic
 };
 
-// Mirrors the driver's wire error pair (vimbax_camera_msgs/msg/Error: int32
-// code, string text) so driver errors pass through without loss, and adds
-// origin -- the one fact the wire cannot carry (Section 9.1).
-struct Error {
-  ErrorOrigin origin;
-  std::int32_t code;  // driver: verbatim VmbC code; gateway: diagnostic constant (Section 9.3)
-  std::string text;   // driver: verbatim wire text; gateway: contextual diagnostic (Section 10.4)
+class Error {
+ public:
+  // Wraps a driver response error pair verbatim; nothing is translated or
+  // classified.
+  //
+  // Precondition (debug-asserted): code != 0. A zero code means success, not
+  // an Error.
+  static Error FromDriver(std::int32_t code, std::string text) {
+    assert(code != 0);
+    return Error{ErrorDomain::driver, code, std::move(text)};
+  }
+
+  // Records a failure the gateway itself defines.
+  //
+  // Precondition (debug-asserted): diagnostic != 0.
+  static Error FromGateway(std::int32_t diagnostic, std::string text) {
+    assert(diagnostic != 0);
+    return Error{ErrorDomain::gateway, diagnostic, std::move(text)};
+  }
+
+  ErrorDomain domain() const noexcept { return domain_; }
+
+  // driver: the driver's VmbC code, verbatim.
+  // gateway: a non-contractual diagnostic identifier -- do not branch on it.
+  std::int32_t code() const noexcept { return code_; }
+
+  // Diagnostic context. Format is not contractual.
+  const std::string& text() const noexcept { return text_; }
+
+ private:
+  Error(ErrorDomain domain, std::int32_t code, std::string text)
+      : domain_{domain}, code_{code}, text_{std::move(text)} {}
+
+  ErrorDomain domain_;
+  std::int32_t code_;
+  std::string text_;
 };
 
 // Expected<void> is valid and is what the set operations return.
