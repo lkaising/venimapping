@@ -278,7 +278,7 @@ Expected<void> VimbaXCameraGateway::FeatureFloatSet(const std::string& name, dou
   request->value = value;
 
   return CallChecked<ServiceT>(*feature_float_set_client_, std::move(request))
-      .transform([](const auto &) {});
+      .transform([](const auto&) {});
 }
 
 Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(const std::string& name)
@@ -316,7 +316,7 @@ Expected<void> VimbaXCameraGateway::FeatureEnumSet(const std::string& name,
   request->value = value;
 
   return CallChecked<ServiceT>(*feature_enum_set_client_, std::move(request))
-      .transform([](const auto &) {});
+      .transform([](const auto&) {});
 }
 
 Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& name)
