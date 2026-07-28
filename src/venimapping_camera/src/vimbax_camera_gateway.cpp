@@ -210,9 +210,6 @@ Expected<void> VimbaXCameraGateway::CheckCallableFromThisThread() const
   return {};
 }
 
-// The member templates are defined here rather than in the header
-// deliberately: every instantiation lives in this translation unit, so the
-// definitions never need to be visible to consumers.
 template <typename Service>
 Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     rclcpp::Client<Service>& client,
@@ -222,44 +219,19 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     return std::unexpected(std::move(thread_check).error());
   }
 
-  const auto timeout_ms = timeout_.count();
-  // Assigned inside the try so a throw during name resolution converts like
-  // any other client failure; the placeholder keeps the diagnostic usable.
+  // The placeholder remains usable if service-name resolution throws.
   std::string service_name{"(unresolved service)"};
 
   try {
-    // rclcpp resolves the name against the node, so diagnostics carry the
-    // effective path even when the configured namespace was relative.
     service_name = client.get_service_name();
 
-    if (!client.wait_for_service(timeout_)) {
-      // wait_for_service() returns false without waiting once the context is
-      // shut down; asking the context directly distinguishes shutdown from
-      // true unavailability.
-      if (!rclcpp::ok(context_)) {
-        return std::unexpected(detail::GatewayError(
-            detail::GatewayDiagnostic::kServiceUnavailable,
-            std::format("service {} unavailable: context shut down while waiting", service_name)));
-      }
-
-      return std::unexpected(detail::GatewayError(
-          detail::GatewayDiagnostic::kServiceUnavailable,
-          std::format("service {} unavailable after {} ms", service_name, timeout_ms)));
+    if (auto service = WaitForService(client, context_, timeout_, service_name); !service) {
+      return std::unexpected(std::move(service).error());
     }
 
     auto future = client.async_send_request(std::move(request));
 
-    if (future.wait_for(timeout_) != std::future_status::ready) {
-      // Once the deadline expires, the invocation reports a timeout and stops
-      // tracking the pending request; a late response is then dropped by
-      // rclcpp instead of accumulating.
-      client.remove_pending_request(future);
-      return std::unexpected(detail::GatewayError(
-          detail::GatewayDiagnostic::kResponseTimeout,
-          std::format("timeout on {} after {} ms", service_name, timeout_ms)));
-    }
-
-    return future.get();
+    return WaitForResponse<Service>(client, future, timeout_, service_name);
   } catch (const std::exception& e) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kRosClientFailure,
