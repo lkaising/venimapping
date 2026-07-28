@@ -182,13 +182,15 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     rclcpp::Client<Service>& client,
     typename Service::Request::SharedPtr request)
 {
-  if (auto callable = CheckCallableFromThisThread(); !callable) {
-    return std::unexpected(std::move(callable).error());
+  if (auto thread_check = CheckCallableFromThisThread(); !thread_check) {
+    return std::unexpected(std::move(thread_check).error());
   }
 
+  const auto timeout_ms = timeout_.count();
   // Assigned inside the try so a throw during name resolution converts like
   // any other client failure; the placeholder keeps the diagnostic usable.
   std::string service_name{"(unresolved service)"};
+
   try {
     // rclcpp resolves the name against the node, so diagnostics carry the
     // effective path even when the configured namespace was relative.
@@ -201,17 +203,16 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
       if (!rclcpp::ok(context_)) {
         return std::unexpected(detail::GatewayError(
             detail::GatewayDiagnostic::kServiceUnavailable,
-            std::format("service {} unavailable: context shut down while "
-                        "waiting",
-                        service_name)));
+            std::format("service {} unavailable: context shut down while waiting", service_name)));
       }
+
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kServiceUnavailable,
-          std::format("service {} unavailable after {} ms", service_name,
-                      timeout_.count())));
+          std::format("service {} unavailable after {} ms", service_name, timeout_ms)));
     }
 
     auto future = client.async_send_request(std::move(request));
+
     if (future.wait_for(timeout_) != std::future_status::ready) {
       // Once the deadline expires, the invocation reports a timeout and stops
       // tracking the pending request; a late response is then dropped by
@@ -219,21 +220,18 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
       client.remove_pending_request(future);
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kResponseTimeout,
-          std::format("timeout on {} after {} ms", service_name,
-                      timeout_.count())));
+          std::format("timeout on {} after {} ms", service_name, timeout_ms)));
     }
 
     return future.get();
   } catch (const std::exception& e) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kRosClientFailure,
-        std::format("rclcpp client failure on {}: {}", service_name,
-                    e.what())));
+        std::format("rclcpp client failure on {}: {}", service_name, e.what())));
   } catch (...) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kRosClientFailure,
-        std::format("rclcpp client failure on {}: unknown exception",
-                    service_name)));
+        std::format("rclcpp client failure on {}: unknown exception", service_name)));
   }
 }
 
