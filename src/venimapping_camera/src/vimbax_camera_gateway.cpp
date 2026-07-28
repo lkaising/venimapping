@@ -72,13 +72,15 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
           detail::GatewayDiagnostic::kConstructionFailed,
           "gateway construction failed: camera_namespace is empty"));
     }
+
     if (timeout <= std::chrono::milliseconds::zero()) {
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kConstructionFailed,
-          std::format("gateway construction failed: timeout is not positive "
-                      "({} ms)",
-                      timeout.count())));
+          std::format(
+              "gateway construction failed: timeout is not positive ({} ms)",
+              timeout.count())));
     }
+
     // std::make_unique cannot reach the private constructor.
     return std::unique_ptr<VimbaXCameraGateway>{
         new VimbaXCameraGateway{node, std::move(camera_namespace), timeout}};
