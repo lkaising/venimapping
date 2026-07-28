@@ -47,8 +47,8 @@ template <typename Service>
 using ResponsePtr = typename Service::Response::SharedPtr;
 
 template <typename Service>
-[[nodiscard]] ClientPtr<Service> MakeClient(rclcpp::Node& node,
-                                            const std::string& camera_namespace,
+[[nodiscard]] ClientPtr<Service> MakeClient(rclcpp::Node &node,
+                                            std::string_view camera_namespace,
                                             std::string_view leaf)
 {
   return node.create_client<Service>(detail::ServiceName(camera_namespace, leaf));
@@ -63,7 +63,7 @@ template <typename Service>
 }
 
 template <typename Service>
-[[nodiscard]] RequestPtr<Service> MakeRemoteFeatureRequest(const std::string& name)
+[[nodiscard]] RequestPtr<Service> MakeRemoteFeatureRequest(std::string_view name)
 {
   auto request = MakeRemoteDeviceRequest<Service>();
   request->feature_name = name;
