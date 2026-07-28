@@ -263,38 +263,47 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::CallChecked
 Expected<double> VimbaXCameraGateway::FeatureFloatGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatGet;
-  return CallChecked<ServiceT>(*feature_float_get_client_,
-                               MakeRemoteFeatureRequest<ServiceT>(name))
-      .transform([](auto response) { return response->value; });
+
+  return CallChecked<ServiceT>(
+             *feature_float_get_client_,
+             MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](const auto& response) { return response->value; });
 }
 
 Expected<void> VimbaXCameraGateway::FeatureFloatSet(const std::string& name, double value)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatSet;
+
   auto request = MakeRemoteFeatureRequest<ServiceT>(name);
   request->value = value;
+
   return CallChecked<ServiceT>(*feature_float_set_client_, std::move(request))
-      .transform([](auto) {});
+      .transform([](const auto &) {});
 }
 
 Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
-  return CallChecked<ServiceT>(*feature_float_info_get_client_,
-                               MakeRemoteFeatureRequest<ServiceT>(name))
-      .transform([](auto response) {
-        return FloatInfo{.min = response->min,
-                         .max = response->max,
-                         .inc = response->inc,
-                         .inc_available = response->inc_available};
+
+  return CallChecked<ServiceT>(
+             *feature_float_info_get_client_,
+             MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](const auto& response) {
+        return FloatInfo{
+            .min = response->min,
+            .max = response->max,
+            .inc = response->inc,
+            .inc_available = response->inc_available};
       });
 }
 
 Expected<std::string> VimbaXCameraGateway::FeatureEnumGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumGet;
-  return CallChecked<ServiceT>(*feature_enum_get_client_,
-                               MakeRemoteFeatureRequest<ServiceT>(name))
+
+  return CallChecked<ServiceT>(
+             *feature_enum_get_client_,
+             MakeRemoteFeatureRequest<ServiceT>(name))
       .transform([](auto response) { return std::move(response->value); });
 }
 
@@ -302,17 +311,21 @@ Expected<void> VimbaXCameraGateway::FeatureEnumSet(const std::string& name,
                                                    const std::string& value)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumSet;
+
   auto request = MakeRemoteFeatureRequest<ServiceT>(name);
   request->value = value;
+
   return CallChecked<ServiceT>(*feature_enum_set_client_, std::move(request))
-      .transform([](auto) {});
+      .transform([](const auto &) {});
 }
 
 Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
-  return CallChecked<ServiceT>(*feature_enum_info_get_client_,
-                               MakeRemoteFeatureRequest<ServiceT>(name))
+
+  return CallChecked<ServiceT>(
+             *feature_enum_info_get_client_,
+             MakeRemoteFeatureRequest<ServiceT>(name))
       .transform([](auto response) {
         return EnumInfo{
             .possible_values = std::move(response->possible_values),
@@ -323,11 +336,14 @@ Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& na
 Expected<AccessMode> VimbaXCameraGateway::FeatureAccessModeGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
-  return CallChecked<ServiceT>(*feature_access_mode_get_client_,
-                               MakeRemoteFeatureRequest<ServiceT>(name))
-      .transform([](auto response) {
-        return AccessMode{.readable = response->is_readable,
-                          .writable = response->is_writeable};
+
+  return CallChecked<ServiceT>(
+             *feature_access_mode_get_client_,
+             MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](const auto& response) {
+        return AccessMode{
+            .readable = response->is_readable,
+            .writable = response->is_writeable};
       });
 }
 
