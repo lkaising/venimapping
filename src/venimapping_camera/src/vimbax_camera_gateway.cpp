@@ -33,30 +33,23 @@ namespace venimapping::camera {
 
 namespace {
 
-// Builds the client for one service leaf under the camera namespace.
 template <typename Service>
 [[nodiscard]] typename rclcpp::Client<Service>::SharedPtr MakeClient(
     rclcpp::Node& node,
     const std::string& camera_namespace,
     std::string_view leaf)
 {
-  return node.create_client<Service>(
-      detail::ServiceName(camera_namespace, leaf));
+  return node.create_client<Service>(detail::ServiceName(camera_namespace, leaf));
 }
 
-// Builds a request targeting the remote-device module. Every module-scoped
-// request in this gateway targets that one module; it is not a parameter.
 template <typename Service>
 [[nodiscard]] typename Service::Request::SharedPtr MakeRemoteDeviceRequest()
 {
   auto request = std::make_shared<typename Service::Request>();
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
+  request->feature_module.id = vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
   return request;
 }
 
-// MakeRemoteDeviceRequest() plus the feature name every per-feature service
-// requires.
 template <typename Service>
 [[nodiscard]] typename Service::Request::SharedPtr MakeRemoteFeatureRequest(
     const std::string& name)
