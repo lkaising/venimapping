@@ -42,14 +42,15 @@ namespace venimapping::camera {
 //
 // The methods are synchronous and block on service futures. They are designed
 // to run on a dedicated worker thread that is not an executor thread, while a
-// ROS executor spins the node independently. Calling them from a
-// single-threaded executor's callback prevents that executor from processing
-// the response, and the call then fails with a timeout error rather than
-// blocking indefinitely; use from executor callbacks under any other executor
-// configuration is unsupported. Calls are serialized on the bound thread, and
-// a call from any other thread -- or before binding -- fails with a gateway
-// error before any ROS interaction. That checking is misuse detection, not
-// thread synchronization; concurrent use from multiple threads is unsupported.
+// ROS executor spins the node independently. If the bound thread is a
+// single-threaded executor's callback thread, a call from it prevents that
+// executor from processing the response and fails with a timeout error rather
+// than blocking indefinitely; use from executor callbacks under any other
+// executor configuration is unsupported. Calls are serialized on the bound
+// thread, and a call from any other thread -- or before binding -- fails with
+// a gateway error before any ROS interaction. That checking is misuse
+// detection, not thread synchronization; concurrent use from multiple threads
+// is unsupported.
 //
 // A setter that fails with a timeout does not establish whether the camera
 // applied the requested value; a caller that needs to know shall read the
@@ -88,9 +89,9 @@ class VimbaXCameraGateway final : public CameraGateway {
   // Records the calling thread as the designated worker thread. It shall be
   // called exactly once, from that thread, before the first gateway call, and
   // every later call shall come from that same thread. Violations are
-  // debug-asserted and, in every build, reported as a gateway error: a second
-  // bind fails, and gateway calls made before binding or from another thread
-  // fail without touching ROS.
+  // debug-asserted; where assertions are disabled they are instead reported
+  // as a gateway error: a second bind fails, and gateway calls made before
+  // binding or from another thread fail without touching ROS.
   [[nodiscard]] Expected<void> BindToCurrentThread();
 
   [[nodiscard]] Expected<double> FeatureFloatGet(const std::string& name) override;

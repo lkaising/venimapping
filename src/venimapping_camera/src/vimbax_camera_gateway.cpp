@@ -35,7 +35,7 @@ namespace {
 
 // Builds the client for one service leaf under the camera namespace.
 template <typename Service>
-typename rclcpp::Client<Service>::SharedPtr MakeClient(
+[[nodiscard]] typename rclcpp::Client<Service>::SharedPtr MakeClient(
     rclcpp::Node& node,
     const std::string& camera_namespace,
     std::string_view leaf)
@@ -47,7 +47,7 @@ typename rclcpp::Client<Service>::SharedPtr MakeClient(
 // Builds a request targeting the remote-device module. Every module-scoped
 // request in this gateway targets that one module; it is not a parameter.
 template <typename Service>
-typename Service::Request::SharedPtr MakeRemoteDeviceRequest()
+[[nodiscard]] typename Service::Request::SharedPtr MakeRemoteDeviceRequest()
 {
   auto request = std::make_shared<typename Service::Request>();
   request->feature_module.id =
@@ -58,7 +58,7 @@ typename Service::Request::SharedPtr MakeRemoteDeviceRequest()
 // MakeRemoteDeviceRequest() plus the feature name every per-feature service
 // requires.
 template <typename Service>
-typename Service::Request::SharedPtr MakeRemoteFeatureRequest(
+[[nodiscard]] typename Service::Request::SharedPtr MakeRemoteFeatureRequest(
     const std::string& name)
 {
   auto request = MakeRemoteDeviceRequest<Service>();
@@ -212,8 +212,8 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     auto future = client.async_send_request(std::move(request));
     if (future.wait_for(timeout_) != std::future_status::ready) {
       // Once the deadline expires, the invocation reports a timeout and stops
-      // tracking the pending request. For setters, a timeout does not
-      // establish whether the camera applied the request.
+      // tracking the pending request; a late response is then dropped by
+      // rclcpp instead of accumulating.
       client.remove_pending_request(future);
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kResponseTimeout,
@@ -240,16 +240,16 @@ Expected<typename Service::Response::SharedPtr>
 VimbaXCameraGateway::CallChecked(rclcpp::Client<Service>& client,
                                  typename Service::Request::SharedPtr request)
 {
-  using ResponsePtr = typename Service::Response::SharedPtr;
-  return Call<Service>(client, std::move(request))
-      .and_then([](ResponsePtr response) -> Expected<ResponsePtr> {
-        if (auto checked = detail::CheckDriverError(response->error.code,
-                                                    response->error.text);
-            !checked) {
-          return std::unexpected(std::move(checked).error());
-        }
-        return response;
-      });
+  auto response = Call<Service>(client, std::move(request));
+  if (!response) {
+    return response;
+  }
+  if (auto checked = detail::CheckDriverError((*response)->error.code,
+                                              (*response)->error.text);
+      !checked) {
+    return std::unexpected(std::move(checked).error());
+  }
+  return response;
 }
 
 Expected<double> VimbaXCameraGateway::FeatureFloatGet(const std::string& name)
