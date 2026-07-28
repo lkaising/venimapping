@@ -25,6 +25,7 @@ enum class GatewayDiagnostic : std::int32_t {
   kResponseTimeout = 2,
   kConstructionFailed = 3,
   kRosClientFailure = 4,
+  kThreadContractViolation = 5,
 };
 
 // How VimbaXCameraGateway produces gateway diagnostics.

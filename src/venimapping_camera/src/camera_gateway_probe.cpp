@@ -451,9 +451,13 @@ int RunProbe()
     // executor stops and the node is torn down.
     auto created = VimbaXCameraGateway::Create(*node, options.camera_namespace,
                                                options.timeout);
-    if (created) {
+    if (!created) {
+      RCLCPP_FATAL(node->get_logger(), "%s",
+                   Describe(created.error()).c_str());
+    } else if (auto bound = (*created)->BindToCurrentThread(); !bound) {
+      RCLCPP_FATAL(node->get_logger(), "%s", Describe(bound.error()).c_str());
+    } else {
       auto gateway = std::move(*created);
-      gateway->BindToCurrentThread();
 
       // Everything past construction and binding needs only the contract.
       CameraGateway& camera = *gateway;
@@ -488,9 +492,6 @@ int RunProbe()
                      "probe complete: %d check(s) failed, %d skipped",
                      report.FailureCount(), report.SkipCount());
       }
-    } else {
-      RCLCPP_FATAL(node->get_logger(), "%s",
-                   Describe(created.error()).c_str());
     }
   } catch (const std::exception& e) {
     // Catching here keeps the stack from unwinding past the joinable

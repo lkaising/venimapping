@@ -12,21 +12,61 @@
 
 #include <cassert>
 #include <chrono>
+#include <exception>
 #include <expected>
 #include <format>
 #include <future>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "rclcpp/utilities.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 
 #include "detail/gateway_util.hpp"
 #include "venimapping_camera/expected.hpp"
 
 namespace venimapping::camera {
+
+namespace {
+
+// Builds the client for one service leaf under the camera namespace.
+template <typename Service>
+typename rclcpp::Client<Service>::SharedPtr MakeClient(
+    rclcpp::Node& node,
+    const std::string& camera_namespace,
+    std::string_view leaf)
+{
+  return node.create_client<Service>(
+      detail::ServiceName(camera_namespace, leaf));
+}
+
+// Builds a request targeting the remote-device module. Every module-scoped
+// request in this gateway targets that one module; it is not a parameter.
+template <typename Service>
+typename Service::Request::SharedPtr MakeRemoteDeviceRequest()
+{
+  auto request = std::make_shared<typename Service::Request>();
+  request->feature_module.id =
+      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
+  return request;
+}
+
+// MakeRemoteDeviceRequest() plus the feature name every per-feature service
+// requires.
+template <typename Service>
+typename Service::Request::SharedPtr MakeRemoteFeatureRequest(
+    const std::string& name)
+{
+  auto request = MakeRemoteDeviceRequest<Service>();
+  request->feature_name = name;
+  return request;
+}
+
+}  // namespace
 
 Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
     rclcpp::Node& node,
@@ -64,62 +104,85 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
                                          std::string camera_namespace,
                                          std::chrono::milliseconds timeout)
     : timeout_{timeout},
+      context_{node.get_node_base_interface()->get_context()},
       connection_status_client_{
-          node.create_client<vimbax_camera_msgs::srv::ConnectionStatus>(
-              detail::ServiceName(camera_namespace, "connected"))},
-      status_client_{node.create_client<vimbax_camera_msgs::srv::Status>(
-          detail::ServiceName(camera_namespace, "status"))},
+          MakeClient<vimbax_camera_msgs::srv::ConnectionStatus>(
+              node, camera_namespace, "connected")},
+      status_client_{MakeClient<vimbax_camera_msgs::srv::Status>(
+          node, camera_namespace, "status")},
       features_list_get_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeaturesListGet>(
-              detail::ServiceName(camera_namespace, "features/list_get"))},
+          MakeClient<vimbax_camera_msgs::srv::FeaturesListGet>(
+              node, camera_namespace, "features/list_get")},
       feature_access_mode_get_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureAccessModeGet>(
-              detail::ServiceName(camera_namespace, "features/access_mode_get"))},
+          MakeClient<vimbax_camera_msgs::srv::FeatureAccessModeGet>(
+              node, camera_namespace, "features/access_mode_get")},
       feature_float_get_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureFloatGet>(
-              detail::ServiceName(camera_namespace, "features/float_get"))},
+          MakeClient<vimbax_camera_msgs::srv::FeatureFloatGet>(
+              node, camera_namespace, "features/float_get")},
       feature_float_set_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureFloatSet>(
-              detail::ServiceName(camera_namespace, "features/float_set"))},
+          MakeClient<vimbax_camera_msgs::srv::FeatureFloatSet>(
+              node, camera_namespace, "features/float_set")},
       feature_float_info_get_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureFloatInfoGet>(
-              detail::ServiceName(camera_namespace, "features/float_info_get"))},
+          MakeClient<vimbax_camera_msgs::srv::FeatureFloatInfoGet>(
+              node, camera_namespace, "features/float_info_get")},
       feature_enum_get_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureEnumGet>(
-              detail::ServiceName(camera_namespace, "features/enum_get"))},
+          MakeClient<vimbax_camera_msgs::srv::FeatureEnumGet>(
+              node, camera_namespace, "features/enum_get")},
       feature_enum_set_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureEnumSet>(
-              detail::ServiceName(camera_namespace, "features/enum_set"))},
+          MakeClient<vimbax_camera_msgs::srv::FeatureEnumSet>(
+              node, camera_namespace, "features/enum_set")},
       feature_enum_info_get_client_{
-          node.create_client<vimbax_camera_msgs::srv::FeatureEnumInfoGet>(
-              detail::ServiceName(camera_namespace, "features/enum_info_get"))}
+          MakeClient<vimbax_camera_msgs::srv::FeatureEnumInfoGet>(
+              node, camera_namespace, "features/enum_info_get")}
 {
 }
 
-void VimbaXCameraGateway::BindToCurrentThread()
+Expected<void> VimbaXCameraGateway::BindToCurrentThread()
 {
-  assert(!bound_thread_.has_value() &&
+  std::thread::id unbound{};
+  const bool bound_now = bound_thread_.compare_exchange_strong(
+      unbound, std::this_thread::get_id());
+  assert(bound_now &&
          "VimbaXCameraGateway: BindToCurrentThread() called more than once");
-  bound_thread_ = std::this_thread::get_id();
+  if (!bound_now) {
+    return std::unexpected(detail::GatewayError(
+        detail::GatewayDiagnostic::kThreadContractViolation,
+        "BindToCurrentThread() called more than once"));
+  }
+  return {};
 }
 
-void VimbaXCameraGateway::AssertCallableFromThisThread() const
+Expected<void> VimbaXCameraGateway::CheckCallableFromThisThread() const
 {
-  assert(bound_thread_.has_value() &&
+  const std::thread::id bound = bound_thread_.load();
+  assert(bound != std::thread::id{} &&
          "VimbaXCameraGateway: call before BindToCurrentThread()");
-  assert(*bound_thread_ == std::this_thread::get_id() &&
+  assert(bound == std::this_thread::get_id() &&
          "VimbaXCameraGateway: call from a thread other than the bound worker");
+  if (bound == std::thread::id{}) {
+    return std::unexpected(detail::GatewayError(
+        detail::GatewayDiagnostic::kThreadContractViolation,
+        "gateway call before BindToCurrentThread()"));
+  }
+  if (bound != std::this_thread::get_id()) {
+    return std::unexpected(detail::GatewayError(
+        detail::GatewayDiagnostic::kThreadContractViolation,
+        "gateway call from a thread other than the bound worker"));
+  }
+  return {};
 }
 
-// Defined here rather than in the header deliberately: every instantiation
-// lives in this translation unit, so the definition never needs to be visible
-// to consumers.
+// The member templates are defined here rather than in the header
+// deliberately: every instantiation lives in this translation unit, so the
+// definitions never need to be visible to consumers.
 template <typename Service>
 Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     rclcpp::Client<Service>& client,
     typename Service::Request::SharedPtr request)
 {
-  AssertCallableFromThisThread();
+  if (auto callable = CheckCallableFromThisThread(); !callable) {
+    return std::unexpected(std::move(callable).error());
+  }
 
   // Assigned inside the try so a throw during name resolution converts like
   // any other client failure; the placeholder keeps the diagnostic usable.
@@ -129,14 +192,11 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     // effective path even when the configured namespace was relative.
     service_name = client.get_service_name();
 
-    const auto wait_start = std::chrono::steady_clock::now();
     if (!client.wait_for_service(timeout_)) {
-      // wait_for_service() also returns false, immediately, once the context
-      // is shut down; that case must not claim the full timeout elapsed.
-      // That context check is its only early-false path, so a false return
-      // before the deadline elapsed identifies shutdown of the client's own
-      // context.
-      if (std::chrono::steady_clock::now() - wait_start < timeout_) {
+      // wait_for_service() returns false without waiting once the context is
+      // shut down; asking the context directly distinguishes shutdown from
+      // true unavailability.
+      if (!rclcpp::ok(context_)) {
         return std::unexpected(detail::GatewayError(
             detail::GatewayDiagnostic::kServiceUnavailable,
             std::format("service {} unavailable: context shut down while "
@@ -151,11 +211,9 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
 
     auto future = client.async_send_request(std::move(request));
     if (future.wait_for(timeout_) != std::future_status::ready) {
-      // Releases the client's bookkeeping for a reply that may never arrive;
-      // a late response is then dropped by rclcpp instead of accumulating. A
-      // response landing between the wait expiring and this removal is
-      // discarded with it, so a timeout on a setter does not prove the write
-      // failed to reach the camera.
+      // Once the deadline expires, the invocation reports a timeout and stops
+      // tracking the pending request. For setters, a timeout does not
+      // establish whether the camera applied the request.
       client.remove_pending_request(future);
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kResponseTimeout,
@@ -177,160 +235,135 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
   }
 }
 
+template <typename Service>
+Expected<typename Service::Response::SharedPtr>
+VimbaXCameraGateway::CallChecked(rclcpp::Client<Service>& client,
+                                 typename Service::Request::SharedPtr request)
+{
+  using ResponsePtr = typename Service::Response::SharedPtr;
+  return Call<Service>(client, std::move(request))
+      .and_then([](ResponsePtr response) -> Expected<ResponsePtr> {
+        if (auto checked = detail::CheckDriverError(response->error.code,
+                                                    response->error.text);
+            !checked) {
+          return std::unexpected(std::move(checked).error());
+        }
+        return response;
+      });
+}
+
 Expected<double> VimbaXCameraGateway::FeatureFloatGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatGet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
-  return Call<ServiceT>(*feature_float_get_client_, std::move(request))
-      .and_then([](auto response) -> Expected<double> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] { return response->value; });
-      });
+  return CallChecked<ServiceT>(*feature_float_get_client_,
+                               MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](auto response) { return response->value; });
 }
 
 Expected<void> VimbaXCameraGateway::FeatureFloatSet(const std::string& name,
                                                     double value)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatSet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
+  auto request = MakeRemoteFeatureRequest<ServiceT>(name);
   request->value = value;
-  return Call<ServiceT>(*feature_float_set_client_, std::move(request))
-      .and_then([](auto response) {
-        return detail::CheckDriverError(response->error.code, response->error.text);
-      });
+  return CallChecked<ServiceT>(*feature_float_set_client_, std::move(request))
+      .transform([](auto) {});
 }
 
-Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(const std::string& name)
+Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(
+    const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
-  return Call<ServiceT>(*feature_float_info_get_client_, std::move(request))
-      .and_then([](auto response) -> Expected<FloatInfo> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] {
-              return FloatInfo{.min = response->min,
-                               .max = response->max,
-                               .inc = response->inc,
-                               .inc_available = response->inc_available};
-            });
+  return CallChecked<ServiceT>(*feature_float_info_get_client_,
+                               MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](auto response) {
+        return FloatInfo{.min = response->min,
+                         .max = response->max,
+                         .inc = response->inc,
+                         .inc_available = response->inc_available};
       });
 }
 
-Expected<std::string> VimbaXCameraGateway::FeatureEnumGet(const std::string& name)
+Expected<std::string> VimbaXCameraGateway::FeatureEnumGet(
+    const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumGet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
-  return Call<ServiceT>(*feature_enum_get_client_, std::move(request))
-      .and_then([](auto response) -> Expected<std::string> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] { return std::move(response->value); });
-      });
+  return CallChecked<ServiceT>(*feature_enum_get_client_,
+                               MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](auto response) { return std::move(response->value); });
 }
 
 Expected<void> VimbaXCameraGateway::FeatureEnumSet(const std::string& name,
                                                    const std::string& value)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumSet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
+  auto request = MakeRemoteFeatureRequest<ServiceT>(name);
   request->value = value;
-  return Call<ServiceT>(*feature_enum_set_client_, std::move(request))
-      .and_then([](auto response) {
-        return detail::CheckDriverError(response->error.code, response->error.text);
-      });
+  return CallChecked<ServiceT>(*feature_enum_set_client_, std::move(request))
+      .transform([](auto) {});
 }
 
-Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& name)
+Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(
+    const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
-  return Call<ServiceT>(*feature_enum_info_get_client_, std::move(request))
-      .and_then([](auto response) -> Expected<EnumInfo> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] {
-              return EnumInfo{
-                  .possible_values = std::move(response->possible_values),
-                  .available_values = std::move(response->available_values)};
-            });
+  return CallChecked<ServiceT>(*feature_enum_info_get_client_,
+                               MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](auto response) {
+        return EnumInfo{
+            .possible_values = std::move(response->possible_values),
+            .available_values = std::move(response->available_values)};
       });
 }
 
-Expected<AccessMode> VimbaXCameraGateway::FeatureAccessModeGet(const std::string& name)
+Expected<AccessMode> VimbaXCameraGateway::FeatureAccessModeGet(
+    const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_name = name;
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
-  return Call<ServiceT>(*feature_access_mode_get_client_, std::move(request))
-      .and_then([](auto response) -> Expected<AccessMode> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] {
-              return AccessMode{.readable = response->is_readable,
-                                .writable = response->is_writeable};
-            });
+  return CallChecked<ServiceT>(*feature_access_mode_get_client_,
+                               MakeRemoteFeatureRequest<ServiceT>(name))
+      .transform([](auto response) {
+        return AccessMode{.readable = response->is_readable,
+                          .writable = response->is_writeable};
       });
 }
 
 Expected<std::vector<std::string>> VimbaXCameraGateway::FeaturesListGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
-  auto request = std::make_shared<ServiceT::Request>();
-  request->feature_module.id =
-      vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
   // The driver serves this from a per-module cache built at camera open, so
   // the list is a snapshot refreshed on reconnect, not a live query.
-  return Call<ServiceT>(*features_list_get_client_, std::move(request))
-      .and_then([](auto response) -> Expected<std::vector<std::string>> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] { return std::move(response->feature_list); });
-      });
+  return CallChecked<ServiceT>(*features_list_get_client_,
+                               MakeRemoteDeviceRequest<ServiceT>())
+      .transform(
+          [](auto response) { return std::move(response->feature_list); });
 }
 
 Expected<CameraStatus> VimbaXCameraGateway::CameraStatusGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::Status;
-  auto request = std::make_shared<ServiceT::Request>();
-  return Call<ServiceT>(*status_client_, std::move(request))
-      .and_then([](auto response) -> Expected<CameraStatus> {
-        return detail::CheckDriverError(response->error.code, response->error.text)
-            .transform([&] {
-              return CameraStatus{
-                  .model_name = std::move(response->model_name),
-                  .device_serial_number = std::move(response->device_serial_number),
-                  .pixel_format = std::move(response->pixel_format),
-                  .frame_rate = response->frame_rate,
-                  .width = response->width,
-                  .height = response->height,
-                  .streaming = response->streaming};
-            });
+  return CallChecked<ServiceT>(*status_client_,
+                               std::make_shared<ServiceT::Request>())
+      .transform([](auto response) {
+        return CameraStatus{
+            .model_name = std::move(response->model_name),
+            .device_serial_number = std::move(response->device_serial_number),
+            .pixel_format = std::move(response->pixel_format),
+            .frame_rate = response->frame_rate,
+            .width = response->width,
+            .height = response->height,
+            .streaming = response->streaming};
       });
 }
 
 Expected<bool> VimbaXCameraGateway::ConnectionStatusGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
-  auto request = std::make_shared<ServiceT::Request>();
-  // The ConnectionStatus response is the one with no error member, so nothing
-  // after transport can fail and the chain has no driver-error check.
-  return Call<ServiceT>(*connection_status_client_, std::move(request))
+  // Deliberately raw Call(), not CallChecked(): the ConnectionStatus response
+  // is the one with no error member, so nothing after transport can fail and
+  // there is no driver error to check.
+  return Call<ServiceT>(*connection_status_client_,
+                        std::make_shared<ServiceT::Request>())
       .transform([](auto response) { return response->connected; });
 }
 
