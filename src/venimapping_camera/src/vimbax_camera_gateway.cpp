@@ -219,7 +219,6 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     return std::unexpected(std::move(thread_check).error());
   }
 
-  // The placeholder remains usable if service-name resolution throws.
   std::string service_name{"(unresolved service)"};
 
   try {
