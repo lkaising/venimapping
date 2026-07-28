@@ -32,6 +32,7 @@ namespace venimapping::camera {
 namespace {
 
 using ContextPtr = rclcpp::Context::SharedPtr;
+using StringView = std::string_view;
 using Timeout = std::chrono::milliseconds;
 
 template <typename Service>
@@ -47,9 +48,9 @@ template <typename Service>
 using ResponsePtr = typename Service::Response::SharedPtr;
 
 template <typename Service>
-[[nodiscard]] ClientPtr<Service> MakeClient(rclcpp::Node &node,
-                                            std::string_view camera_namespace,
-                                            std::string_view leaf)
+[[nodiscard]] ClientPtr<Service> MakeClient(rclcpp::Node& node,
+                                            StringView camera_namespace,
+                                            StringView leaf)
 {
   return node.create_client<Service>(detail::ServiceName(camera_namespace, leaf));
 }
@@ -63,7 +64,7 @@ template <typename Service>
 }
 
 template <typename Service>
-[[nodiscard]] RequestPtr<Service> MakeRemoteFeatureRequest(std::string_view name)
+[[nodiscard]] RequestPtr<Service> MakeRemoteFeatureRequest(StringView name)
 {
   auto request = MakeRemoteDeviceRequest<Service>();
   request->feature_name = name;
@@ -74,7 +75,7 @@ template <typename Service>
 [[nodiscard]] Expected<void> WaitForService(Client<Service>& client,
                                             const ContextPtr& context,
                                             Timeout timeout,
-                                            std::string_view service_name)
+                                            StringView service_name)
 {
   if (client.wait_for_service(timeout)) {
     return {};
@@ -95,7 +96,7 @@ template <typename Service, typename Future>
 [[nodiscard]] Expected<ResponsePtr<Service>> WaitForResponse(Client<Service>& client,
                                                              Future& future,
                                                              Timeout timeout,
-                                                             std::string_view service_name)
+                                                             StringView service_name)
 {
   if (future.wait_for(timeout) == std::future_status::ready) {
     return future.get();
