@@ -365,7 +365,7 @@ Expected<CameraStatus> VimbaXCameraGateway::CameraStatusGet()
             .frame_rate = response->frame_rate,
             .width = response->width,
             .height = response->height,
-            .streaming = response->streaming
+            .streaming = response->streaming,
         };
       });
 }
