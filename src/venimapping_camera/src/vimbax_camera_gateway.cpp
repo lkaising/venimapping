@@ -97,7 +97,8 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
 
 void VimbaXCameraGateway::BindToCurrentThread()
 {
-  assert(!bound_thread_.has_value() && "BindToCurrentThread: already bound");
+  assert(!bound_thread_.has_value() &&
+         "VimbaXCameraGateway: BindToCurrentThread() called more than once");
   bound_thread_ = std::this_thread::get_id();
 }
 
@@ -130,6 +131,8 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     if (!client.wait_for_service(timeout_)) {
       // wait_for_service() also returns false, immediately, once the context
       // is shut down; that case must not claim the full timeout elapsed.
+      // rclcpp::ok() checks the default context, which is the one Stage 1
+      // runs on; a node on a custom context would blur this distinction only.
       if (!rclcpp::ok()) {
         return std::unexpected(detail::GatewayError(
             detail::GatewayDiagnostic::kServiceUnavailable,

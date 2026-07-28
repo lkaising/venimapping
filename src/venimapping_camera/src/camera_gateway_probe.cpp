@@ -302,7 +302,9 @@ void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options,
   // Target selection and std::clamp assume ordered, finite metadata; a driver
   // reporting otherwise makes a safe write impossible, not a gateway failure.
   if (!std::isfinite(info->min) || !std::isfinite(info->max) ||
-      info->min > info->max || !std::isfinite(*original)) {
+      info->min > info->max ||
+      (info->inc_available && !std::isfinite(info->inc)) ||
+      !std::isfinite(*original)) {
     report.Skip(check, "driver metadata or current value unusable: min=" +
                            std::to_string(info->min) +
                            " max=" + std::to_string(info->max) +
@@ -471,7 +473,12 @@ int RunProbe()
         }
       }
 
-      if (report.AllPassed()) {
+      if (!rclcpp::ok()) {
+        // An interrupted run proves nothing; zero executed checks must not
+        // read as success.
+        RCLCPP_WARN(node->get_logger(),
+                    "probe interrupted by shutdown before completing");
+      } else if (report.AllPassed()) {
         RCLCPP_INFO(node->get_logger(),
                     "probe complete: all checks passed (%d skipped)",
                     report.SkipCount());
@@ -490,6 +497,8 @@ int RunProbe()
     // executor thread below, which would call std::terminate.
     RCLCPP_FATAL(node->get_logger(), "probe aborted by exception: %s",
                  e.what());
+  } catch (...) {
+    RCLCPP_FATAL(node->get_logger(), "probe aborted by unknown exception");
   }
 
   // Shutting the context down, rather than executor.cancel(), closes the
@@ -514,6 +523,8 @@ int main(int argc, char** argv)
     // shutdown.
     std::fprintf(stderr, "camera_gateway_probe: unhandled exception: %s\n",
                  e.what());
+  } catch (...) {
+    std::fprintf(stderr, "camera_gateway_probe: unhandled unknown exception\n");
   }
   rclcpp::shutdown();
   return exit_code;
