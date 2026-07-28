@@ -173,8 +173,7 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
 Expected<void> VimbaXCameraGateway::BindToCurrentThread()
 {
   std::thread::id unbound{};
-  const bool bound_now = bound_thread_.compare_exchange_strong(
-      unbound, std::this_thread::get_id());
+  const bool bound_now = bound_thread_.compare_exchange_strong(unbound, std::this_thread::get_id());
 
   assert(bound_now && "VimbaXCameraGateway: BindToCurrentThread() called more than once");
 
@@ -224,8 +223,9 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
   try {
     service_name = client.get_service_name();
 
-    if (auto service = WaitForService(client, context_, timeout_, service_name); !service) {
-      return std::unexpected(std::move(service).error());
+    auto service_check = WaitForService(client, context_, timeout_, service_name);
+    if (!service_check) {
+      return std::unexpected(std::move(service_check).error());
     }
 
     auto future = client.async_send_request(std::move(request));
