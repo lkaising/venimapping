@@ -141,8 +141,9 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
       connection_status_client_{
           MakeClient<vimbax_camera_msgs::srv::ConnectionStatus>(
               node, camera_namespace, "connected")},
-      status_client_{MakeClient<vimbax_camera_msgs::srv::Status>(
-          node, camera_namespace, "status")},
+      status_client_{
+          MakeClient<vimbax_camera_msgs::srv::Status>(
+              node, camera_namespace, "status")},
       features_list_get_client_{
           MakeClient<vimbax_camera_msgs::srv::FeaturesListGet>(
               node, camera_namespace, "features/list_get")},
