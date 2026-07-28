@@ -51,12 +51,50 @@ template <typename Service>
 }
 
 template <typename Service>
-[[nodiscard]] typename Service::Request::SharedPtr MakeRemoteFeatureRequest(
-    const std::string& name)
+[[nodiscard]] typename Service::Request::SharedPtr MakeRemoteFeatureRequest(const std::string& name)
 {
   auto request = MakeRemoteDeviceRequest<Service>();
   request->feature_name = name;
   return request;
+}
+
+template <typename Service>
+[[nodiscard]] Expected<void> WaitForService(rclcpp::Client<Service>& client,
+                                            const rclcpp::Context::SharedPtr& context,
+                                            std::chrono::milliseconds timeout,
+                                            std::string_view service_name)
+{
+  if (client.wait_for_service(timeout)) {
+    return {};
+  }
+
+  if (!rclcpp::ok(context)) {
+    return std::unexpected(detail::GatewayError(
+        detail::GatewayDiagnostic::kServiceUnavailable,
+        std::format("service {} unavailable: context shut down while waiting", service_name)));
+  }
+
+  return std::unexpected(detail::GatewayError(
+      detail::GatewayDiagnostic::kServiceUnavailable,
+      std::format("service {} unavailable after {} ms", service_name, timeout.count())));
+}
+
+template <typename Service, typename Future>
+[[nodiscard]] Expected<typename Service::Response::SharedPtr> WaitForResponse(
+    rclcpp::Client<Service>& client,
+    Future& future,
+    std::chrono::milliseconds timeout,
+    std::string_view service_name)
+{
+  if (future.wait_for(timeout) == std::future_status::ready) {
+    return future.get();
+  }
+
+  client.remove_pending_request(future);
+
+  return std::unexpected(detail::GatewayError(
+      detail::GatewayDiagnostic::kResponseTimeout,
+      std::format("timeout on {} after {} ms", service_name, timeout.count())));
 }
 
 }  // namespace
