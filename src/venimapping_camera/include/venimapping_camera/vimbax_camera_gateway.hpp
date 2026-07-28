@@ -42,8 +42,10 @@ namespace venimapping::camera {
 // The methods are synchronous and block on service futures, so they shall run
 // on a worker thread while a ROS executor spins the node independently. Calling
 // them from the executor thread prevents the response that would unblock them.
-// Calls are serialized on the bound thread; concurrent use from multiple
-// threads is unsupported.
+// Because every internal wait is bounded by the configured timeout, such a
+// call fails with a timeout error rather than blocking indefinitely. Calls are
+// serialized on the bound thread; concurrent use from multiple threads is
+// unsupported.
 class VimbaXCameraGateway final : public CameraGateway {
  public:
   // The only supported construction path: ROS client creation can throw, and
@@ -52,7 +54,6 @@ class VimbaXCameraGateway final : public CameraGateway {
   // node is a non-owning, mandatory reference. The gateway does not own the
   // node, the ROS executor, or the worker thread; the caller shall ensure the
   // node and ROS context outlive the gateway's use of its clients.
-  // camera_namespace is a by-value sink parameter.
   //
   // timeout bounds the per-call service-availability wait and the response
   // wait separately, so a single gateway call may block for up to twice this

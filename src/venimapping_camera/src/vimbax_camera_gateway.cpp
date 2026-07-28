@@ -13,6 +13,7 @@
 #include <cassert>
 #include <chrono>
 #include <expected>
+#include <format>
 #include <future>
 #include <memory>
 #include <string>
@@ -20,7 +21,6 @@
 #include <utility>
 #include <vector>
 
-#include "rclcpp/utilities.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 
 #include "detail/gateway_util.hpp"
@@ -42,8 +42,9 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
     if (timeout <= std::chrono::milliseconds::zero()) {
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kConstructionFailed,
-          "gateway construction failed: timeout is not positive (" +
-              std::to_string(timeout.count()) + " ms)"));
+          std::format("gateway construction failed: timeout is not positive "
+                      "({} ms)",
+                      timeout.count())));
     }
     // std::make_unique cannot reach the private constructor.
     return std::unique_ptr<VimbaXCameraGateway>{
@@ -51,7 +52,7 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
   } catch (const std::exception& e) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kConstructionFailed,
-        std::string{"gateway construction failed: "} + e.what()));
+        std::format("gateway construction failed: {}", e.what())));
   } catch (...) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kConstructionFailed,
@@ -128,21 +129,24 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     // effective path even when the configured namespace was relative.
     service_name = client.get_service_name();
 
+    const auto wait_start = std::chrono::steady_clock::now();
     if (!client.wait_for_service(timeout_)) {
       // wait_for_service() also returns false, immediately, once the context
       // is shut down; that case must not claim the full timeout elapsed.
-      // rclcpp::ok() checks the default context, which is the one Stage 1
-      // runs on; a node on a custom context would blur this distinction only.
-      if (!rclcpp::ok()) {
+      // That context check is its only early-false path, so a false return
+      // before the deadline elapsed identifies shutdown of the client's own
+      // context.
+      if (std::chrono::steady_clock::now() - wait_start < timeout_) {
         return std::unexpected(detail::GatewayError(
             detail::GatewayDiagnostic::kServiceUnavailable,
-            "service " + service_name +
-                " unavailable: context shut down while waiting"));
+            std::format("service {} unavailable: context shut down while "
+                        "waiting",
+                        service_name)));
       }
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kServiceUnavailable,
-          "service " + service_name + " unavailable after " +
-              std::to_string(timeout_.count()) + " ms"));
+          std::format("service {} unavailable after {} ms", service_name,
+                      timeout_.count())));
     }
 
     auto future = client.async_send_request(std::move(request));
@@ -155,19 +159,21 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
       client.remove_pending_request(future);
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kResponseTimeout,
-          "timeout on " + service_name + " after " +
-              std::to_string(timeout_.count()) + " ms"));
+          std::format("timeout on {} after {} ms", service_name,
+                      timeout_.count())));
     }
 
     return future.get();
   } catch (const std::exception& e) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kRosClientFailure,
-        "rclcpp client failure on " + service_name + ": " + e.what()));
+        std::format("rclcpp client failure on {}: {}", service_name,
+                    e.what())));
   } catch (...) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kRosClientFailure,
-        "rclcpp client failure on " + service_name + ": unknown exception"));
+        std::format("rclcpp client failure on {}: unknown exception",
+                    service_name)));
   }
 }
 
