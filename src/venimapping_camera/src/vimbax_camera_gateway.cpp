@@ -1,9 +1,7 @@
 // -----------------------------------------------------------------------------
 //  Filename: vimbax_camera_gateway.cpp
 //
-//  Purpose:  Implements the concrete ROS 2 camera gateway: client construction,
-//            request assembly, service invocation with timeouts, driver-error
-//            passthrough, and conversion to the interface return types.
+//  Purpose:  Implements the concrete ROS 2 camera gateway backed by Vimba X driver services.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
