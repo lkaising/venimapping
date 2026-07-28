@@ -192,10 +192,8 @@ Expected<void> VimbaXCameraGateway::CheckCallableFromThisThread() const
   const std::thread::id bound = bound_thread_.load();
   const std::thread::id current = std::this_thread::get_id();
 
-  assert(bound != std::thread::id{} &&
-         "VimbaXCameraGateway: call before BindToCurrentThread()");
-  assert(bound == current &&
-         "VimbaXCameraGateway: call from a thread other than the bound worker");
+  assert(bound != std::thread::id{} && "VimbaXCameraGateway: call before BindToCurrentThread()");
+  assert(bound == current && "VimbaXCameraGateway: call from a thread other than the bound worker");
 
   if (bound == std::thread::id{}) {
     return std::unexpected(detail::GatewayError(
