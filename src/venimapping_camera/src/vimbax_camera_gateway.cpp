@@ -137,33 +137,40 @@ Expected<void> VimbaXCameraGateway::BindToCurrentThread()
   std::thread::id unbound{};
   const bool bound_now = bound_thread_.compare_exchange_strong(
       unbound, std::this_thread::get_id());
-  assert(bound_now &&
-         "VimbaXCameraGateway: BindToCurrentThread() called more than once");
+
+  assert(bound_now && "VimbaXCameraGateway: BindToCurrentThread() called more than once");
+
   if (!bound_now) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kThreadContractViolation,
         "BindToCurrentThread() called more than once"));
   }
+
   return {};
 }
 
 Expected<void> VimbaXCameraGateway::CheckCallableFromThisThread() const
 {
   const std::thread::id bound = bound_thread_.load();
+  const std::thread::id current = std::this_thread::get_id();
+
   assert(bound != std::thread::id{} &&
          "VimbaXCameraGateway: call before BindToCurrentThread()");
-  assert(bound == std::this_thread::get_id() &&
+  assert(bound == current &&
          "VimbaXCameraGateway: call from a thread other than the bound worker");
+
   if (bound == std::thread::id{}) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kThreadContractViolation,
         "gateway call before BindToCurrentThread()"));
   }
-  if (bound != std::this_thread::get_id()) {
+
+  if (bound != current) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kThreadContractViolation,
         "gateway call from a thread other than the bound worker"));
   }
+
   return {};
 }
 
