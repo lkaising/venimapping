@@ -354,8 +354,6 @@ Expected<std::vector<std::string>> VimbaXCameraGateway::FeaturesListGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
 
-  // The driver serves this from a per-module cache built at camera open, so
-  // the list is a snapshot refreshed on reconnect, not a live query.
   return CallChecked<ServiceT>(
              *features_list_get_client_,
              MakeRemoteDeviceRequest<ServiceT>())
@@ -386,13 +384,10 @@ Expected<bool> VimbaXCameraGateway::ConnectionStatusGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
 
-  // Deliberately raw Call(), not CallChecked(): the ConnectionStatus response
-  // is the one with no error member, so nothing after transport can fail and
-  // there is no driver error to check.
   return Call<ServiceT>(
              *connection_status_client_,
              std::make_shared<ServiceT::Request>())
-      .transform([](auto response) { return response->connected; });
+      .transform([](const auto& response) { return response->connected; });
 }
 
 }  // namespace venimapping::camera
