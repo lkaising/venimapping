@@ -243,19 +243,20 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
 }
 
 template <typename Service>
-Expected<typename Service::Response::SharedPtr>
-VimbaXCameraGateway::CallChecked(rclcpp::Client<Service>& client,
-                                 typename Service::Request::SharedPtr request)
+Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::CallChecked(
+    rclcpp::Client<Service>& client,
+    typename Service::Request::SharedPtr request)
 {
   auto response = Call<Service>(client, std::move(request));
   if (!response) {
     return response;
   }
-  if (auto checked = detail::CheckDriverError((*response)->error.code,
-                                              (*response)->error.text);
-      !checked) {
-    return std::unexpected(std::move(checked).error());
+
+  auto driver_check = detail::CheckDriverError((*response)->error.code, (*response)->error.text);
+  if (!driver_check) {
+    return std::unexpected(std::move(driver_check).error());
   }
+
   return response;
 }
 
