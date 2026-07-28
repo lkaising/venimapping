@@ -293,7 +293,8 @@ Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(const std::string& 
             .min = response->min,
             .max = response->max,
             .inc = response->inc,
-            .inc_available = response->inc_available};
+            .inc_available = response->inc_available,
+        };
       });
 }
 
@@ -329,7 +330,8 @@ Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& na
       .transform([](auto response) {
         return EnumInfo{
             .possible_values = std::move(response->possible_values),
-            .available_values = std::move(response->available_values)};
+            .available_values = std::move(response->available_values),
+        };
       });
 }
 
@@ -343,26 +345,30 @@ Expected<AccessMode> VimbaXCameraGateway::FeatureAccessModeGet(const std::string
       .transform([](const auto& response) {
         return AccessMode{
             .readable = response->is_readable,
-            .writable = response->is_writeable};
+            .writable = response->is_writeable,
+        };
       });
 }
 
 Expected<std::vector<std::string>> VimbaXCameraGateway::FeaturesListGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
+
   // The driver serves this from a per-module cache built at camera open, so
   // the list is a snapshot refreshed on reconnect, not a live query.
-  return CallChecked<ServiceT>(*features_list_get_client_,
-                               MakeRemoteDeviceRequest<ServiceT>())
-      .transform(
-          [](auto response) { return std::move(response->feature_list); });
+  return CallChecked<ServiceT>(
+             *features_list_get_client_,
+             MakeRemoteDeviceRequest<ServiceT>())
+      .transform([](auto response) { return std::move(response->feature_list); });
 }
 
 Expected<CameraStatus> VimbaXCameraGateway::CameraStatusGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::Status;
-  return CallChecked<ServiceT>(*status_client_,
-                               std::make_shared<ServiceT::Request>())
+
+  return CallChecked<ServiceT>(
+             *status_client_,
+             std::make_shared<ServiceT::Request>())
       .transform([](auto response) {
         return CameraStatus{
             .model_name = std::move(response->model_name),
@@ -371,18 +377,21 @@ Expected<CameraStatus> VimbaXCameraGateway::CameraStatusGet()
             .frame_rate = response->frame_rate,
             .width = response->width,
             .height = response->height,
-            .streaming = response->streaming};
+            .streaming = response->streaming
+        };
       });
 }
 
 Expected<bool> VimbaXCameraGateway::ConnectionStatusGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
+
   // Deliberately raw Call(), not CallChecked(): the ConnectionStatus response
   // is the one with no error member, so nothing after transport can fail and
   // there is no driver error to check.
-  return Call<ServiceT>(*connection_status_client_,
-                        std::make_shared<ServiceT::Request>())
+  return Call<ServiceT>(
+             *connection_status_client_,
+             std::make_shared<ServiceT::Request>())
       .transform([](auto response) { return response->connected; });
 }
 
