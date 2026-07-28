@@ -31,17 +31,31 @@ namespace venimapping::camera {
 
 namespace {
 
+using ContextPtr = rclcpp::Context::SharedPtr;
+using Timeout = std::chrono::milliseconds;
+
 template <typename Service>
-[[nodiscard]] typename rclcpp::Client<Service>::SharedPtr MakeClient(
-    rclcpp::Node& node,
-    const std::string& camera_namespace,
-    std::string_view leaf)
+using Client = rclcpp::Client<Service>;
+
+template <typename Service>
+using ClientPtr = typename Client<Service>::SharedPtr;
+
+template <typename Service>
+using RequestPtr = typename Service::Request::SharedPtr;
+
+template <typename Service>
+using ResponsePtr = typename Service::Response::SharedPtr;
+
+template <typename Service>
+[[nodiscard]] ClientPtr<Service> MakeClient(rclcpp::Node& node,
+                                            const std::string& camera_namespace,
+                                            std::string_view leaf)
 {
   return node.create_client<Service>(detail::ServiceName(camera_namespace, leaf));
 }
 
 template <typename Service>
-[[nodiscard]] typename Service::Request::SharedPtr MakeRemoteDeviceRequest()
+[[nodiscard]] RequestPtr<Service> MakeRemoteDeviceRequest()
 {
   auto request = std::make_shared<typename Service::Request>();
   request->feature_module.id = vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
@@ -49,7 +63,7 @@ template <typename Service>
 }
 
 template <typename Service>
-[[nodiscard]] typename Service::Request::SharedPtr MakeRemoteFeatureRequest(const std::string& name)
+[[nodiscard]] RequestPtr<Service> MakeRemoteFeatureRequest(const std::string& name)
 {
   auto request = MakeRemoteDeviceRequest<Service>();
   request->feature_name = name;
@@ -57,9 +71,9 @@ template <typename Service>
 }
 
 template <typename Service>
-[[nodiscard]] Expected<void> WaitForService(rclcpp::Client<Service>& client,
-                                            const rclcpp::Context::SharedPtr& context,
-                                            std::chrono::milliseconds timeout,
+[[nodiscard]] Expected<void> WaitForService(Client<Service>& client,
+                                            const ContextPtr& context,
+                                            Timeout timeout,
                                             std::string_view service_name)
 {
   if (client.wait_for_service(timeout)) {
@@ -78,11 +92,10 @@ template <typename Service>
 }
 
 template <typename Service, typename Future>
-[[nodiscard]] Expected<typename Service::Response::SharedPtr> WaitForResponse(
-    rclcpp::Client<Service>& client,
-    Future& future,
-    std::chrono::milliseconds timeout,
-    std::string_view service_name)
+[[nodiscard]] Expected<ResponsePtr<Service>> WaitForResponse(Client<Service>& client,
+                                                             Future& future,
+                                                             Timeout timeout,
+                                                             std::string_view service_name)
 {
   if (future.wait_for(timeout) == std::future_status::ready) {
     return future.get();
