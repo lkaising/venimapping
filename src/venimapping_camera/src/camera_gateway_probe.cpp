@@ -13,13 +13,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
 #include <thread>
 #include <utility>
-#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -29,7 +28,6 @@
 
 namespace {
 
-using venimapping::camera::AccessMode;
 using venimapping::camera::CameraGateway;
 using venimapping::camera::Error;
 using venimapping::camera::ErrorDomain;
@@ -50,29 +48,30 @@ class ProbeReport {
  public:
   explicit ProbeReport(rclcpp::Logger logger) : logger_{std::move(logger)} {}
 
-  void Pass(const std::string& check, const std::string& detail)
-  {
+  void Pass(const std::string& check, const std::string& detail) {
     RCLCPP_INFO(logger_, "PASS %s: %s", check.c_str(), detail.c_str());
   }
 
-  void Fail(const std::string& check, const std::string& detail)
-  {
+  void Fail(const std::string& check, const std::string& detail) {
     failure_count_ += 1;
     RCLCPP_ERROR(logger_, "FAIL %s: %s", check.c_str(), detail.c_str());
   }
 
-  void Skip(const std::string& check, const std::string& detail)
-  {
+  void Skip(const std::string& check, const std::string& detail) {
+    skip_count_ += 1;
     RCLCPP_WARN(logger_, "SKIP %s: %s", check.c_str(), detail.c_str());
   }
 
   [[nodiscard]] bool AllPassed() const noexcept { return failure_count_ == 0; }
 
-  [[nodiscard]] int failure_count() const noexcept { return failure_count_; }
+  [[nodiscard]] int FailureCount() const noexcept { return failure_count_; }
+
+  [[nodiscard]] int SkipCount() const noexcept { return skip_count_; }
 
  private:
   rclcpp::Logger logger_;
   int failure_count_ = 0;
+  int skip_count_ = 0;
 };
 
 // Parameters the probe reads at startup. The camera namespace is a parameter
@@ -107,9 +106,48 @@ ProbeOptions DeclareOptions(rclcpp::Node& node)
   return options;
 }
 
+void CheckFeaturesList(CameraGateway& camera, const ProbeOptions& options,
+                       ProbeReport& report)
+{
+  const auto features = camera.FeaturesListGet();
+  if (!features) {
+    report.Fail("FeaturesListGet", Describe(features.error()));
+    return;
+  }
+  report.Pass("FeaturesListGet", std::to_string(features->size()) + " features");
+
+  const bool known_name_present =
+      std::find(features->begin(), features->end(), options.float_feature) !=
+      features->end();
+  if (known_name_present) {
+    report.Pass("FeaturesListGet/known-name",
+                options.float_feature + " is present");
+  } else {
+    report.Fail("FeaturesListGet/known-name",
+                options.float_feature + " is absent from the feature list");
+  }
+
+  const bool absent_name_present =
+      std::find(features->begin(), features->end(), options.absent_feature) !=
+      features->end();
+  if (absent_name_present) {
+    report.Fail("FeaturesListGet/absent-name",
+                options.absent_feature + " unexpectedly present");
+  } else {
+    report.Pass("FeaturesListGet/absent-name",
+                options.absent_feature + " is absent as expected");
+  }
+}
+
 void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
                          ProbeReport& report)
 {
+  // Each block re-checks rclcpp::ok() so the sequence stops starting new
+  // requests once shutdown begins; a call already in flight completes with a
+  // bounded failure instead.
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto connected = camera.ConnectionStatusGet(); connected) {
     // false is a successful negative answer; it is reported, not failed on.
     report.Pass("ConnectionStatusGet",
@@ -118,6 +156,9 @@ void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
     report.Fail("ConnectionStatusGet", Describe(connected.error()));
   }
 
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto status = camera.CameraStatusGet(); status) {
     report.Pass("CameraStatusGet",
                 "model=" + status->model_name +
@@ -131,35 +172,14 @@ void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
     report.Fail("CameraStatusGet", Describe(status.error()));
   }
 
-  if (auto features = camera.FeaturesListGet(); features) {
-    report.Pass("FeaturesListGet",
-                std::to_string(features->size()) + " features");
-
-    const bool known_present =
-        std::find(features->begin(), features->end(), options.float_feature) !=
-        features->end();
-    if (known_present) {
-      report.Pass("FeaturesListGet/known-name",
-                  options.float_feature + " is present");
-    } else {
-      report.Fail("FeaturesListGet/known-name",
-                  options.float_feature + " is absent from the feature list");
-    }
-
-    const bool absent_found =
-        std::find(features->begin(), features->end(), options.absent_feature) !=
-        features->end();
-    if (absent_found) {
-      report.Fail("FeaturesListGet/absent-name",
-                  options.absent_feature + " unexpectedly present");
-    } else {
-      report.Pass("FeaturesListGet/absent-name",
-                  options.absent_feature + " is absent as expected");
-    }
-  } else {
-    report.Fail("FeaturesListGet", Describe(features.error()));
+  if (!rclcpp::ok()) {
+    return;
   }
+  CheckFeaturesList(camera, options, report);
 
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto access = camera.FeatureAccessModeGet(options.float_feature); access) {
     report.Pass("FeatureAccessModeGet(" + options.float_feature + ")",
                 std::string{"readable="} + (access->readable ? "true" : "false") +
@@ -169,6 +189,9 @@ void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
                 Describe(access.error()));
   }
 
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto value = camera.FeatureFloatGet(options.float_feature); value) {
     report.Pass("FeatureFloatGet(" + options.float_feature + ")",
                 std::to_string(*value));
@@ -177,6 +200,9 @@ void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
                 Describe(value.error()));
   }
 
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto info = camera.FeatureFloatInfoGet(options.float_feature); info) {
     report.Pass("FeatureFloatInfoGet(" + options.float_feature + ")",
                 "min=" + std::to_string(info->min) +
@@ -189,6 +215,9 @@ void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
                 Describe(info.error()));
   }
 
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto value = camera.FeatureEnumGet(options.enum_feature); value) {
     report.Pass("FeatureEnumGet(" + options.enum_feature + ")", *value);
   } else {
@@ -196,6 +225,9 @@ void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
                 Describe(value.error()));
   }
 
+  if (!rclcpp::ok()) {
+    return;
+  }
   if (auto info = camera.FeatureEnumInfoGet(options.enum_feature); info) {
     report.Pass("FeatureEnumInfoGet(" + options.enum_feature + ")",
                 std::to_string(info->possible_values.size()) + " possible, " +
@@ -251,7 +283,7 @@ void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options,
     return;
   }
   if (!access->readable || !access->writable) {
-    report.Skip(check, "feature is not currently readable and writable");
+    report.Skip(check, "feature is not currently both readable and writable");
     return;
   }
 
@@ -264,6 +296,17 @@ void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options,
   const auto original = camera.FeatureFloatGet(feature);
   if (!original) {
     report.Fail(check, "original read: " + Describe(original.error()));
+    return;
+  }
+
+  // Target selection and std::clamp assume ordered, finite metadata; a driver
+  // reporting otherwise makes a safe write impossible, not a gateway failure.
+  if (!std::isfinite(info->min) || !std::isfinite(info->max) ||
+      info->min > info->max || !std::isfinite(*original)) {
+    report.Skip(check, "driver metadata or current value unusable: min=" +
+                           std::to_string(info->min) +
+                           " max=" + std::to_string(info->max) +
+                           " current=" + std::to_string(*original));
     return;
   }
 
@@ -325,7 +368,7 @@ void RunEnumWriteSequence(CameraGateway& camera, const ProbeOptions& options,
     return;
   }
   if (!access->readable || !access->writable) {
-    report.Skip(check, "feature is not currently readable and writable");
+    report.Skip(check, "feature is not currently both readable and writable");
     return;
   }
 
@@ -364,6 +407,8 @@ void RunEnumWriteSequence(CameraGateway& camera, const ProbeOptions& options,
     report.Fail(check, "readback: " + Describe(readback.error()));
   }
 
+  // Restoration runs regardless of the verification outcome above; leaving
+  // the camera modified is the one result the write path must not produce.
   if (auto restore = camera.FeatureEnumSet(feature, *original); !restore) {
     report.Fail(check + "/restore", "RESTORATION FAILED, camera left at " +
                                         *target + ": " +
@@ -393,13 +438,15 @@ int RunProbe()
               static_cast<long long>(options.timeout.count()));
 
   // The executor spins on its own thread so service responses complete while
-  // this thread — the designated gateway worker — blocks inside calls.
+  // this thread -- the designated gateway worker -- blocks inside calls.
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
   std::thread executor_thread{[&executor] { executor.spin(); }};
 
   int exit_code = EXIT_FAILURE;
-  {
+  try {
+    // Scope: the gateway and its service clients are destroyed before the
+    // executor stops and the node is torn down.
     auto created = VimbaXCameraGateway::Create(*node, options.camera_namespace,
                                                options.timeout);
     if (created) {
@@ -415,25 +462,40 @@ int RunProbe()
       if (!options.enable_writes) {
         RCLCPP_INFO(node->get_logger(),
                     "write sequences disabled (enable_writes:=true to run)");
-      } else if (rclcpp::ok()) {
-        RunFloatWriteSequence(camera, options, report);
-        RunEnumWriteSequence(camera, options, report);
+      } else {
+        if (rclcpp::ok()) {
+          RunFloatWriteSequence(camera, options, report);
+        }
+        if (rclcpp::ok()) {
+          RunEnumWriteSequence(camera, options, report);
+        }
       }
 
       if (report.AllPassed()) {
-        RCLCPP_INFO(node->get_logger(), "probe complete: all checks passed");
+        RCLCPP_INFO(node->get_logger(),
+                    "probe complete: all checks passed (%d skipped)",
+                    report.SkipCount());
         exit_code = EXIT_SUCCESS;
       } else {
-        RCLCPP_ERROR(node->get_logger(), "probe complete: %d check(s) failed",
-                     report.failure_count());
+        RCLCPP_ERROR(node->get_logger(),
+                     "probe complete: %d check(s) failed, %d skipped",
+                     report.FailureCount(), report.SkipCount());
       }
     } else {
       RCLCPP_FATAL(node->get_logger(), "%s",
                    Describe(created.error()).c_str());
     }
+  } catch (const std::exception& e) {
+    // Catching here keeps the stack from unwinding past the joinable
+    // executor thread below, which would call std::terminate.
+    RCLCPP_FATAL(node->get_logger(), "probe aborted by exception: %s",
+                 e.what());
   }
 
-  executor.cancel();
+  // Shutting the context down, rather than executor.cancel(), closes the
+  // startup race in which a cancel issued before spin() begins is lost and
+  // join() blocks forever; spin() also exits once the context is down.
+  rclcpp::shutdown();
   executor_thread.join();
   return exit_code;
 }
@@ -443,7 +505,16 @@ int RunProbe()
 int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
-  const int exit_code = RunProbe();
+  int exit_code = EXIT_FAILURE;
+  try {
+    exit_code = RunProbe();
+  } catch (const std::exception& e) {
+    // A throw before RunProbe()'s own handling exists -- e.g. a mistyped
+    // parameter in DeclareOptions() -- still gets a message and an orderly
+    // shutdown.
+    std::fprintf(stderr, "camera_gateway_probe: unhandled exception: %s\n",
+                 e.what());
+  }
   rclcpp::shutdown();
   return exit_code;
 }

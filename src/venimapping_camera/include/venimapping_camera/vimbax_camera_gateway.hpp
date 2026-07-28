@@ -54,6 +54,10 @@ class VimbaXCameraGateway final : public CameraGateway {
   // node and ROS context outlive the gateway's use of its clients.
   // camera_namespace is a by-value sink parameter.
   //
+  // timeout bounds the per-call service-availability wait and the response
+  // wait separately, so a single gateway call may block for up to twice this
+  // duration.
+  //
   // Fails with domain() == ErrorDomain::gateway when camera_namespace is empty,
   // when timeout is not positive, or when client construction throws (exception
   // text preserved).
@@ -108,7 +112,6 @@ class VimbaXCameraGateway final : public CameraGateway {
 
   void AssertCallableFromThisThread() const;
 
-  std::string camera_namespace_;
   std::chrono::milliseconds timeout_;
   std::optional<std::thread::id> bound_thread_;
 

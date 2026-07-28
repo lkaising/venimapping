@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "rclcpp/utilities.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 
 #include "detail/gateway_util.hpp"
@@ -32,18 +33,18 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
     std::string camera_namespace,
     std::chrono::milliseconds timeout)
 {
-  if (camera_namespace.empty()) {
-    return std::unexpected(detail::GatewayError(
-        detail::GatewayDiagnostic::kConstructionFailed,
-        "gateway construction failed: camera_namespace is empty"));
-  }
-  if (timeout <= std::chrono::milliseconds::zero()) {
-    return std::unexpected(detail::GatewayError(
-        detail::GatewayDiagnostic::kConstructionFailed,
-        "gateway construction failed: timeout is not positive (" +
-            std::to_string(timeout.count()) + " ms)"));
-  }
   try {
+    if (camera_namespace.empty()) {
+      return std::unexpected(detail::GatewayError(
+          detail::GatewayDiagnostic::kConstructionFailed,
+          "gateway construction failed: camera_namespace is empty"));
+    }
+    if (timeout <= std::chrono::milliseconds::zero()) {
+      return std::unexpected(detail::GatewayError(
+          detail::GatewayDiagnostic::kConstructionFailed,
+          "gateway construction failed: timeout is not positive (" +
+              std::to_string(timeout.count()) + " ms)"));
+    }
     // std::make_unique cannot reach the private constructor.
     return std::unique_ptr<VimbaXCameraGateway>{
         new VimbaXCameraGateway{node, std::move(camera_namespace), timeout}};
@@ -51,43 +52,46 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kConstructionFailed,
         std::string{"gateway construction failed: "} + e.what()));
+  } catch (...) {
+    return std::unexpected(detail::GatewayError(
+        detail::GatewayDiagnostic::kConstructionFailed,
+        "gateway construction failed: unknown exception"));
   }
 }
 
 VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
                                          std::string camera_namespace,
                                          std::chrono::milliseconds timeout)
-    : camera_namespace_{std::move(camera_namespace)},
-      timeout_{timeout},
+    : timeout_{timeout},
       connection_status_client_{
           node.create_client<vimbax_camera_msgs::srv::ConnectionStatus>(
-              detail::ServiceName(camera_namespace_, "connected"))},
+              detail::ServiceName(camera_namespace, "connected"))},
       status_client_{node.create_client<vimbax_camera_msgs::srv::Status>(
-          detail::ServiceName(camera_namespace_, "status"))},
+          detail::ServiceName(camera_namespace, "status"))},
       features_list_get_client_{
           node.create_client<vimbax_camera_msgs::srv::FeaturesListGet>(
-              detail::ServiceName(camera_namespace_, "features/list_get"))},
+              detail::ServiceName(camera_namespace, "features/list_get"))},
       feature_access_mode_get_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureAccessModeGet>(
-              detail::ServiceName(camera_namespace_, "features/access_mode_get"))},
+              detail::ServiceName(camera_namespace, "features/access_mode_get"))},
       feature_float_get_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureFloatGet>(
-              detail::ServiceName(camera_namespace_, "features/float_get"))},
+              detail::ServiceName(camera_namespace, "features/float_get"))},
       feature_float_set_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureFloatSet>(
-              detail::ServiceName(camera_namespace_, "features/float_set"))},
+              detail::ServiceName(camera_namespace, "features/float_set"))},
       feature_float_info_get_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureFloatInfoGet>(
-              detail::ServiceName(camera_namespace_, "features/float_info_get"))},
+              detail::ServiceName(camera_namespace, "features/float_info_get"))},
       feature_enum_get_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureEnumGet>(
-              detail::ServiceName(camera_namespace_, "features/enum_get"))},
+              detail::ServiceName(camera_namespace, "features/enum_get"))},
       feature_enum_set_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureEnumSet>(
-              detail::ServiceName(camera_namespace_, "features/enum_set"))},
+              detail::ServiceName(camera_namespace, "features/enum_set"))},
       feature_enum_info_get_client_{
           node.create_client<vimbax_camera_msgs::srv::FeatureEnumInfoGet>(
-              detail::ServiceName(camera_namespace_, "features/enum_info_get"))}
+              detail::ServiceName(camera_namespace, "features/enum_info_get"))}
 {
 }
 
@@ -100,9 +104,9 @@ void VimbaXCameraGateway::BindToCurrentThread()
 void VimbaXCameraGateway::AssertCallableFromThisThread() const
 {
   assert(bound_thread_.has_value() &&
-         "gateway call before BindToCurrentThread()");
+         "VimbaXCameraGateway: call before BindToCurrentThread()");
   assert(*bound_thread_ == std::this_thread::get_id() &&
-         "gateway call from a thread other than the bound worker");
+         "VimbaXCameraGateway: call from a thread other than the bound worker");
 }
 
 // Defined here rather than in the header deliberately: every instantiation
@@ -115,12 +119,23 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
 {
   AssertCallableFromThisThread();
 
-  // rclcpp resolves the name against the node, so diagnostics carry the
-  // effective path even when camera_namespace_ was relative.
-  const std::string service_name{client.get_service_name()};
-
+  // Assigned inside the try so a throw during name resolution converts like
+  // any other client failure; the placeholder keeps the diagnostic usable.
+  std::string service_name{"(unresolved service)"};
   try {
+    // rclcpp resolves the name against the node, so diagnostics carry the
+    // effective path even when the configured namespace was relative.
+    service_name = client.get_service_name();
+
     if (!client.wait_for_service(timeout_)) {
+      // wait_for_service() also returns false, immediately, once the context
+      // is shut down; that case must not claim the full timeout elapsed.
+      if (!rclcpp::ok()) {
+        return std::unexpected(detail::GatewayError(
+            detail::GatewayDiagnostic::kServiceUnavailable,
+            "service " + service_name +
+                " unavailable: context shut down while waiting"));
+      }
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kServiceUnavailable,
           "service " + service_name + " unavailable after " +
@@ -130,7 +145,10 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     auto future = client.async_send_request(std::move(request));
     if (future.wait_for(timeout_) != std::future_status::ready) {
       // Releases the client's bookkeeping for a reply that may never arrive;
-      // a late response is then dropped by rclcpp instead of accumulating.
+      // a late response is then dropped by rclcpp instead of accumulating. A
+      // response landing between the wait expiring and this removal is
+      // discarded with it, so a timeout on a setter does not prove the write
+      // failed to reach the camera.
       client.remove_pending_request(future);
       return std::unexpected(detail::GatewayError(
           detail::GatewayDiagnostic::kResponseTimeout,
@@ -143,6 +161,10 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::Call(
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kRosClientFailure,
         "rclcpp client failure on " + service_name + ": " + e.what()));
+  } catch (...) {
+    return std::unexpected(detail::GatewayError(
+        detail::GatewayDiagnostic::kRosClientFailure,
+        "rclcpp client failure on " + service_name + ": unknown exception"));
   }
 }
 
@@ -297,6 +319,8 @@ Expected<bool> VimbaXCameraGateway::ConnectionStatusGet()
 {
   using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
   auto request = std::make_shared<ServiceT::Request>();
+  // The ConnectionStatus response is the one with no error member, so nothing
+  // after transport can fail and the chain has no driver-error check.
   return Call<ServiceT>(*connection_status_client_, std::move(request))
       .transform([](auto response) { return response->connected; });
 }
