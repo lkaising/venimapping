@@ -268,8 +268,7 @@ Expected<double> VimbaXCameraGateway::FeatureFloatGet(const std::string& name)
       .transform([](auto response) { return response->value; });
 }
 
-Expected<void> VimbaXCameraGateway::FeatureFloatSet(const std::string& name,
-                                                    double value)
+Expected<void> VimbaXCameraGateway::FeatureFloatSet(const std::string& name, double value)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatSet;
   auto request = MakeRemoteFeatureRequest<ServiceT>(name);
@@ -278,8 +277,7 @@ Expected<void> VimbaXCameraGateway::FeatureFloatSet(const std::string& name,
       .transform([](auto) {});
 }
 
-Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(
-    const std::string& name)
+Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
   return CallChecked<ServiceT>(*feature_float_info_get_client_,
@@ -292,8 +290,7 @@ Expected<FloatInfo> VimbaXCameraGateway::FeatureFloatInfoGet(
       });
 }
 
-Expected<std::string> VimbaXCameraGateway::FeatureEnumGet(
-    const std::string& name)
+Expected<std::string> VimbaXCameraGateway::FeatureEnumGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumGet;
   return CallChecked<ServiceT>(*feature_enum_get_client_,
@@ -311,8 +308,7 @@ Expected<void> VimbaXCameraGateway::FeatureEnumSet(const std::string& name,
       .transform([](auto) {});
 }
 
-Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(
-    const std::string& name)
+Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
   return CallChecked<ServiceT>(*feature_enum_info_get_client_,
@@ -324,8 +320,7 @@ Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(
       });
 }
 
-Expected<AccessMode> VimbaXCameraGateway::FeatureAccessModeGet(
-    const std::string& name)
+Expected<AccessMode> VimbaXCameraGateway::FeatureAccessModeGet(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
   return CallChecked<ServiceT>(*feature_access_mode_get_client_,
