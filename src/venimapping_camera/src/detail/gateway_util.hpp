@@ -36,7 +36,7 @@ Error GatewayError(GatewayDiagnostic diagnostic, std::string text);
 // preserved.
 //
 // Precondition (debug-asserted): leaf is non-empty and does not begin with '/'.
-std::string ServiceName(const std::string& camera_namespace, std::string_view leaf);
+std::string ServiceName(std::string_view camera_namespace, std::string_view leaf);
 
 // How VimbaXCameraGateway converts a driver response error. Returns success
 // when code == 0; otherwise carries the code and text through unchanged,

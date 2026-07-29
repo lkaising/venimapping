@@ -27,14 +27,14 @@ Error GatewayError(GatewayDiagnostic diagnostic, std::string text)
   return Error::FromGateway(static_cast<std::int32_t>(diagnostic), std::move(text));
 }
 
-std::string ServiceName(const std::string& camera_namespace, std::string_view leaf)
+std::string ServiceName(std::string_view camera_namespace, std::string_view leaf)
 {
   assert(!leaf.empty() && "ServiceName: leaf shall be non-empty");
   assert(leaf.front() != '/' && "ServiceName: leaf shall not begin with '/'");
 
   const std::size_t last_kept = camera_namespace.find_last_not_of('/');
-  std::string name = camera_namespace.substr(
-      0, last_kept == std::string::npos ? 0 : last_kept + 1);
+  std::string name{camera_namespace.substr(
+      0, last_kept == std::string_view::npos ? 0 : last_kept + 1)};
   name += '/';
   name += leaf;
   return name;
