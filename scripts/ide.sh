@@ -23,46 +23,25 @@ set -Eeuo pipefail
 
 VENIMAPPING_WS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Ordered: venimapping_camera first -- the only package that compiles C++, so
-# compiler detection must hit its CMake cache; venimapping_bringup is
-# LANGUAGES NONE and contributes no compilation database and no CXX cache
-# entries.
 VENIMAPPING_PACKAGES=(venimapping_camera venimapping_bringup)
 
-# Fallback header prefixes beyond the project's own install/, in the order
-# the compiler resolves them: the driver overlay, then the Jazzy underlay.
+# Compiler resolution order: driver overlay before the Jazzy underlay.
 VENIMAPPING_UPSTREAM_PREFIXES=(
   "${HOME:-/nonexistent}/workspace/upstream/vimbax-ros2-driver/install"
   "${HOME:-/nonexistent}/workspace/upstream/ros2-jazzy/install"
 )
 
-# Shown in the VS Code configuration picker, so the file is visibly generated.
 IDE_CONFIG_NAME="Linux (venimapping)"
 IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on every run. Manual edits are lost; change the generator instead."
 
-# venimapping_camera compiles with cxx_std_23 (target_compile_features), so
-# IntelliSense must match it for headers the compilation database never
-# covers -- expected.hpp needs std::expected even in the fallback path.
 IDE_C_STANDARD="c17"
 IDE_CPP_STANDARD="c++23"
 
-# The variables .vscode/ros.env carries, in the order they are written.
-#
-# PYTHONPATH alone resolves imports but cannot run anything: without
-# LD_LIBRARY_PATH rclpy fails to load librosidl_runtime_c.so, and without
-# AMENT_PREFIX_PATH ament_index_python cannot find a package's share
-# directory. RMW_IMPLEMENTATION pins CycloneDDS when it is installed: under
-# the default FastDDS the driver crashes serializing responses from the
-# lab's camera, so VS Code-launched processes must not fall back to it.
-#
-# PATH, CMAKE_PREFIX_PATH, PKG_CONFIG_PATH and COLCON_PREFIX_PATH are
-# deliberately absent. A dotenv file does no $VAR expansion, so writing PATH
-# here would not extend the user's PATH, it would replace it in every
-# Run/Debug process VS Code starts.
+# No PATH here: dotenv files do no $VAR expansion, so it would replace, not
+# extend, PATH in every VS Code-launched process.
 IDE_ROS_ENV_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH ROS_DISTRO
   ROS_VERSION ROS_PYTHON_VERSION ROS_AUTOMATIC_DISCOVERY_RANGE
   RMW_IMPLEMENTATION)
-# The subset of the above that is a colon-separated path list.
 IDE_ROS_ENV_PATH_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH)
 
 IDE_COMPILE_DB="${VENIMAPPING_WS}/build/compile_commands.json"
@@ -71,11 +50,9 @@ IDE_CPP_PROPERTIES="${IDE_VSCODE_DIR}/c_cpp_properties.json"
 IDE_ROS_ENV="${IDE_VSCODE_DIR}/ros.env"
 IDE_SETTINGS="${IDE_VSCODE_DIR}/settings.json"
 
-# Assigned by ide_detect_compiler.
 IDE_COMPILER_PATH=""
 IDE_INTELLISENSE_MODE=""
 
-# Assigned by ide_detect_python.
 IDE_PYTHON_PATH=""
 
 # --- Diagnostics --------------------------------------------------------------
