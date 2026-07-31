@@ -9,14 +9,15 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
-#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "rclcpp/client.hpp"
+#include "rclcpp/context.hpp"
 #include "rclcpp/node.hpp"
 #include "vimbax_camera_msgs/srv/connection_status.hpp"
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"
@@ -39,11 +40,21 @@ namespace venimapping::camera {
 // passthrough are hidden here; no ROS request or response type escapes through
 // the public API.
 //
-// The methods are synchronous and block on service futures, so they shall run
-// on a worker thread while a ROS executor spins the node independently. Calling
-// them from the executor thread prevents the response that would unblock them.
-// Calls are serialized on the bound thread; concurrent use from multiple
-// threads is unsupported.
+// The methods are synchronous and block on service futures. They are designed
+// to run on a dedicated worker thread that is not an executor thread, while a
+// ROS executor spins the node independently. If the bound thread is a
+// single-threaded executor's callback thread, a call from it prevents that
+// executor from processing the response and fails with a timeout error rather
+// than blocking indefinitely; use from executor callbacks under any other
+// executor configuration is unsupported. Calls are serialized on the bound
+// thread, and a call from any other thread -- or before binding -- fails with
+// a gateway error before any ROS interaction. That checking is misuse
+// detection, not thread synchronization; concurrent use from multiple threads
+// is unsupported.
+//
+// A setter that fails with a timeout does not establish whether the camera
+// applied the requested value; a caller that needs to know shall read the
+// feature back.
 class VimbaXCameraGateway final : public CameraGateway {
  public:
   // The only supported construction path: ROS client creation can throw, and
@@ -52,7 +63,11 @@ class VimbaXCameraGateway final : public CameraGateway {
   // node is a non-owning, mandatory reference. The gateway does not own the
   // node, the ROS executor, or the worker thread; the caller shall ensure the
   // node and ROS context outlive the gateway's use of its clients.
-  // camera_namespace is a by-value sink parameter.
+  //
+  // timeout bounds the per-call service-availability wait and the response
+  // wait separately, so a single gateway call can block for about twice this
+  // duration; thread-scheduling overhead can stretch each bound slightly, so
+  // the total is not a hard limit.
   //
   // Fails with domain() == ErrorDomain::gateway when camera_namespace is empty,
   // when timeout is not positive, or when client construction throws (exception
@@ -73,9 +88,11 @@ class VimbaXCameraGateway final : public CameraGateway {
 
   // Records the calling thread as the designated worker thread. It shall be
   // called exactly once, from that thread, before the first gateway call, and
-  // every later call shall come from that same thread. Enforcement is a debug
-  // assertion, not a runtime synchronization mechanism.
-  void BindToCurrentThread();
+  // every later call shall come from that same thread. Violations are
+  // debug-asserted; where assertions are disabled they are instead reported
+  // as a gateway error: a second bind fails, and gateway calls made before
+  // binding or from another thread fail without touching ROS.
+  [[nodiscard]] Expected<void> BindToCurrentThread();
 
   [[nodiscard]] Expected<double> FeatureFloatGet(const std::string& name) override;
   [[nodiscard]] Expected<void> FeatureFloatSet(const std::string& name, double value) override;
@@ -106,11 +123,20 @@ class VimbaXCameraGateway final : public CameraGateway {
       rclcpp::Client<Service>& client,
       typename Service::Request::SharedPtr request);
 
-  void AssertCallableFromThisThread() const;
+  // ConnectionStatusGet() alone stays on Call(), because its response has no
+  // error member.
+  template <typename Service>
+  [[nodiscard]] Expected<typename Service::Response::SharedPtr> CallChecked(
+      rclcpp::Client<Service>& client,
+      typename Service::Request::SharedPtr request);
 
-  std::string camera_namespace_;
+  [[nodiscard]] Expected<void> CheckCallableFromThisThread() const;
+
   std::chrono::milliseconds timeout_;
-  std::optional<std::thread::id> bound_thread_;
+  // Default-constructed thread::id is the unbound sentinel: the standard
+  // guarantees it never equals the id of a running thread.
+  std::atomic<std::thread::id> bound_thread_{};
+  rclcpp::Context::SharedPtr context_;
 
   rclcpp::Client<vimbax_camera_msgs::srv::ConnectionStatus>::SharedPtr
       connection_status_client_;
