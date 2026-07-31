@@ -25,21 +25,13 @@ enum class GatewayDiagnostic : std::int32_t {
   kResponseTimeout = 2,
   kConstructionFailed = 3,
   kRosClientFailure = 4,
+  kThreadContractViolation = 5,
 };
 
-// How VimbaXCameraGateway produces gateway diagnostics.
 Error GatewayError(GatewayDiagnostic diagnostic, std::string text);
 
-// Joins a camera namespace and a service leaf: every trailing '/' is removed
-// from camera_namespace, exactly one '/' is inserted, and the leaf text is
-// preserved.
-//
-// Precondition (debug-asserted): leaf is non-empty and does not begin with '/'.
-std::string ServiceName(const std::string& camera_namespace, std::string_view leaf);
+std::string ServiceName(std::string_view camera_namespace, std::string_view leaf);
 
-// How VimbaXCameraGateway converts a driver response error. Returns success
-// when code == 0; otherwise carries the code and text through unchanged,
-// without rewriting, translating, or classifying them.
 Expected<void> CheckDriverError(std::int32_t code, const std::string& text);
 
 }  // namespace venimapping::camera::detail
