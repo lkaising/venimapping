@@ -24,17 +24,17 @@ set -Eeuo pipefail
 
 VENIMAPPING_WS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Ordered: venimapping_camera first -- it is the only package that compiles
-# C++, so its CMake cache is the one the compiler and interpreter detection
-# must hit; venimapping_bringup is LANGUAGES NONE and contributes neither a
-# compilation database nor a CXX cache.
+# Ordered: venimapping_camera first -- the only package that compiles C++, so
+# compiler detection must hit its CMake cache; venimapping_bringup is
+# LANGUAGES NONE and contributes no compilation database and no CXX cache
+# entries.
 VENIMAPPING_PACKAGES=(venimapping_camera venimapping_bringup)
 
 # Fallback header prefixes beyond the project's own install/, in the order
 # the compiler resolves them: the driver overlay, then the Jazzy underlay.
-UPSTREAM_PREFIXES=(
-  "${HOME}/workspace/upstream/vimbax-ros2-driver/install"
-  "${HOME}/workspace/upstream/ros2-jazzy/install"
+VENIMAPPING_UPSTREAM_PREFIXES=(
+  "${HOME:-/nonexistent}/workspace/upstream/vimbax-ros2-driver/install"
+  "${HOME:-/nonexistent}/workspace/upstream/ros2-jazzy/install"
 )
 
 # Shown in the VS Code configuration picker, so the file is visibly generated.
@@ -67,14 +67,10 @@ IDE_ROS_ENV_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH ROS_DISTRO
 IDE_ROS_ENV_PATH_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH)
 
 IDE_COMPILE_DB="${VENIMAPPING_WS}/build/compile_commands.json"
-IDE_CPP_PROPERTIES="${VENIMAPPING_WS}/.vscode/c_cpp_properties.json"
-IDE_ROS_ENV="${VENIMAPPING_WS}/.vscode/ros.env"
-IDE_SETTINGS="${VENIMAPPING_WS}/.vscode/settings.json"
-
-readonly VENIMAPPING_WS VENIMAPPING_PACKAGES UPSTREAM_PREFIXES \
-  IDE_CONFIG_NAME IDE_GENERATED_NOTE IDE_C_STANDARD IDE_CPP_STANDARD \
-  IDE_ROS_ENV_KEYS IDE_ROS_ENV_PATH_KEYS \
-  IDE_COMPILE_DB IDE_CPP_PROPERTIES IDE_ROS_ENV IDE_SETTINGS
+IDE_VSCODE_DIR="${VENIMAPPING_WS}/.vscode"
+IDE_CPP_PROPERTIES="${IDE_VSCODE_DIR}/c_cpp_properties.json"
+IDE_ROS_ENV="${IDE_VSCODE_DIR}/ros.env"
+IDE_SETTINGS="${IDE_VSCODE_DIR}/settings.json"
 
 # Assigned by ide_detect_compiler.
 IDE_COMPILER_PATH=""
@@ -83,25 +79,33 @@ IDE_INTELLISENSE_MODE=""
 # Assigned by ide_detect_python.
 IDE_PYTHON_PATH=""
 
-# --- Logging ------------------------------------------------------------------
+# --- Diagnostics --------------------------------------------------------------
 
-if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+if [[ -t 1 && -t 2 && -z "${NO_COLOR:-}" ]]; then
   C_YELLOW=$'\033[33m' C_RED=$'\033[31m' C_GREEN=$'\033[32m' C_RESET=$'\033[0m'
 else
   C_YELLOW="" C_RED="" C_GREEN="" C_RESET=""
 fi
-readonly C_YELLOW C_RED C_GREEN C_RESET
 
-timestamp() { date +%H:%M:%S; }
-
-info() { printf '[%s] %s\n' "$(timestamp)" "$*"; }
+info() { printf '[venimapping] %s\n' "$*"; }
 
 warn() {
-  printf '%s[%s] WARN: %s%s\n' "$C_YELLOW" "$(timestamp)" "$*" "$C_RESET" >&2
+  printf '%s[venimapping] WARN: %s%s\n' "${C_YELLOW}" "$*" "${C_RESET}" >&2
 }
 
 error() {
-  printf '%s[%s] ERROR: %s%s\n' "$C_RED" "$(timestamp)" "$*" "$C_RESET" >&2
+  printf '%s[venimapping] ERROR: %s%s\n' "${C_RED}" "$*" "${C_RESET}" >&2
+}
+
+# ide_commit TMP TARGET: move a finished artifact into place. Warns, removes
+# TMP, and returns 1 when the rename fails.
+ide_commit() {
+  if mv -f "$1" "$2"; then
+    return 0
+  fi
+  rm -f "$1"
+  warn "cannot write $2"
+  return 1
 }
 
 # --- Preconditions ------------------------------------------------------------
@@ -117,7 +121,7 @@ ide_preflight() {
     rc=1
   fi
   if ! command -v python3 >/dev/null 2>&1; then
-    error "python3 not found; it is required to write the JSON artifacts"
+    error "python3 not found; required to write the JSON artifacts"
     rc=1
   fi
   if [[ $rc -ne 0 ]]; then
@@ -131,9 +135,9 @@ ide_preflight() {
 # Merge build/<pkg>/compile_commands.json for every package into one
 # workspace-level database. colcon-cmake writes its own merged file at the
 # same path, but only when it decides the file is stale; this rewrite is
-# unconditional, visits packages in VENIMAPPING_PACKAGES order, and preserves
-# it, so repeated runs produce a byte-identical file. Warns and returns 1
-# when nothing could be merged.
+# unconditional and preserves VENIMAPPING_PACKAGES order, so repeated runs
+# produce a byte-identical file. Warns and returns 1 when nothing could be
+# merged.
 ide_merge_compile_commands() {
   local tmp pkg part
   local -a parts=()
@@ -167,11 +171,7 @@ with open(sys.argv[1], "w") as handle:
     warn "cannot merge compilation databases into ${IDE_COMPILE_DB}"
     return 1
   fi
-  if ! mv -f "$tmp" "${IDE_COMPILE_DB}"; then
-    rm -f "$tmp"
-    warn "cannot write ${IDE_COMPILE_DB}"
-    return 1
-  fi
+  ide_commit "$tmp" "${IDE_COMPILE_DB}" || return 1
   info "merged ${#parts[@]} compilation database(s) into ${IDE_COMPILE_DB}"
   return 0
 }
@@ -189,11 +189,13 @@ ide_detect_compiler() {
     if [[ ! -r "$cache" ]]; then
       continue
     fi
-    IDE_COMPILER_PATH=$(sed -n 's/^CMAKE_CXX_COMPILER:FILEPATH=//p' "$cache" | head -n1)
-    if [[ -z "$IDE_COMPILER_PATH" ]]; then
+    IDE_COMPILER_PATH=$(sed -n 's/^CMAKE_CXX_COMPILER:FILEPATH=//p' "$cache" \
+      | head -n1)
+    if [[ -z "${IDE_COMPILER_PATH}" ]]; then
       continue
     fi
-    for compiler_cmake in "${VENIMAPPING_WS}/build/${pkg}/CMakeFiles"/*/CMakeCXXCompiler.cmake; do
+    for compiler_cmake in \
+      "${VENIMAPPING_WS}/build/${pkg}/CMakeFiles"/*/CMakeCXXCompiler.cmake; do
       if [[ -r "$compiler_cmake" ]]; then
         compiler_id=$(sed -n 's/^set(CMAKE_CXX_COMPILER_ID "\(.*\)")$/\1/p' \
           "$compiler_cmake" | head -n1)
@@ -204,8 +206,8 @@ ide_detect_compiler() {
     done
     break
   done
-  if [[ -z "$IDE_COMPILER_PATH" ]]; then
-    if ! IDE_COMPILER_PATH=$(command -v c++ 2>/dev/null); then
+  if [[ -z "${IDE_COMPILER_PATH}" ]]; then
+    if ! IDE_COMPILER_PATH=$(command -v c++); then
       IDE_COMPILER_PATH="/usr/bin/c++"
     fi
     warn "cannot read a CMake cache under ${VENIMAPPING_WS}/build; assuming compiler ${IDE_COMPILER_PATH} for IntelliSense"
@@ -270,7 +272,7 @@ ide_include_dirs() {
     printf '%s\n' "${VENIMAPPING_WS}/src/**"
   fi
   ide_prefix_include_dirs "${VENIMAPPING_WS}/install"
-  for prefix in "${UPSTREAM_PREFIXES[@]}"; do
+  for prefix in "${VENIMAPPING_UPSTREAM_PREFIXES[@]}"; do
     ide_prefix_include_dirs "$prefix"
   done
   return 0
@@ -280,22 +282,21 @@ ide_include_dirs() {
 # creating .vscode/ when absent. The whole file is replaced every time; no
 # manual content is preserved.
 ide_write_cpp_properties() {
-  local vscode_dir tmp
-  vscode_dir=$(dirname -- "${IDE_CPP_PROPERTIES}")
-  if ! mkdir -p "$vscode_dir"; then
-    warn "cannot create $vscode_dir"
+  local tmp
+  if ! mkdir -p "${IDE_VSCODE_DIR}"; then
+    warn "cannot create ${IDE_VSCODE_DIR}"
     return 1
   fi
   ide_detect_compiler
   tmp="${IDE_CPP_PROPERTIES}.tmp"
   if ! ide_include_dirs | env \
-    IDE_NAME="$IDE_CONFIG_NAME" \
-    IDE_NOTE="$IDE_GENERATED_NOTE" \
-    IDE_COMPILER="$IDE_COMPILER_PATH" \
-    IDE_MODE="$IDE_INTELLISENSE_MODE" \
-    IDE_CSTD="$IDE_C_STANDARD" \
-    IDE_CPPSTD="$IDE_CPP_STANDARD" \
-    IDE_DB="$IDE_COMPILE_DB" \
+    IDE_NAME="${IDE_CONFIG_NAME}" \
+    IDE_NOTE="${IDE_GENERATED_NOTE}" \
+    IDE_COMPILER="${IDE_COMPILER_PATH}" \
+    IDE_MODE="${IDE_INTELLISENSE_MODE}" \
+    IDE_CSTD="${IDE_C_STANDARD}" \
+    IDE_CPPSTD="${IDE_CPP_STANDARD}" \
+    IDE_DB="${IDE_COMPILE_DB}" \
     python3 -c '
 import json, os, sys
 
@@ -332,11 +333,7 @@ with open(sys.argv[1], "w") as handle:
     warn "cannot generate ${IDE_CPP_PROPERTIES}"
     return 1
   fi
-  if ! mv -f "$tmp" "${IDE_CPP_PROPERTIES}"; then
-    rm -f "$tmp"
-    warn "cannot write ${IDE_CPP_PROPERTIES}"
-    return 1
-  fi
+  ide_commit "$tmp" "${IDE_CPP_PROPERTIES}" || return 1
   info "wrote ${IDE_CPP_PROPERTIES} (compiler ${IDE_COMPILER_PATH}, ${IDE_INTELLISENSE_MODE})"
   return 0
 }
@@ -355,13 +352,14 @@ ide_detect_python() {
     if [[ ! -r "$cache" ]]; then
       continue
     fi
-    IDE_PYTHON_PATH=$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "$cache" | head -n1)
-    if [[ -n "$IDE_PYTHON_PATH" ]]; then
+    IDE_PYTHON_PATH=$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "$cache" \
+      | head -n1)
+    if [[ -n "${IDE_PYTHON_PATH}" ]]; then
       break
     fi
   done
-  if [[ -z "$IDE_PYTHON_PATH" ]]; then
-    if ! IDE_PYTHON_PATH=$(command -v python3 2>/dev/null); then
+  if [[ -z "${IDE_PYTHON_PATH}" ]]; then
+    if ! IDE_PYTHON_PATH=$(command -v python3); then
       IDE_PYTHON_PATH="/usr/bin/python3"
     fi
     warn "no _Python3_EXECUTABLE in any CMake cache under ${VENIMAPPING_WS}/build; assuming interpreter ${IDE_PYTHON_PATH}"
@@ -381,13 +379,9 @@ ide_detect_python() {
 # would also source /etc/profile.d/VimbaX_GenTL_Path_64bit.sh and put SDK
 # paths in the capture.
 #
-# Warns and returns 1 when the setup file is missing or fails to source.
+# Warns and returns 1 when setup.bash fails to source.
 ide_capture_overlay_env() {
   local setup="${VENIMAPPING_WS}/install/setup.bash"
-  if [[ ! -f "$setup" ]]; then
-    warn "no $setup to capture the ROS environment from"
-    return 1
-  fi
   local captured rc=0
   # shellcheck disable=SC2016  # the inner script's $1/$@ must expand in the sanitized subshell, not here
   captured=$(env -i \
@@ -400,12 +394,14 @@ ide_capture_overlay_env() {
       if [ -z "${RMW_IMPLEMENTATION-}" ]; then
         ifs_save=$IFS
         IFS=:
+        set -f
         for prefix in ${AMENT_PREFIX_PATH-}; do
           if [ -n "$prefix" ] && [ -e "$prefix/share/ament_index/resource_index/packages/rmw_cyclonedds_cpp" ]; then
             export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
             break
           fi
         done
+        set +f
         IFS=$ifs_save
       fi
       for name in "$@"; do
@@ -465,10 +461,10 @@ ide_filter_path_list() {
 ide_check_python_version() {
   local pythonpath=$1
   local tag tags
-  if [[ ! -x "$IDE_PYTHON_PATH" ]]; then
+  if [[ ! -x "${IDE_PYTHON_PATH}" ]]; then
     return 0
   fi
-  tag=$("$IDE_PYTHON_PATH" -c \
+  tag=$("${IDE_PYTHON_PATH}" -c \
     'import sys; print("python3.%d" % sys.version_info[1])' 2>/dev/null) || return 0
   tags=$(printf '%s\n' "${pythonpath//:/$'\n'}" \
     | grep -o 'python3\.[0-9]\+' | sort -u) || tags=""
@@ -489,15 +485,14 @@ ide_check_python_version() {
 # file when the environment cannot be captured or carries no usable
 # PYTHONPATH.
 ide_write_ros_env() {
-  local vscode_dir tmp captured line key
-  vscode_dir=$(dirname -- "${IDE_ROS_ENV}")
-  if ! mkdir -p "$vscode_dir"; then
-    warn "cannot create $vscode_dir"
+  local tmp captured line key
+  if ! mkdir -p "${IDE_VSCODE_DIR}"; then
+    warn "cannot create ${IDE_VSCODE_DIR}"
     return 1
   fi
   captured=$(ide_capture_overlay_env) || return 1
-  # Parsed line by line and matched against the known key set: a value
-  # containing a newline can only ever add a line that no key claims.
+  # Parsed line by line and matched against the known key set; lines no key
+  # claims are dropped.
   local -A values=()
   while IFS= read -r line; do
     key=${line%%=*}
@@ -516,9 +511,9 @@ ide_write_ros_env() {
   tmp="${IDE_ROS_ENV}.tmp"
   # `|| { ... }` instead of `if ! { ... }`: negating a brace group swallows
   # the exit status of a failed redirection, so an unwritable .vscode/ would
-  # sail on to the mv below and misreport the failure.
+  # sail on to the rename below and misreport the failure.
   {
-    printf '# %s\n' "$IDE_GENERATED_NOTE"
+    printf '# %s\n' "${IDE_GENERATED_NOTE}"
     printf '#\n'
     printf '# A snapshot of the environment install/setup.bash exports, read by VS Code\n'
     printf '# through python.envFile. Not a replacement for scripts/env.sh in a\n'
@@ -533,13 +528,10 @@ ide_write_ros_env() {
     warn "cannot generate ${IDE_ROS_ENV}"
     return 1
   }
-  if ! mv -f "$tmp" "${IDE_ROS_ENV}"; then
-    rm -f "$tmp"
-    warn "cannot write ${IDE_ROS_ENV}"
-    return 1
-  fi
+  ide_commit "$tmp" "${IDE_ROS_ENV}" || return 1
   local entries
-  entries=$(awk -F: '/^PYTHONPATH=/ {print NF; exit}' "${IDE_ROS_ENV}") || entries=""
+  entries=$(awk -F: '/^PYTHONPATH=/ {print NF; exit}' "${IDE_ROS_ENV}") \
+    || entries=""
   info "wrote ${IDE_ROS_ENV} (${entries:-0} PYTHONPATH entries, interpreter ${IDE_PYTHON_PATH})"
   return 0
 }
@@ -553,18 +545,17 @@ ide_write_ros_env() {
 # key names, not a parse; it is there only so the script stays quiet about a
 # file it wrote itself.
 ide_write_settings() {
-  local vscode_dir tmp
-  vscode_dir=$(dirname -- "${IDE_SETTINGS}")
-  if ! mkdir -p "$vscode_dir"; then
-    warn "cannot create $vscode_dir"
+  local tmp
+  if ! mkdir -p "${IDE_VSCODE_DIR}"; then
+    warn "cannot create ${IDE_VSCODE_DIR}"
     return 1
   fi
   if [[ -e "${IDE_SETTINGS}" ]]; then
     if grep -qF -- '"python.defaultInterpreterPath"' "${IDE_SETTINGS}" 2>/dev/null \
       && grep -qF -- '"python.envFile"' "${IDE_SETTINGS}" 2>/dev/null; then
-      info "${IDE_SETTINGS} already configures the Python interpreter and env file; left untouched"
+      info "${IDE_SETTINGS} already configures the interpreter and env file; left untouched"
     else
-      warn "${IDE_SETTINGS} exists and is never modified by this script; add these two keys yourself to resolve ROS 2 Python imports:"
+      warn "${IDE_SETTINGS} exists; this script never edits it -- add these keys to resolve ROS 2 Python imports:"
       warn "    \"python.defaultInterpreterPath\": \"${IDE_PYTHON_PATH}\","
       warn "    \"python.envFile\": \"\${workspaceFolder}/.vscode/ros.env\""
     fi
@@ -572,7 +563,7 @@ ide_write_settings() {
   fi
   tmp="${IDE_SETTINGS}.tmp"
   # shellcheck disable=SC2016  # ${workspaceFolder} is a VS Code substitution, resolved by the editor
-  if ! env IDE_PY="$IDE_PYTHON_PATH" python3 -c '
+  if ! env IDE_PY="${IDE_PYTHON_PATH}" python3 -c '
 import json, os, sys
 
 doc = {
@@ -587,12 +578,8 @@ with open(sys.argv[1], "w") as handle:
     warn "cannot generate ${IDE_SETTINGS}"
     return 1
   fi
-  if ! mv -f "$tmp" "${IDE_SETTINGS}"; then
-    rm -f "$tmp"
-    warn "cannot write ${IDE_SETTINGS}"
-    return 1
-  fi
-  info "wrote ${IDE_SETTINGS} (interpreter ${IDE_PYTHON_PATH}); reload the VS Code window to pick it up"
+  ide_commit "$tmp" "${IDE_SETTINGS}" || return 1
+  info "wrote ${IDE_SETTINGS} (interpreter ${IDE_PYTHON_PATH}); reload VS Code to pick it up"
   return 0
 }
 
@@ -600,21 +587,22 @@ with open(sys.argv[1], "w") as handle:
 
 main() {
   ide_preflight || exit 1
-  local rc=0 db=ok cpp=ok rosenv=ok settings=ok
+  local rc=0 db=ok cpp=ok rosenv=ok settings=ok summary
   ide_merge_compile_commands || { db=failed; rc=1; }
   ide_write_cpp_properties || { cpp=failed; rc=1; }
-  # Detected once here rather than in each writer: both need the
-  # interpreter, and a workspace with no readable CMake cache should warn
-  # about it once.
-  ide_detect_python
+  # Detected once here: both remaining writers need the interpreter, and a
+  # workspace with no readable CMake cache should warn about it once. The
+  # || true suppresses errexit inside the helper, exactly as the || guards
+  # do for the writers around it.
+  ide_detect_python || true
   ide_write_ros_env || { rosenv=failed; rc=1; }
   ide_write_settings || { settings=failed; rc=1; }
+  printf -v summary 'compile-db=%s cpp-properties=%s ros-env=%s settings=%s' \
+    "$db" "$cpp" "$rosenv" "$settings"
   if [[ $rc -eq 0 ]]; then
-    printf '%s[venimapping] compile-db=%s cpp-properties=%s ros-env=%s settings=%s%s\n' \
-      "$C_GREEN" "$db" "$cpp" "$rosenv" "$settings" "$C_RESET"
+    printf '%s[venimapping] %s%s\n' "${C_GREEN}" "$summary" "${C_RESET}"
   else
-    printf '%s[venimapping] compile-db=%s cpp-properties=%s ros-env=%s settings=%s%s\n' \
-      "$C_RED" "$db" "$cpp" "$rosenv" "$settings" "$C_RESET" >&2
+    printf '%s[venimapping] %s%s\n' "${C_RED}" "$summary" "${C_RESET}" >&2
   fi
   exit "$rc"
 }
