@@ -9,6 +9,8 @@
 #  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 # ------------------------------------------------------------------------------
 
+# --- Guards -------------------------------------------------------------------
+
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   echo "[venimapping] ERROR: execute this file instead of sourcing it:" >&2
   echo "  ${BASH_SOURCE[0]}" >&2
