@@ -10,13 +10,13 @@
 
 #include "detail/gateway_util.hpp"
 
-#include <cassert>
-#include <cstddef>
-#include <cstdint>
-#include <expected>
-#include <string>
-#include <string_view>
-#include <utility>
+// #include <cassert>
+// #include <cstddef>
+// #include <cstdint>
+// #include <expected>
+// #include <string>
+// #include <string_view>
+// #include <utility>
 
 #include "venimapping_camera/expected.hpp"
 
