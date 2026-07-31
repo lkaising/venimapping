@@ -123,10 +123,8 @@ class VimbaXCameraGateway final : public CameraGateway {
       rclcpp::Client<Service>& client,
       typename Service::Request::SharedPtr request);
 
-  // Call() followed by the driver-error check shared by every data-bearing
-  // response: a nonzero response->error is returned as that driver Error, and
-  // an error-free response passes through. ConnectionStatusGet() alone stays
-  // on Call(), because its response has no error member.
+  // ConnectionStatusGet() alone stays on Call(), because its response has no
+  // error member.
   template <typename Service>
   [[nodiscard]] Expected<typename Service::Response::SharedPtr> CallChecked(
       rclcpp::Client<Service>& client,

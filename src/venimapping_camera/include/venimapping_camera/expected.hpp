@@ -67,7 +67,6 @@ class Error {
   std::string text_;
 };
 
-// Expected<void> is valid and is what the set operations return.
 template <typename T>
 using Expected = std::expected<T, Error>;
 

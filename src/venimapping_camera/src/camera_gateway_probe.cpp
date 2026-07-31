@@ -42,8 +42,6 @@ std::string Describe(const Error& error)
          "] " + error.text();
 }
 
-// Tallies check outcomes so the probe can log every failure it encounters and
-// still report a single failing exit status at the end.
 class ProbeReport {
  public:
   explicit ProbeReport(rclcpp::Logger logger) : logger_{std::move(logger)} {}
