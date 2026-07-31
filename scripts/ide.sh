@@ -2,10 +2,7 @@
 # ------------------------------------------------------------------------------
 #  Filename: ide.sh
 #
-#  Purpose:  Generates the VS Code configuration for an already-built
-#            workspace: merges the per-package compilation databases and
-#            writes .vscode/c_cpp_properties.json, .vscode/ros.env, and
-#            .vscode/settings.json.  Run it after a build; it never builds.
+#  Purpose:  Creates VS Code config and merges compilation databases for a built workspace.
 #
 #  Usage:    ./scripts/ide.sh
 #
