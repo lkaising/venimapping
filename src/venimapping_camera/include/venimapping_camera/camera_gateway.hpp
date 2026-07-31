@@ -17,9 +17,6 @@
 
 namespace venimapping::camera {
 
-// --- Domain types ------------------------------------------------------------
-
-// Float feature metadata.
 struct FloatInfo {
   double min;
   double max;
@@ -34,7 +31,6 @@ struct AccessMode {
   bool writable;
 };
 
-// Enum feature metadata.
 struct EnumInfo {
   std::vector<std::string> possible_values;   // every option the feature defines
   std::vector<std::string> available_values;  // the subset selectable right now
@@ -50,8 +46,6 @@ struct CameraStatus {
   std::uint32_t height;
   bool streaming;
 };
-
-// --- Interface ---------------------------------------------------------------
 
 // The primitive camera operations available to VeniMapping layers.
 //

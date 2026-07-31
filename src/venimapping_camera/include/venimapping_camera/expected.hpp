@@ -32,18 +32,13 @@ enum class ErrorDomain : std::uint8_t {
 class Error {
  public:
   // Wraps a driver response error pair verbatim; nothing is translated or
-  // classified.
-  //
-  // Precondition (debug-asserted): code != 0. A zero code means success, not
-  // an Error.
+  // classified. A zero code means success, not an Error (debug-asserted).
   static Error FromDriver(std::int32_t code, std::string text) {
     assert(code != 0);
     return Error{ErrorDomain::driver, code, std::move(text)};
   }
 
   // Records a failure the gateway itself defines.
-  //
-  // Precondition (debug-asserted): diagnostic != 0.
   static Error FromGateway(std::int32_t diagnostic, std::string text) {
     assert(diagnostic != 0);
     return Error{ErrorDomain::gateway, diagnostic, std::move(text)};
@@ -67,7 +62,7 @@ class Error {
   std::string text_;
 };
 
-// Expected<void> is valid and is what the set operations return.
+// Expected<void> is what the set operations return.
 template <typename T>
 using Expected = std::expected<T, Error>;
 

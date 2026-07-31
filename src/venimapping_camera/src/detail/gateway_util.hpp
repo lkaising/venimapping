@@ -27,7 +27,6 @@ enum class GatewayDiagnostic : std::int32_t {
   kRosClientFailure = 4,
 };
 
-// How VimbaXCameraGateway produces gateway diagnostics.
 Error GatewayError(GatewayDiagnostic diagnostic, std::string text);
 
 // Joins a camera namespace and a service leaf: every trailing '/' is removed
