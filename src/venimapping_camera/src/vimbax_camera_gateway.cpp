@@ -8,19 +8,6 @@
 
 #include "venimapping_camera/vimbax_camera_gateway.hpp"
 
-// #include <cassert>
-// #include <chrono>
-// #include <exception>
-// #include <expected>
-// #include <format>
-// #include <future>
-// #include <memory>
-// #include <string>
-// #include <string_view>
-// #include <thread>
-// #include <utility>
-// #include <vector>
-
 #include "rclcpp/utilities.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 
@@ -132,8 +119,7 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
 
   try {
     return std::unique_ptr<VimbaXCameraGateway>{
-        new VimbaXCameraGateway{
-            node, std::move(camera_namespace), timeout}};
+        new VimbaXCameraGateway{node, std::move(camera_namespace), timeout}};
   } catch (const std::exception& e) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kConstructionFailed,
