@@ -34,7 +34,6 @@ VENIMAPPING_UPSTREAM_PREFIXES=(
 IDE_CONFIG_NAME="Linux (venimapping)"
 IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on every run. Manual edits are lost; change the generator instead."
 
-IDE_C_STANDARD="c17"
 IDE_CPP_STANDARD="c++23"
 
 # The supported platform is fixed -- Linux x86-64, GCC, system Python -- so
@@ -220,9 +219,7 @@ ide_write_cpp_properties() {
   tmp="${IDE_CPP_PROPERTIES}.tmp"
   if ! ide_include_dirs | env \
     IDE_NAME="${IDE_CONFIG_NAME}" \
-    IDE_NOTE="${IDE_GENERATED_NOTE}" \
     IDE_COMPILER="${IDE_COMPILER_PATH}" \
-    IDE_CSTD="${IDE_C_STANDARD}" \
     IDE_CPPSTD="${IDE_CPP_STANDARD}" \
     IDE_DB="${IDE_COMPILE_DB}" \
     python3 -c '
@@ -235,19 +232,13 @@ for line in sys.stdin.read().splitlines():
         seen.add(line)
         includes.append(line)
 doc = {
-    "env": {
-        "generatedBy": "venimapping/scripts/ide.sh",
-        "generatedNote": os.environ["IDE_NOTE"],
-    },
     "configurations": [
         {
             "name": os.environ["IDE_NAME"],
             "compilerPath": os.environ["IDE_COMPILER"],
-            "cStandard": os.environ["IDE_CSTD"],
             "cppStandard": os.environ["IDE_CPPSTD"],
             "compileCommands": os.environ["IDE_DB"],
             "includePath": includes,
-            "defines": [],
         }
     ],
     "version": 4,
