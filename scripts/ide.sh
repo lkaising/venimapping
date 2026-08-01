@@ -32,7 +32,8 @@ VENIMAPPING_UPSTREAM_PREFIXES=(
 )
 
 IDE_CONFIG_NAME="Linux (venimapping)"
-IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on every run. Manual edits are lost; change the generator instead."
+IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten"
+IDE_GENERATED_NOTE+=" on every run. Manual edits are lost; change the generator instead."
 
 IDE_CPP_STANDARD="c++23"
 
@@ -132,7 +133,8 @@ ide_merge_compile_commands() {
     fi
   done
   if [[ ${#parts[@]} -eq 0 ]]; then
-    warn "no per-package compile_commands.json under ${VENIMAPPING_WS}/build; leaving ${IDE_COMPILE_DB} alone"
+    warn "no per-package compile_commands.json under ${VENIMAPPING_WS}/build;" \
+      "leaving ${IDE_COMPILE_DB} alone"
     return 1
   fi
   tmp="${IDE_COMPILE_DB}.tmp"
@@ -261,7 +263,7 @@ with open(sys.argv[1], "w") as handle:
   return 0
 }
 
-# --- Python: ros.env and settings.json ----------------------------------------
+# --- ROS/Python: ros.env and settings.json ------------------------------------
 
 # Echo the ros.env variables as NAME=VALUE lines, by sourcing the built
 # overlay's setup.bash. Sourcing the overlay is enough on its own: colcon
@@ -279,7 +281,7 @@ with open(sys.argv[1], "w") as handle:
 ide_capture_overlay_env() {
   local setup="${VENIMAPPING_WS}/install/setup.bash"
   local captured rc=0
-  # shellcheck disable=SC2016  # the inner script's $1/$@ must expand in the sanitized subshell, not here
+  # shellcheck disable=SC2016  # $1/$@ must expand in the sanitized subshell
   captured=$(env -i \
     HOME="${HOME:-/}" \
     PATH=/usr/local/bin:/usr/bin:/bin \
@@ -292,7 +294,8 @@ ide_capture_overlay_env() {
         IFS=:
         set -f
         for prefix in ${AMENT_PREFIX_PATH-}; do
-          if [ -n "$prefix" ] && [ -e "$prefix/share/ament_index/resource_index/packages/rmw_cyclonedds_cpp" ]; then
+          if [ -n "$prefix" ] &&
+            [ -e "$prefix/share/ament_index/resource_index/packages/rmw_cyclonedds_cpp" ]; then
             export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
             break
           fi
@@ -424,7 +427,7 @@ ide_write_settings() {
     return 0
   fi
   tmp="${IDE_SETTINGS}.tmp"
-  # shellcheck disable=SC2016  # ${workspaceFolder} is a VS Code substitution, resolved by the editor
+  # shellcheck disable=SC2016  # ${workspaceFolder} is resolved by VS Code
   if ! env IDE_PY="${IDE_PYTHON_PATH}" "${IDE_PYTHON_PATH}" -c '
 import json, os, sys
 
