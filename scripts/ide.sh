@@ -25,7 +25,7 @@ VENIMAPPING_WS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 VENIMAPPING_PACKAGES=(venimapping_camera venimapping_bringup)
 
-# Compiler resolution order: driver overlay before the Jazzy underlay.
+# Header resolution order: driver overlay before the Jazzy underlay.
 VENIMAPPING_UPSTREAM_PREFIXES=(
   "${HOME:-/nonexistent}/workspace/upstream/vimbax-ros2-driver/install"
   "${HOME:-/nonexistent}/workspace/upstream/ros2-jazzy/install"
@@ -191,6 +191,10 @@ ide_prefix_include_dirs() {
 # compiler sees headers: project sources first, then the project's own
 # installed headers, then the driver overlay, then the Jazzy underlay.
 #
+# The full driver and Jazzy header indexes are intentional: packages beyond
+# the current compilation database are included so standalone and generated
+# headers remain resolvable and navigable in VS Code.
+#
 # The Vimba X SDK is deliberately absent: nothing here compiles against it
 # directly, and the driver overlay vendors the VmbC headers it was built
 # with, so adding the SDK would let IntelliSense resolve against a different
@@ -207,8 +211,7 @@ ide_include_dirs() {
   return 0
 }
 
-# Overwrite .vscode/c_cpp_properties.json from the current build state. The
-# whole file is replaced every time; no manual content is preserved.
+# Overwrite .vscode/c_cpp_properties.json from the current build state.
 ide_write_cpp_properties() {
   local tmp
   tmp="${IDE_CPP_PROPERTIES}.tmp"
