@@ -37,9 +37,10 @@ IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on e
 IDE_CPP_STANDARD="c++23"
 
 # The supported platform is fixed -- Linux x86-64, GCC, system Python -- so
-# the toolchain is pinned instead of detected. compilerPath stays in the
-# generated JSON because VS Code queries it for system headers and defines
-# when a file has no compilation-database entry.
+# the toolchain is pinned instead of detected; preflight verifies both paths
+# exist. compilerPath stays in the generated JSON because VS Code queries it
+# for system headers and defines when a file has no compilation-database
+# entry.
 IDE_COMPILER_PATH="/usr/bin/c++"
 IDE_PYTHON_PATH="/usr/bin/python3"
 
@@ -99,8 +100,12 @@ ide_preflight() {
     error "missing ${VENIMAPPING_WS}/install/setup.bash"
     rc=1
   fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    error "python3 not found; required to write the JSON artifacts"
+  if [[ ! -x "${IDE_COMPILER_PATH}" ]]; then
+    error "missing C++ compiler ${IDE_COMPILER_PATH}"
+    rc=1
+  fi
+  if [[ ! -x "${IDE_PYTHON_PATH}" ]]; then
+    error "missing ${IDE_PYTHON_PATH}; required to write the JSON artifacts"
     rc=1
   fi
   if [[ $rc -ne 0 ]]; then
@@ -131,7 +136,7 @@ ide_merge_compile_commands() {
     return 1
   fi
   tmp="${IDE_COMPILE_DB}.tmp"
-  if ! printf '%s\n' "${parts[@]}" | python3 -c '
+  if ! printf '%s\n' "${parts[@]}" | "${IDE_PYTHON_PATH}" -c '
 import json, sys
 
 entries = []
@@ -222,7 +227,7 @@ ide_write_cpp_properties() {
     IDE_COMPILER="${IDE_COMPILER_PATH}" \
     IDE_CPPSTD="${IDE_CPP_STANDARD}" \
     IDE_DB="${IDE_COMPILE_DB}" \
-    python3 -c '
+    "${IDE_PYTHON_PATH}" -c '
 import json, os, sys
 
 seen = set()
@@ -410,7 +415,7 @@ ide_write_settings() {
   fi
   tmp="${IDE_SETTINGS}.tmp"
   # shellcheck disable=SC2016  # ${workspaceFolder} is a VS Code substitution, resolved by the editor
-  if ! env IDE_PY="${IDE_PYTHON_PATH}" python3 -c '
+  if ! env IDE_PY="${IDE_PYTHON_PATH}" "${IDE_PYTHON_PATH}" -c '
 import json, os, sys
 
 doc = {
