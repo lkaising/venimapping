@@ -74,8 +74,10 @@ error() {
   printf '%s[venimapping] ERROR: %s%s\n' "${C_RED}" "$*" "${C_RESET}" >&2
 }
 
-# ide_commit TMP TARGET: move a finished artifact into place. Warns, removes
-# TMP, and returns 1 when the rename fails.
+# ide_commit TMP TARGET: move a finished artifact into place. Every writer
+# generates into a sibling tmp file and renames it here only on success, so
+# a failed or interrupted run never publishes a partially written artifact.
+# Warns, removes TMP, and returns 1 when the rename fails.
 ide_commit() {
   if mv -f "$1" "$2"; then
     return 0
