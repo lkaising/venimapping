@@ -37,11 +37,12 @@ IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on e
 IDE_C_STANDARD="c17"
 IDE_CPP_STANDARD="c++23"
 
-# The supported platform is fixed -- Linux x86-64 with the GCC toolchain --
-# so the compiler is pinned instead of detected. compilerPath stays in the
+# The supported platform is fixed -- Linux x86-64, GCC, system Python -- so
+# the toolchain is pinned instead of detected. compilerPath stays in the
 # generated JSON because VS Code queries it for system headers and defines
 # when a file has no compilation-database entry.
 IDE_COMPILER_PATH="/usr/bin/c++"
+IDE_PYTHON_PATH="/usr/bin/python3"
 
 # No PATH here: dotenv files do no $VAR expansion, so it would replace, not
 # extend, PATH in every VS Code-launched process.
@@ -55,8 +56,6 @@ IDE_VSCODE_DIR="${VENIMAPPING_WS}/.vscode"
 IDE_CPP_PROPERTIES="${IDE_VSCODE_DIR}/c_cpp_properties.json"
 IDE_ROS_ENV="${IDE_VSCODE_DIR}/ros.env"
 IDE_SETTINGS="${IDE_VSCODE_DIR}/settings.json"
-
-IDE_PYTHON_PATH=""
 
 # --- Diagnostics --------------------------------------------------------------
 
@@ -268,33 +267,6 @@ with open(sys.argv[1], "w") as handle:
 
 # --- Python: ros.env and settings.json ----------------------------------------
 
-# Detect the Python interpreter the build actually used, from the CMake
-# caches under build/<pkg>/ -- the same source ide_detect_compiler reads, one
-# key over. Sets IDE_PYTHON_PATH; falls back to the python3 on PATH and then
-# to the stock interpreter location. Always returns 0.
-ide_detect_python() {
-  local pkg cache
-  IDE_PYTHON_PATH=""
-  for pkg in "${VENIMAPPING_PACKAGES[@]}"; do
-    cache="${VENIMAPPING_WS}/build/${pkg}/CMakeCache.txt"
-    if [[ ! -r "$cache" ]]; then
-      continue
-    fi
-    IDE_PYTHON_PATH=$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "$cache" \
-      | head -n1)
-    if [[ -n "${IDE_PYTHON_PATH}" ]]; then
-      break
-    fi
-  done
-  if [[ -z "${IDE_PYTHON_PATH}" ]]; then
-    if ! IDE_PYTHON_PATH=$(command -v python3); then
-      IDE_PYTHON_PATH="/usr/bin/python3"
-    fi
-    warn "no _Python3_EXECUTABLE in any CMake cache under ${VENIMAPPING_WS}/build; assuming interpreter ${IDE_PYTHON_PATH}"
-  fi
-  return 0
-}
-
 # Echo the ros.env variables as NAME=VALUE lines, by sourcing the built
 # overlay's setup.bash. Sourcing the overlay is enough on its own: colcon
 # hardcodes the parent prefixes into install/setup.sh, so the Jazzy -> driver
@@ -381,30 +353,6 @@ ide_filter_path_list() {
   return 0
 }
 
-# Warn when the interpreter recorded by the build reports a different
-# python3.X than the one the captured site-packages directories were built
-# for -- the usual sign of an interpreter switch since the last build. The
-# captured paths are the truth, so this only warns; the caller still writes.
-# Always returns 0.
-ide_check_python_version() {
-  local pythonpath=$1
-  local tag tags
-  if [[ ! -x "${IDE_PYTHON_PATH}" ]]; then
-    return 0
-  fi
-  tag=$("${IDE_PYTHON_PATH}" -c \
-    'import sys; print("python3.%d" % sys.version_info[1])' 2>/dev/null) || return 0
-  tags=$(printf '%s\n' "${pythonpath//:/$'\n'}" \
-    | grep -o 'python3\.[0-9]\+' | sort -u) || tags=""
-  if [[ -z "$tag" || -z "$tags" ]]; then
-    return 0
-  fi
-  if ! grep -qxF -- "$tag" <<<"$tags"; then
-    warn "interpreter ${IDE_PYTHON_PATH} is $tag but the captured paths are for ${tags//$'\n'/ }; writing the captured paths anyway"
-  fi
-  return 0
-}
-
 # Overwrite .vscode/ros.env from the environment the built overlay exports,
 # creating .vscode/ when absent. The whole file is replaced every time; no
 # manual content is preserved, and nothing varying (no timestamp) is
@@ -435,7 +383,6 @@ ide_write_ros_env() {
     warn "sourcing the overlay exported no usable PYTHONPATH; leaving ${IDE_ROS_ENV} alone"
     return 1
   fi
-  ide_check_python_version "${values[PYTHONPATH]}"
   tmp="${IDE_ROS_ENV}.tmp"
   # `|| { ... }` instead of `if ! { ... }`: negating a brace group swallows
   # the exit status of a failed redirection, so an unwritable .vscode/ would
@@ -460,7 +407,7 @@ ide_write_ros_env() {
   local entries
   entries=$(awk -F: '/^PYTHONPATH=/ {print NF; exit}' "${IDE_ROS_ENV}") \
     || entries=""
-  info "wrote ${IDE_ROS_ENV} (${entries:-0} PYTHONPATH entries, interpreter ${IDE_PYTHON_PATH})"
+  info "wrote ${IDE_ROS_ENV} (${entries:-0} PYTHONPATH entries)"
   return 0
 }
 
@@ -518,11 +465,6 @@ main() {
   local rc=0 db=ok cpp=ok rosenv=ok settings=ok summary
   ide_merge_compile_commands || { db=failed; rc=1; }
   ide_write_cpp_properties || { cpp=failed; rc=1; }
-  # Detected once here: both remaining writers need the interpreter, and a
-  # workspace with no readable CMake cache should warn about it once. The
-  # || true suppresses errexit inside the helper, exactly as the || guards
-  # do for the writers around it.
-  ide_detect_python || true
   ide_write_ros_env || { rosenv=failed; rc=1; }
   ide_write_settings || { settings=failed; rc=1; }
   printf -v summary 'compile-db=%s cpp-properties=%s ros-env=%s settings=%s' \
