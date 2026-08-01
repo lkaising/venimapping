@@ -37,6 +37,12 @@ IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on e
 IDE_C_STANDARD="c17"
 IDE_CPP_STANDARD="c++23"
 
+# The supported platform is fixed -- Linux x86-64 with the GCC toolchain --
+# so the compiler is pinned instead of detected. compilerPath stays in the
+# generated JSON because VS Code queries it for system headers and defines
+# when a file has no compilation-database entry.
+IDE_COMPILER_PATH="/usr/bin/c++"
+
 # No PATH here: dotenv files do no $VAR expansion, so it would replace, not
 # extend, PATH in every VS Code-launched process.
 IDE_ROS_ENV_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH ROS_DISTRO
@@ -49,9 +55,6 @@ IDE_VSCODE_DIR="${VENIMAPPING_WS}/.vscode"
 IDE_CPP_PROPERTIES="${IDE_VSCODE_DIR}/c_cpp_properties.json"
 IDE_ROS_ENV="${IDE_VSCODE_DIR}/ros.env"
 IDE_SETTINGS="${IDE_VSCODE_DIR}/settings.json"
-
-IDE_COMPILER_PATH=""
-IDE_INTELLISENSE_MODE=""
 
 IDE_PYTHON_PATH=""
 
@@ -152,54 +155,6 @@ with open(sys.argv[1], "w") as handle:
   return 0
 }
 
-# Detect the compiler the build actually used, from the CMake caches colcon
-# left under build/<pkg>/. CMake records the path in CMakeCache.txt but the
-# vendor identity only in CMakeFiles/<ver>/CMakeCXXCompiler.cmake, so both
-# are read. Sets IDE_COMPILER_PATH and IDE_INTELLISENSE_MODE; falls back to
-# the default toolchain when no cache is readable. Always returns 0.
-ide_detect_compiler() {
-  local pkg cache compiler_cmake compiler_id="" arch flavor
-  IDE_COMPILER_PATH=""
-  for pkg in "${VENIMAPPING_PACKAGES[@]}"; do
-    cache="${VENIMAPPING_WS}/build/${pkg}/CMakeCache.txt"
-    if [[ ! -r "$cache" ]]; then
-      continue
-    fi
-    IDE_COMPILER_PATH=$(sed -n 's/^CMAKE_CXX_COMPILER:FILEPATH=//p' "$cache" \
-      | head -n1)
-    if [[ -z "${IDE_COMPILER_PATH}" ]]; then
-      continue
-    fi
-    for compiler_cmake in \
-      "${VENIMAPPING_WS}/build/${pkg}/CMakeFiles"/*/CMakeCXXCompiler.cmake; do
-      if [[ -r "$compiler_cmake" ]]; then
-        compiler_id=$(sed -n 's/^set(CMAKE_CXX_COMPILER_ID "\(.*\)")$/\1/p' \
-          "$compiler_cmake" | head -n1)
-        if [[ -n "$compiler_id" ]]; then
-          break
-        fi
-      fi
-    done
-    break
-  done
-  if [[ -z "${IDE_COMPILER_PATH}" ]]; then
-    if ! IDE_COMPILER_PATH=$(command -v c++); then
-      IDE_COMPILER_PATH="/usr/bin/c++"
-    fi
-    warn "cannot read a CMake cache under ${VENIMAPPING_WS}/build; assuming compiler ${IDE_COMPILER_PATH} for IntelliSense"
-  fi
-  case "$compiler_id" in
-    *Clang*) flavor=clang ;;
-    *) flavor=gcc ;;
-  esac
-  case "$(uname -m)" in
-    aarch64 | arm64) arch=arm64 ;;
-    *) arch=x64 ;;
-  esac
-  IDE_INTELLISENSE_MODE="linux-${flavor}-${arch}"
-  return 0
-}
-
 # Echo, one per line, the header search directories under PREFIX, covering
 # both colcon layouts: merged (PREFIX/include) and isolated
 # (PREFIX/<pkg>/include). ROS 2 Jazzy nests a package's headers one level
@@ -263,13 +218,11 @@ ide_write_cpp_properties() {
     warn "cannot create ${IDE_VSCODE_DIR}"
     return 1
   fi
-  ide_detect_compiler
   tmp="${IDE_CPP_PROPERTIES}.tmp"
   if ! ide_include_dirs | env \
     IDE_NAME="${IDE_CONFIG_NAME}" \
     IDE_NOTE="${IDE_GENERATED_NOTE}" \
     IDE_COMPILER="${IDE_COMPILER_PATH}" \
-    IDE_MODE="${IDE_INTELLISENSE_MODE}" \
     IDE_CSTD="${IDE_C_STANDARD}" \
     IDE_CPPSTD="${IDE_CPP_STANDARD}" \
     IDE_DB="${IDE_COMPILE_DB}" \
@@ -293,7 +246,6 @@ doc = {
             "compilerPath": os.environ["IDE_COMPILER"],
             "cStandard": os.environ["IDE_CSTD"],
             "cppStandard": os.environ["IDE_CPPSTD"],
-            "intelliSenseMode": os.environ["IDE_MODE"],
             "compileCommands": os.environ["IDE_DB"],
             "includePath": includes,
             "defines": [],
@@ -310,7 +262,7 @@ with open(sys.argv[1], "w") as handle:
     return 1
   fi
   ide_commit "$tmp" "${IDE_CPP_PROPERTIES}" || return 1
-  info "wrote ${IDE_CPP_PROPERTIES} (compiler ${IDE_COMPILER_PATH}, ${IDE_INTELLISENSE_MODE})"
+  info "wrote ${IDE_CPP_PROPERTIES} (compiler ${IDE_COMPILER_PATH})"
   return 0
 }
 
