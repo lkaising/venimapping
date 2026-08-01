@@ -207,15 +207,10 @@ ide_include_dirs() {
   return 0
 }
 
-# Overwrite .vscode/c_cpp_properties.json from the current build state,
-# creating .vscode/ when absent. The whole file is replaced every time; no
-# manual content is preserved.
+# Overwrite .vscode/c_cpp_properties.json from the current build state. The
+# whole file is replaced every time; no manual content is preserved.
 ide_write_cpp_properties() {
   local tmp
-  if ! mkdir -p "${IDE_VSCODE_DIR}"; then
-    warn "cannot create ${IDE_VSCODE_DIR}"
-    return 1
-  fi
   tmp="${IDE_CPP_PROPERTIES}.tmp"
   if ! ide_include_dirs | env \
     IDE_NAME="${IDE_CONFIG_NAME}" \
@@ -344,19 +339,14 @@ ide_filter_path_list() {
   return 0
 }
 
-# Overwrite .vscode/ros.env from the environment the built overlay exports,
-# creating .vscode/ when absent. The whole file is replaced every time; no
-# manual content is preserved, and nothing varying (no timestamp) is
-# written, so repeated runs against an unchanged workspace produce a
-# byte-identical file. Warns and returns 1 without touching any existing
-# file when the environment cannot be captured or carries no usable
-# PYTHONPATH.
+# Overwrite .vscode/ros.env from the environment the built overlay exports.
+# The whole file is replaced every time; no manual content is preserved, and
+# nothing varying (no timestamp) is written, so repeated runs against an
+# unchanged workspace produce a byte-identical file. Warns and returns 1
+# without touching any existing file when the environment cannot be captured
+# or carries no usable PYTHONPATH.
 ide_write_ros_env() {
   local tmp captured line key
-  if ! mkdir -p "${IDE_VSCODE_DIR}"; then
-    warn "cannot create ${IDE_VSCODE_DIR}"
-    return 1
-  fi
   captured=$(ide_capture_overlay_env) || return 1
   # Parsed line by line and matched against the known key set; lines no key
   # claims are dropped.
@@ -412,10 +402,6 @@ ide_write_ros_env() {
 # file it wrote itself.
 ide_write_settings() {
   local tmp
-  if ! mkdir -p "${IDE_VSCODE_DIR}"; then
-    warn "cannot create ${IDE_VSCODE_DIR}"
-    return 1
-  fi
   if [[ -e "${IDE_SETTINGS}" ]]; then
     if grep -qF -- '"python.defaultInterpreterPath"' "${IDE_SETTINGS}" 2>/dev/null \
       && grep -qF -- '"python.envFile"' "${IDE_SETTINGS}" 2>/dev/null; then
@@ -455,9 +441,17 @@ main() {
   ide_preflight || exit 1
   local rc=0 db=ok cpp=ok rosenv=ok settings=ok summary
   ide_merge_compile_commands || { db=failed; rc=1; }
-  ide_write_cpp_properties || { cpp=failed; rc=1; }
-  ide_write_ros_env || { rosenv=failed; rc=1; }
-  ide_write_settings || { settings=failed; rc=1; }
+  # .vscode/ is created once for the three writers below. The compilation
+  # database lives under build/ and must stay regenerable even when the
+  # directory cannot be created.
+  if mkdir -p "${IDE_VSCODE_DIR}"; then
+    ide_write_cpp_properties || { cpp=failed; rc=1; }
+    ide_write_ros_env || { rosenv=failed; rc=1; }
+    ide_write_settings || { settings=failed; rc=1; }
+  else
+    warn "cannot create ${IDE_VSCODE_DIR}"
+    cpp=failed rosenv=failed settings=failed rc=1
+  fi
   printf -v summary 'compile-db=%s cpp-properties=%s ros-env=%s settings=%s' \
     "$db" "$cpp" "$rosenv" "$settings"
   if [[ $rc -eq 0 ]]; then
