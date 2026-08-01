@@ -393,24 +393,14 @@ ide_write_ros_env() {
 }
 
 # Create .vscode/settings.json with the two keys that point VS Code at the
-# interpreter and at ros.env -- but only when the file does not exist.
-#
-# An existing settings.json is never parsed, merged, or rewritten: it is the
+# interpreter and at ros.env -- but only when the file does not exist. An
+# existing settings.json is never parsed, merged, or rewritten: it is the
 # user's file, and both keys are static, so there is nothing to keep in sync
-# between runs. The existence probe below is a plain text search for the two
-# key names, not a parse; it is there only so the script stays quiet about a
-# file it wrote itself.
+# between runs.
 ide_write_settings() {
   local tmp
   if [[ -e "${IDE_SETTINGS}" ]]; then
-    if grep -qF -- '"python.defaultInterpreterPath"' "${IDE_SETTINGS}" 2>/dev/null \
-      && grep -qF -- '"python.envFile"' "${IDE_SETTINGS}" 2>/dev/null; then
-      info "${IDE_SETTINGS} already configures the interpreter and env file; left untouched"
-    else
-      warn "${IDE_SETTINGS} exists; this script never edits it -- add these keys to resolve ROS 2 Python imports:"
-      warn "    \"python.defaultInterpreterPath\": \"${IDE_PYTHON_PATH}\","
-      warn "    \"python.envFile\": \"\${workspaceFolder}/.vscode/ros.env\""
-    fi
+    info "${IDE_SETTINGS} exists; left untouched"
     return 0
   fi
   tmp="${IDE_SETTINGS}.tmp"
