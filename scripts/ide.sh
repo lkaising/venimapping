@@ -24,7 +24,7 @@ set -Eeuo pipefail
 VENIMAPPING_WS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 VENIMAPPING_PACKAGES=(venimapping_camera venimapping_bringup)
 
-# Driver overlay resolves before the Jazzy underlay.
+# Prefix order determines header resolution precedence.
 VENIMAPPING_UPSTREAM_PREFIXES=(
   "${HOME:-/nonexistent}/workspace/upstream/vimbax-ros2-driver/install"
   "${HOME:-/nonexistent}/workspace/upstream/ros2-jazzy/install"
@@ -32,20 +32,18 @@ VENIMAPPING_UPSTREAM_PREFIXES=(
 
 IDE_CONFIG_NAME="Linux (venimapping)"
 IDE_CPP_STANDARD="c++23"
-
-# Platform is fixed (Linux x86-64, GCC, system Python), so paths are pinned,
-# not detected; preflight verifies both. compilerPath stays in the JSON so
-# VS Code can query system headers for files without a compile-db entry.
 IDE_COMPILER_PATH="/usr/bin/c++"
 IDE_PYTHON_PATH="/usr/bin/python3"
 
-# No PATH here: dotenv files don't expand $VAR, so it would replace PATH.
+# PATH is excluded because dotenv files do not expand existing variables.
 IDE_ROS_ENV_KEYS=(
   PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH
   ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
   ROS_AUTOMATIC_DISCOVERY_RANGE RMW_IMPLEMENTATION
 )
-IDE_ROS_ENV_PATH_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH)
+IDE_ROS_ENV_PATH_KEYS=(
+  PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH
+)
 
 IDE_VSCODE_DIR="${VENIMAPPING_WS}/.vscode"
 IDE_COMPILE_DB="${VENIMAPPING_WS}/build/compile_commands.json"
