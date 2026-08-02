@@ -22,9 +22,9 @@ set -Eeuo pipefail
 # --- Configuration ------------------------------------------------------------
 
 VENIMAPPING_WS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-VENIMAPPING_PACKAGES=(venimapping_camera venimapping_bringup)
-
-# Prefix order determines header resolution precedence.
+VENIMAPPING_PACKAGES=(
+  venimapping_bringup venimapping_camera
+)
 VENIMAPPING_UPSTREAM_PREFIXES=(
   "${HOME:-/nonexistent}/workspace/upstream/vimbax-ros2-driver/install"
   "${HOME:-/nonexistent}/workspace/upstream/ros2-jazzy/install"
@@ -35,7 +35,6 @@ IDE_CPP_STANDARD="c++23"
 IDE_COMPILER_PATH="/usr/bin/c++"
 IDE_PYTHON_PATH="/usr/bin/python3"
 
-# PATH is excluded because dotenv files do not expand existing variables.
 IDE_ROS_ENV_KEYS=(
   PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH
   ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
@@ -69,10 +68,6 @@ error() {
   printf '%s[venimapping] ERROR: %s%s\n' "${C_RED}" "$*" "${C_RESET}" >&2
 }
 
-# ide_commit TMP TARGET: move a finished artifact into place. Every writer
-# generates into a sibling tmp file and renames it here only on success, so
-# a failed or interrupted run never publishes a partially written artifact.
-# Warns, removes TMP, and returns 1 when the rename fails.
 ide_commit() {
   if mv -f "$1" "$2"; then
     return 0
