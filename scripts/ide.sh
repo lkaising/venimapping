@@ -22,38 +22,34 @@ set -Eeuo pipefail
 # --- Configuration ------------------------------------------------------------
 
 VENIMAPPING_WS="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-
 VENIMAPPING_PACKAGES=(venimapping_camera venimapping_bringup)
 
-# Header resolution order: driver overlay before the Jazzy underlay.
+# Driver overlay resolves before the Jazzy underlay.
 VENIMAPPING_UPSTREAM_PREFIXES=(
   "${HOME:-/nonexistent}/workspace/upstream/vimbax-ros2-driver/install"
   "${HOME:-/nonexistent}/workspace/upstream/ros2-jazzy/install"
 )
 
 IDE_CONFIG_NAME="Linux (venimapping)"
-IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten"
-IDE_GENERATED_NOTE+=" on every run. Manual edits are lost; change the generator instead."
-
+IDE_GENERATED_NOTE="GENERATED FILE -- owned by scripts/ide.sh and rewritten on every run. Manual edits are lost; change the generator instead."
 IDE_CPP_STANDARD="c++23"
 
-# The supported platform is fixed -- Linux x86-64, GCC, system Python -- so
-# the toolchain is pinned instead of detected; preflight verifies both paths
-# exist. compilerPath stays in the generated JSON because VS Code queries it
-# for system headers and defines when a file has no compilation-database
-# entry.
+# Platform is fixed (Linux x86-64, GCC, system Python), so paths are pinned,
+# not detected; preflight verifies both. compilerPath stays in the JSON so
+# VS Code can query system headers for files without a compile-db entry.
 IDE_COMPILER_PATH="/usr/bin/c++"
 IDE_PYTHON_PATH="/usr/bin/python3"
 
-# No PATH here: dotenv files do no $VAR expansion, so it would replace, not
-# extend, PATH in every VS Code-launched process.
-IDE_ROS_ENV_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH ROS_DISTRO
-  ROS_VERSION ROS_PYTHON_VERSION ROS_AUTOMATIC_DISCOVERY_RANGE
-  RMW_IMPLEMENTATION)
+# No PATH here: dotenv files don't expand $VAR, so it would replace PATH.
+IDE_ROS_ENV_KEYS=(
+  PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH
+  ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
+  ROS_AUTOMATIC_DISCOVERY_RANGE RMW_IMPLEMENTATION
+)
 IDE_ROS_ENV_PATH_KEYS=(PYTHONPATH LD_LIBRARY_PATH AMENT_PREFIX_PATH)
 
-IDE_COMPILE_DB="${VENIMAPPING_WS}/build/compile_commands.json"
 IDE_VSCODE_DIR="${VENIMAPPING_WS}/.vscode"
+IDE_COMPILE_DB="${VENIMAPPING_WS}/build/compile_commands.json"
 IDE_CPP_PROPERTIES="${IDE_VSCODE_DIR}/c_cpp_properties.json"
 IDE_ROS_ENV="${IDE_VSCODE_DIR}/ros.env"
 IDE_SETTINGS="${IDE_VSCODE_DIR}/settings.json"
