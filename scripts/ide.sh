@@ -68,12 +68,16 @@ error() {
   printf '%s[venimapping] ERROR: %s%s\n' "${C_RED}" "$*" "${C_RESET}" >&2
 }
 
+ide_rel() {
+  printf '%s\n' "${1#"${VENIMAPPING_WS}"/}"
+}
+
 ide_commit() {
   if mv -f "$1" "$2"; then
     return 0
   fi
   rm -f "$1"
-  warn "cannot write $2"
+  warn "cannot write $(ide_rel "$2")"
   return 1
 }
 
@@ -121,8 +125,8 @@ ide_merge_compile_commands() {
     fi
   done
   if [[ ${#parts[@]} -eq 0 ]]; then
-    warn "no per-package compile_commands.json under ${VENIMAPPING_WS}/build;" \
-      "leaving ${IDE_COMPILE_DB} alone"
+    warn "no per-package compile_commands.json under build/;" \
+      "leaving $(ide_rel "${IDE_COMPILE_DB}") alone"
     return 1
   fi
   tmp="${IDE_COMPILE_DB}.tmp"
@@ -142,11 +146,11 @@ with open(sys.argv[1], "w") as handle:
     handle.write("\n")
 ' "$tmp" 2>/dev/null; then
     rm -f "$tmp"
-    warn "cannot merge compilation databases into ${IDE_COMPILE_DB}"
+    warn "cannot merge compilation databases into $(ide_rel "${IDE_COMPILE_DB}")"
     return 1
   fi
   ide_commit "$tmp" "${IDE_COMPILE_DB}" || return 1
-  info "merged ${#parts[@]} compilation database(s) into ${IDE_COMPILE_DB}"
+  info "merged ${#parts[@]} compilation database(s) into $(ide_rel "${IDE_COMPILE_DB}")"
   return 0
 }
 
@@ -243,11 +247,11 @@ with open(sys.argv[1], "w") as handle:
     handle.write("\n")
 ' "$tmp" 2>/dev/null; then
     rm -f "$tmp"
-    warn "cannot generate ${IDE_CPP_PROPERTIES}"
+    warn "cannot generate $(ide_rel "${IDE_CPP_PROPERTIES}")"
     return 1
   fi
   ide_commit "$tmp" "${IDE_CPP_PROPERTIES}" || return 1
-  info "wrote ${IDE_CPP_PROPERTIES} (compiler ${IDE_COMPILER_PATH})"
+  info "wrote $(ide_rel "${IDE_CPP_PROPERTIES}") (compiler ${IDE_COMPILER_PATH})"
   return 0
 }
 
@@ -296,7 +300,7 @@ ide_capture_overlay_env() {
       done
     ' ide-capture "$setup" "${IDE_ROS_ENV_KEYS[@]}") || rc=$?
   if [[ $rc -ne 0 ]]; then
-    warn "cannot source $setup (rc=$rc); leaving the ROS environment file alone"
+    warn "cannot source $(ide_rel "$setup") (rc=$rc); leaving the ROS environment file alone"
     return 1
   fi
   printf '%s\n' "$captured"
@@ -362,7 +366,7 @@ ide_write_ros_env() {
     values[$key]=$(ide_filter_path_list "${values[$key]:-}")
   done
   if [[ -z "${values[PYTHONPATH]:-}" ]]; then
-    warn "sourcing the overlay exported no usable PYTHONPATH; leaving ${IDE_ROS_ENV} alone"
+    warn "sourcing the overlay exported no usable PYTHONPATH; leaving $(ide_rel "${IDE_ROS_ENV}") alone"
     return 1
   fi
   tmp="${IDE_ROS_ENV}.tmp"
@@ -380,14 +384,14 @@ ide_write_ros_env() {
     done
   } >"$tmp" 2>/dev/null || {
     rm -f "$tmp"
-    warn "cannot generate ${IDE_ROS_ENV}"
+    warn "cannot generate $(ide_rel "${IDE_ROS_ENV}")"
     return 1
   }
   ide_commit "$tmp" "${IDE_ROS_ENV}" || return 1
   local entries
   entries=$(awk -F: '/^PYTHONPATH=/ {print NF; exit}' "${IDE_ROS_ENV}") \
     || entries=""
-  info "wrote ${IDE_ROS_ENV} (${entries:-0} PYTHONPATH entries)"
+  info "wrote $(ide_rel "${IDE_ROS_ENV}") (${entries:-0} PYTHONPATH entries)"
   return 0
 }
 
@@ -403,9 +407,9 @@ ide_write_settings() {
   if [[ -e "${IDE_SETTINGS}" ]]; then
     if grep -qF -- '"python.defaultInterpreterPath"' "${IDE_SETTINGS}" 2>/dev/null \
       && grep -qF -- '"python.envFile"' "${IDE_SETTINGS}" 2>/dev/null; then
-      info "${IDE_SETTINGS} already configures the interpreter and env file; left untouched"
+      info "$(ide_rel "${IDE_SETTINGS}") already configures the interpreter and env file; left untouched"
     else
-      warn "${IDE_SETTINGS} exists; this script never edits it --" \
+      warn "$(ide_rel "${IDE_SETTINGS}") exists; this script never edits it --" \
         "add these keys to resolve ROS 2 Python imports:"
       warn "    \"python.defaultInterpreterPath\": \"${IDE_PYTHON_PATH}\","
       warn "    \"python.envFile\": \"\${workspaceFolder}/.vscode/ros.env\""
@@ -426,11 +430,11 @@ with open(sys.argv[1], "w") as handle:
     handle.write("\n")
 ' "$tmp" 2>/dev/null; then
     rm -f "$tmp"
-    warn "cannot generate ${IDE_SETTINGS}"
+    warn "cannot generate $(ide_rel "${IDE_SETTINGS}")"
     return 1
   fi
   ide_commit "$tmp" "${IDE_SETTINGS}" || return 1
-  info "wrote ${IDE_SETTINGS} (interpreter ${IDE_PYTHON_PATH}); reload VS Code to pick it up"
+  info "wrote $(ide_rel "${IDE_SETTINGS}") (interpreter ${IDE_PYTHON_PATH})"
   return 0
 }
 
@@ -448,7 +452,7 @@ main() {
     ide_write_ros_env || { rosenv=failed; rc=1; }
     ide_write_settings || { settings=failed; rc=1; }
   else
-    warn "cannot create ${IDE_VSCODE_DIR}"
+    warn "cannot create $(ide_rel "${IDE_VSCODE_DIR}")"
     cpp=failed rosenv=failed settings=failed rc=1
   fi
   printf -v summary 'compile-db=%s cpp-properties=%s ros-env=%s settings=%s' \
