@@ -797,6 +797,87 @@ class AcquisitionController {
 }  // namespace venimapping::camera
 ```
 
+### 15.5 Projected source tree after Phase D
+
+A navigational index: each entry names the phase that introduces it
+(`[A]`–`[D]`; `mod` = existing file that changes) and the section that
+specifies it. Unmarked entries exist today and are untouched.
+
+```
+venimapping/
+├── docs/
+│   └── architecture/
+│       └── image_acquisition.md              # this design; Phase B numbers and the
+│                                             #   Phase D decision review appended (§12–§13)
+├── scripts/
+│   └── env.sh                                # [D mod] optionally exports CYCLONEDDS_URI
+│                                             #   pointing at the tuned config (§10)
+└── src/
+    ├── venimapping_bringup/
+    │   ├── CMakeLists.txt                    # [D mod] also installs config/
+    │   ├── config/                           # [D]
+    │   │   ├── camera_info/
+    │   │   │   └── alvium.yaml               # calibration served via camera_info_url (§3.5, §10)
+    │   │   ├── camera_settings.xml           # optional pinned feature set incl. PixelFormat,
+    │   │   │                                 #   loaded via the driver's settings_file (§10)
+    │   │   └── cyclonedds.xml                # DDS socket-buffer tuning (§10)
+    │   └── launch/
+    │       └── camera.launch.py              # [D mod] + use_ros_time:=true, camera_info_url,
+    │                                         #   settings_file; autostream stays 0 (§10)
+    └── venimapping_camera/
+        ├── package.xml                       # [B mod] + <depend>sensor_msgs</depend>
+        ├── CMakeLists.txt                    # [A–C mod] target graph below
+        ├── include/venimapping_camera/       # ── public surface ──
+        │   ├── expected.hpp                  #     unchanged error vocabulary (§9)
+        │   ├── camera_gateway.hpp            # [A mod] + StreamStart/StreamStop/FeatureCommandRun (§7)
+        │   │                                 # [C mod] + FeatureInt*/FeatureBool* parity (§7)
+        │   ├── image_frame.hpp               # [B] ROS-free zero-copy frame type (§6.1, §15.1)
+        │   ├── frame_source.hpp              # [B] data-plane port: FrameSource, FrameSubscription,
+        │   │                                 #     FeedConfig, FeedStats (§6.3–§6.4, §15.2)
+        │   ├── acquisition_controller.hpp    # [C] policy layer: GetImage (S1/S2), FeedOpen,
+        │   │                                 #     FeedSession, GetImageOptions (§8, §15.4)
+        │   ├── vimbax_camera_gateway.hpp     # [A mod] adapter grows the three wrappers (§7)
+        │   └── vimbax_frame_source.hpp       # [B] adapter: rclcpp subscription → queue (§6.5)
+        ├── src/
+        │   ├── vimbax_camera_gateway.cpp     # [A mod, C mod]
+        │   ├── vimbax_frame_source.cpp       # [B] callback → seq → wrap → push; message_lost
+        │   │                                 #     counter wiring (§6.4–§6.5)
+        │   ├── acquisition_controller.cpp    # [C] sequencing, freshness, save/restore (§8)
+        │   ├── detail/                       # ── never installed (existing rule) ──
+        │   │   ├── gateway_util.hpp / .cpp   #     existing; gains the new diagnostics (§9)
+        │   │   ├── frame_queue.hpp / .cpp    # [B] ROS-free bounded drop-oldest queue — the one
+        │   │   │                             #     internally synchronized component (§6.4)
+        │   │   └── frame_factory.hpp         # [B] adapter-side ImageFrame construction; keeps the
+        │   │                                 #     type-erased keepalive out of public headers (§6.1)
+        │   ├── camera_gateway_probe.cpp      # [A mod] + stream-cycle / no-op checks; still disposable
+        │   └── camera_feed_probe.cpp         # [B, C mod] feed soak + latency/rate measurement,
+        │                                     #     then GetImage S1/S2 checks (§12)
+        └── test/                             # [B–C] ament_cmake_gtest (already a test_depend)
+            ├── fakes/
+            │   ├── fake_camera_gateway.hpp   # [C] reusable fixtures for policy tests (§12)
+            │   └── fake_frame_source.hpp     # [C]
+            ├── test_frame_queue.cpp          # [B] capacity/drop/wakeup/Close semantics (§12)
+            ├── test_image_frame.cpp          # [B] keepalive lifetime, span integrity (§12)
+            └── test_acquisition_controller.cpp  # [C] S1/S2 sequencing, restore-on-failure (§12)
+```
+
+The CMake target graph is the file-level expression of the §5 layer
+diagram:
+
+| Target | Kind | Links | Contains |
+|---|---|---|---|
+| `venimapping_camera_gateway_api` | INTERFACE (ROS-free) | — | all four port headers |
+| `venimapping_camera_vimbax_gateway` | library | api + `rclcpp` + `vimbax_camera_msgs` | control-plane adapter |
+| `venimapping_camera_vimbax_frame_source` | library | api + `rclcpp` + `sensor_msgs` | data-plane adapter (no `vimbax_camera_msgs`: it only touches topics) |
+| `venimapping_camera_acquisition` | library | **api only — no ROS** | policy layer; why its tests run without ROS |
+| `camera_gateway_probe`, `camera_feed_probe` | executables | concrete libraries | disposable hardware harnesses |
+
+Two properties to preserve as this lands: no new packages (a
+`venimapping_camera_session`-style split stays available later without
+moving public headers), and after Phase D the only executables are still
+probes — the production consumer of `AcquisitionController` is the
+camera-node work that arrives after this design's scope.
+
 ---
 
 *Copyright (C) 2026 Logan Kaising. All rights reserved.*
