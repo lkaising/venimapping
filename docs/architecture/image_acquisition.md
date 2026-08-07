@@ -147,7 +147,8 @@ repository.
   the read-only `camera_info_url` parameter. If the loaded calibration's
   resolution mismatches the live frame (ROI/binning change), it silently
   publishes a **blank** `CameraInfo` (all-zero `K`); consumers must treat
-  `K[0] == 0` as "no calibration." Calibration handling is deliberately out
+  `K[0] == 0` as "no calibration" — which is in fact the officially
+  documented convention in `CameraInfo.msg` itself. Calibration handling is deliberately out
   of the feed's Phase 1 scope but has a designed extension point (§13).
 
 ### 3.6 Connection and events
@@ -320,7 +321,10 @@ FrameSubscription::Close()         -> void   (idempotent, any thread)
   consumer's threading identical to the established bound-worker discipline.
   A consumer that wants push can trivially wrap `Take` in its own loop
   thread; the reverse (unwrapping callbacks into pull) requires exactly the
-  queue this design already builds.
+  queue this design already builds. This is also the shape the GenICam
+  ecosystem converged on: Harvester's `fetch(timeout)` and Spinnaker's
+  `GetNextImage(grabTimeout)` are both blocking pulls with timeouts over
+  bounded buffer pools.
 - **`Take` result shape.** `nullopt` means "no frame within the timeout" — a
   successful negative answer (the `ConnectionStatusGet() == false`
   precedent), normal during stream startup, low frame rates, or triggered
@@ -353,7 +357,10 @@ times are nanoseconds-scale).
   feed, the newest frame is worth more than the oldest; drop-oldest bounds
   both memory and staleness. **`queue_capacity = 1` is latest-frame-only
   mode** — the "sample the current image" use case falls out of the same
-  mechanism instead of needing a separate API.
+  mechanism instead of needing a separate API. Declaring the eviction
+  policy in the port contract follows Spinnaker's precedent of making the
+  same choice explicit as `StreamBufferHandlingMode`
+  (`NewestOnly`/`OldestFirst`).
 - **Loss is observable, never silent.** `FeedStats` carries monotonic
   counters, all queryable from the consumer thread:
   - `frames_received` — delivered into the queue;
@@ -474,10 +481,16 @@ camera see about now?"
   frame — freshness is defined as *received after the request*, a definition
   that works even across imperfect clock domains. When stamps are
   ROS-time-comparable (bringup guarantees this, §10), an optional stamp
-  floor tightens it.
+  floor tightens it. The bound to know: a frame received after the request
+  may still have been *exposed* slightly before it (exposure, readout, and
+  transfer precede publication); S2 is the strategy that closes that gap.
 - If idle: `Subscribe(capacity=1)` → `StreamStart()` → take the first frame
   → `StreamStop()` and unsubscribe (restore idle). First-frame latency
-  includes stream spin-up; the probe will measure it (§12).
+  includes stream spin-up plus DDS subscription discovery; the probe will
+  measure it (§12). If cold `GetImage` turns out to be frequent, the
+  controller may hold one persistent idle subscription instead (rclcpp's
+  own guidance treats temporary single-message subscriptions as a pattern
+  for isolated use, not repetition) — a Phase C tuning decision.
 
 **S2 — software-triggered single exposure (precise; ≥100 ms).** Answers
 "expose one frame *now* and give me that exact frame" — the semantics a
@@ -486,9 +499,14 @@ mapping measurement wants when correlating with external state.
 1. Save current trigger configuration (`TriggerSelector`, `TriggerMode`,
    `TriggerSource` via existing enum primitives).
 2. Configure: `TriggerSelector=FrameStart`, `TriggerMode=On`,
-   `TriggerSource=Software` — while not streaming, since GenICam cameras
-   lock transport/acquisition parameters during active acquisition; the
-   gateway's existing `FeatureAccessModeGet` is the runtime guard.
+   `TriggerSource=Software`, leaving `AcquisitionMode=Continuous` — the
+   established low-latency recipe for repeated one-shots (`SingleFrame`
+   mode tears acquisition down after every frame). Configuration happens
+   while not streaming: GenICam's `TLParamsLocked` makes payload-shaping
+   features read-only during acquisition, and although trigger features
+   typically stay writable while streaming, configure-before-start keeps
+   one rule for all features; the gateway's existing
+   `FeatureAccessModeGet` remains the per-camera runtime guard.
 3. `Subscribe` → `StreamStart()` (camera now waits, exposing nothing).
 4. `FeatureCommandRun("TriggerSoftware")` → exactly one exposure; `Take` it.
 5. Restore trigger configuration and prior streaming state (the probe's
@@ -502,13 +520,18 @@ precision is hardware-trigger territory — out of scope, noted in §14.
 
 ### 8.3 Configuration ordering (owned here, nowhere else)
 
-The rule the driver imposes and this layer enforces: **shape-changing
-features (`PixelFormat`, `Width`, `Height`, binning) only while not
-streaming**; the stream must be restarted after any of them (the driver
-computes `step` once at stream start, §14). Frame rate
+The rule the camera and the driver both impose and this layer enforces:
+**shape-changing features (`PixelFormat`, `Width`, `Height`, binning) only
+while not streaming**. GenICam's `TLParamsLocked` mechanism makes
+payload-size-affecting features read-only between acquisition start and
+stop, and the driver additionally computes `step` once at stream start
+(§14) — so the stream must be restarted after any of them. Frame rate
 (`AcquisitionFrameRate` via the float primitives) is the tuning knob the
-feed exposes first. The controller verifies effective values by readback,
-because the gateway contract explicitly does not.
+feed exposes first, with two SFNC nuances the controller owns: it paces
+free-run only (`TriggerMode=Off`), and on Alvium it takes effect only with
+`AcquisitionFrameRateEnable=true` (a `FeatureBool*` parity need, §7). The
+controller verifies effective values by readback, because the gateway
+contract explicitly does not.
 
 ### 8.4 Disconnect and silence
 
@@ -552,7 +575,7 @@ The launch file grows the following pinned, documented choices:
 | `PixelFormat` (via settings or controller config) | pinned to a gate-list format the pipeline consumes | Unsupported formats fail stream start; MSB-alignment surprises avoided by choosing 8-bit first (§3.4) |
 | `camera_info_url` | project calibration file, when calibration lands | Blank-`K` fallback otherwise (§3.5) |
 | `buffer_count` | default 7, revisit with measurements | Changeable only while not streaming |
-| DDS tuning | CycloneDDS socket-buffer sizing per driver README | RELIABLE full-rate images on localhost |
+| DDS tuning | `net.core.rmem_max`/`rmem_default` ≈ 8 MB (rmw_cyclonedds guidance for large samples; driver README concurs) | RELIABLE full-rate images on localhost |
 
 `command_feature_timeout` stays at its default (§3.3).
 
@@ -568,7 +591,7 @@ The launch file grows the following pinned, documented choices:
 | Rely on autostream (subscribe-to-start) | **Rejected** | Driver bug defeats explicit stops; `camera_info`/debug subscribers start the camera; failures at start are swallowed; §3.2. |
 | `image_transport` subscriber in the adapter | **Rejected (for now)** | The in-process pipeline wants raw frames; plain rclcpp on `image_raw` avoids a dependency and plugin surface. Compressed transports remain available to *other* tools directly from the driver. |
 | Expose a ROS "get image" service to other nodes | **Deferred** | No current external consumer; when one appears, a thin node wraps `AcquisitionController::GetImage` without changing the ports. |
-| Bypass the driver: direct VmbCPP/VmbC `FrameSource` adapter | **Deferred — the designed escape hatch** | Would eliminate the driver's copy + DDS hop (§3.4 driver-side copies, serialization) and expose SDK `frameID` and true device timestamps. Costs: owning acquisition-engine complexity the driver currently owns, a second SDK integration to maintain. The `FrameSource` port is *exactly* the seam that makes this a swap-in later; Phase B's measurements (§12) provide the trigger criteria (sustained CPU/latency/drop budgets violated at required resolution/rate). |
+| Bypass the driver: direct VmbCPP/VmbC `FrameSource` adapter | **Deferred — the designed escape hatch** | Would eliminate the driver-side copies and the DDS serialize/fragment/deserialize hop — which no RMW can remove for `sensor_msgs/Image` across processes in Jazzy (CycloneDDS ships no loaned-message support, and `Image`'s unbounded fields defeat POD data-sharing where loans do exist) — and expose SDK `frameID` and true device timestamps. Costs: owning acquisition-engine complexity the driver currently owns, a second SDK integration to maintain. The `FrameSource` port is *exactly* the seam that makes this a swap-in later; Phase B's measurements (§12) provide the trigger criteria (sustained CPU/latency/drop budgets violated at required resolution/rate). |
 | Recording/rosbag support in the feed | **Out of scope** | `ros2 bag record <ns>/image_raw` consumes the driver topic directly; needs nothing from this design (but note: with `autostream:=0`, something must be streaming — a bag session uses `FeedOpen` or the bare `StreamStart`). |
 
 ---
@@ -631,7 +654,7 @@ same save/restore skeleton), direct-SDK `FrameSource` adapter (§11).
 
 | # | Risk | Mitigation |
 |---|---|---|
-| 1 | RELIABLE, non-configurable publisher QoS at full rate causes DDS pressure on constrained hardware | Phase B measurements; CycloneDDS tuning (§10); BEST_EFFORT subscriber knob exists in `FeedConfig`; escape hatch §11 |
+| 1 | RELIABLE, non-configurable publisher QoS at full rate causes DDS pressure on constrained hardware | Phase B measurements; CycloneDDS socket tuning (§10); BEST_EFFORT subscriber knob in `FeedConfig`; intermediate option `rmw_zenoh` (implicit shared memory for large payloads, no code changes) before the §11 escape hatch |
 | 2 | Driver-side frame gaps are invisible on the wire (incomplete frames silently requeued) | Accepted for now: `receive_seq` + transport-loss counter cover consumer-side loss; driver logs cover its side; device-timestamp deltas could be added to stats later |
 | 3 | Mid-stream ROI/binning change makes `step` stale (driver computes once at start) | Policy layer forbids shape changes while streaming (§8.3); restart stream after reconfiguration |
 | 4 | `use_ros_time:=true` sacrifices exposure-accurate device timestamps that a future SLAM stage might want | Recorded trade-off; revisit alongside the direct-SDK adapter (which exposes device time properly); S2 exists precisely for exposure-accurate single captures |
