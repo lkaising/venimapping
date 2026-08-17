@@ -422,8 +422,7 @@ ide_write_settings() {
     else
       warn "$(ide_rel "${IDE_SETTINGS}") exists; this script never edits it --"
       warn "missing keys: ${missing[*]}"
-      warn "merge the block from scripts/cpp-style-plan.md section 5.2,"
-      warn "or delete the file and rerun scripts/ide.sh to regenerate it"
+      warn "delete the file and rerun scripts/ide.sh to regenerate it"
     fi
     return 0
   fi
