@@ -395,24 +395,35 @@ ide_write_ros_env() {
   return 0
 }
 
-# Create .vscode/settings.json with the two keys that point VS Code at the
-# interpreter and at ros.env -- but only when the file does not exist. An
-# existing settings.json is never parsed, merged, or rewritten: it is the
-# user's file, and both keys are static, so there is nothing to keep in sync
-# between runs. The existence probe below is a plain text search for the two
-# key names, not a parse; it never edits the file, only points out when the
-# keys are missing.
+# Create .vscode/settings.json with the C++ formatter keys and the two keys
+# that point VS Code at the interpreter and at ros.env -- but only when the
+# file does not exist. An existing settings.json is never parsed, merged, or
+# rewritten: it is the user's file, and every key is static, so there is
+# nothing to keep in sync between runs. The existence probe below is a plain
+# text search for the key names, not a parse; it never edits the file, only
+# points out when keys are missing. The C++ style policy itself lives in the
+# committed .clang-format, which this script never generates or touches.
 ide_write_settings() {
-  local tmp
+  local tmp key
+  if [[ ! -f "${VENIMAPPING_WS}/.clang-format" ]]; then
+    warn "missing .clang-format at the workspace root; VS Code C++ formatting" \
+      "will error until it is committed"
+  fi
   if [[ -e "${IDE_SETTINGS}" ]]; then
-    if grep -qF -- '"python.defaultInterpreterPath"' "${IDE_SETTINGS}" 2>/dev/null \
-      && grep -qF -- '"python.envFile"' "${IDE_SETTINGS}" 2>/dev/null; then
-      info "$(ide_rel "${IDE_SETTINGS}") already configures the interpreter and env file; left untouched"
+    local -a missing=()
+    for key in C_Cpp.formatting editor.defaultFormatter \
+      python.defaultInterpreterPath python.envFile; do
+      if ! grep -qF -- "\"${key}\"" "${IDE_SETTINGS}" 2>/dev/null; then
+        missing+=("$key")
+      fi
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+      info "$(ide_rel "${IDE_SETTINGS}") already configures the C++ formatter and Python environment; left untouched"
     else
-      warn "$(ide_rel "${IDE_SETTINGS}") exists; this script never edits it --" \
-        "add these keys to resolve ROS 2 Python imports:"
-      warn "    \"python.defaultInterpreterPath\": \"${IDE_PYTHON_PATH}\","
-      warn "    \"python.envFile\": \"\${workspaceFolder}/.vscode/ros.env\""
+      warn "$(ide_rel "${IDE_SETTINGS}") exists; this script never edits it --"
+      warn "missing keys: ${missing[*]}"
+      warn "merge the block from scripts/cpp-style-plan.md section 5.2,"
+      warn "or delete the file and rerun scripts/ide.sh to regenerate it"
     fi
     return 0
   fi
@@ -422,11 +433,25 @@ ide_write_settings() {
 import json, os, sys
 
 doc = {
+    "C_Cpp.formatting": "clangFormat",
+    "C_Cpp.clang_format_style": "file",
+    "C_Cpp.clang_format_fallbackStyle": "none",
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.detectIndentation": False,
+        "editor.formatOnSave": True,
+        "editor.insertSpaces": True,
+        "editor.rulers": [100],
+        "editor.tabSize": 2,
+    },
     "python.defaultInterpreterPath": os.environ["IDE_PY"],
     "python.envFile": "${workspaceFolder}/.vscode/ros.env",
 }
+text = json.dumps(doc, indent=4)
+# json.dumps has no inline-array form; the ruler list stays on one line.
+text = text.replace("[\n            100\n        ]", "[100]")
 with open(sys.argv[1], "w") as handle:
-    json.dump(doc, handle, indent=4)
+    handle.write(text)
     handle.write("\n")
 ' "$tmp" 2>/dev/null; then
     rm -f "$tmp"
@@ -434,7 +459,7 @@ with open(sys.argv[1], "w") as handle:
     return 1
   fi
   ide_commit "$tmp" "${IDE_SETTINGS}" || return 1
-  info "wrote $(ide_rel "${IDE_SETTINGS}") (interpreter ${IDE_PYTHON_PATH})"
+  info "wrote $(ide_rel "${IDE_SETTINGS}") (C++ format-on-save; interpreter ${IDE_PYTHON_PATH})"
   return 0
 }
 

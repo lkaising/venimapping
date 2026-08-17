@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft — one open decision (D6) blocks implementation |
+| Status | Implemented — D6 resolved to `ColumnLimit: 0` |
 | Scope | Root `.clang-format` policy file; C++ formatter settings in `scripts/ide.sh` |
 | Date | 2026-08-02 |
 
@@ -180,7 +180,7 @@ These facts shape the design and must hold for the artifacts to work:
   decision), ament lint enforcement (needs a pinned clang-format major and a
   clean baseline first), and `.vscode/extensions.json` (optional nicety,
   interacts with the `.vscode/` ownership model).
-- **D6 — OPEN: `ColumnLimit: 100` versus `ColumnLimit: 0`.** See below.
+- **D6 — RESOLVED: `ColumnLimit: 0`**, per the recommendation below.
 
 ### D6: the column-limit decision
 
