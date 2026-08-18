@@ -44,18 +44,22 @@ std::string Describe(const Error& error)
 
 class ProbeReport {
  public:
-  explicit ProbeReport(rclcpp::Logger logger) : logger_{std::move(logger)} {}
+  explicit ProbeReport(rclcpp::Logger logger)
+      : logger_{std::move(logger)} {}
 
-  void Pass(const std::string& check, const std::string& detail) {
+  void Pass(const std::string& check, const std::string& detail)
+  {
     RCLCPP_INFO(logger_, "PASS %s: %s", check.c_str(), detail.c_str());
   }
 
-  void Fail(const std::string& check, const std::string& detail) {
+  void Fail(const std::string& check, const std::string& detail)
+  {
     failure_count_ += 1;
     RCLCPP_ERROR(logger_, "FAIL %s: %s", check.c_str(), detail.c_str());
   }
 
-  void Skip(const std::string& check, const std::string& detail) {
+  void Skip(const std::string& check, const std::string& detail)
+  {
     skip_count_ += 1;
     RCLCPP_WARN(logger_, "SKIP %s: %s", check.c_str(), detail.c_str());
   }
@@ -104,8 +108,7 @@ ProbeOptions DeclareOptions(rclcpp::Node& node)
   return options;
 }
 
-void CheckFeaturesList(CameraGateway& camera, const ProbeOptions& options,
-                       ProbeReport& report)
+void CheckFeaturesList(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const auto features = camera.FeaturesListGet();
   if (!features) {
@@ -137,8 +140,7 @@ void CheckFeaturesList(CameraGateway& camera, const ProbeOptions& options,
   }
 }
 
-void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options,
-                         ProbeReport& report)
+void RunReadOnlySequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   // Each block re-checks rclcpp::ok() so the sequence stops starting new
   // requests once shutdown begins; a call already in flight completes with a
@@ -269,8 +271,7 @@ bool FloatValuesMatch(double expected, double actual, const FloatInfo& info)
   return std::abs(actual - expected) <= tolerance;
 }
 
-void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options,
-                           ProbeReport& report)
+void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const std::string& feature = options.float_feature;
   const std::string check = "FloatWrite(" + feature + ")";
@@ -303,33 +304,26 @@ void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options,
       info->min > info->max ||
       (info->inc_available && !std::isfinite(info->inc)) ||
       !std::isfinite(*original)) {
-    report.Skip(check, "driver metadata or current value unusable: min=" +
-                           std::to_string(info->min) +
-                           " max=" + std::to_string(info->max) +
-                           " current=" + std::to_string(*original));
+    report.Skip(check, "driver metadata or current value unusable: min=" + std::to_string(info->min) + " max=" + std::to_string(info->max) + " current=" + std::to_string(*original));
     return;
   }
 
   const double target = ChooseFloatTarget(*info, *original);
   if (target == *original) {
-    report.Skip(check, "could not choose a target different from " +
-                           std::to_string(*original));
+    report.Skip(check, "could not choose a target different from " + std::to_string(*original));
     return;
   }
 
   if (auto set = camera.FeatureFloatSet(feature, target); !set) {
-    report.Fail(check, "set to " + std::to_string(target) + ": " +
-                           Describe(set.error()));
+    report.Fail(check, "set to " + std::to_string(target) + ": " + Describe(set.error()));
     return;
   }
 
   if (auto readback = camera.FeatureFloatGet(feature);
       readback && FloatValuesMatch(target, *readback, *info)) {
-    report.Pass(check, "wrote " + std::to_string(target) + ", read back " +
-                           std::to_string(*readback));
+    report.Pass(check, "wrote " + std::to_string(target) + ", read back " + std::to_string(*readback));
   } else if (readback) {
-    report.Fail(check, "wrote " + std::to_string(target) + " but read back " +
-                           std::to_string(*readback));
+    report.Fail(check, "wrote " + std::to_string(target) + " but read back " + std::to_string(*readback));
   } else {
     report.Fail(check, "readback: " + Describe(readback.error()));
   }
@@ -337,27 +331,21 @@ void RunFloatWriteSequence(CameraGateway& camera, const ProbeOptions& options,
   // Restoration runs regardless of the verification outcome above; leaving
   // the camera modified is the one result the write path must not produce.
   if (auto restore = camera.FeatureFloatSet(feature, *original); !restore) {
-    report.Fail(check + "/restore", "RESTORATION FAILED, camera left at " +
-                                        std::to_string(target) + ": " +
-                                        Describe(restore.error()));
+    report.Fail(check + "/restore", "RESTORATION FAILED, camera left at " + std::to_string(target) + ": " + Describe(restore.error()));
     return;
   }
   if (auto verify = camera.FeatureFloatGet(feature);
       verify && FloatValuesMatch(*original, *verify, *info)) {
     report.Pass(check + "/restore", "restored to " + std::to_string(*verify));
   } else if (verify) {
-    report.Fail(check + "/restore", "RESTORATION MISMATCH: expected " +
-                                        std::to_string(*original) +
-                                        ", read back " +
-                                        std::to_string(*verify));
+    report.Fail(check + "/restore", "RESTORATION MISMATCH: expected " + std::to_string(*original) + ", read back " + std::to_string(*verify));
   } else {
     report.Fail(check + "/restore",
                 "restoration readback: " + Describe(verify.error()));
   }
 }
 
-void RunEnumWriteSequence(CameraGateway& camera, const ProbeOptions& options,
-                          ProbeReport& report)
+void RunEnumWriteSequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const std::string& feature = options.write_enum_feature;
   const std::string check = "EnumWrite(" + feature + ")";
@@ -385,8 +373,7 @@ void RunEnumWriteSequence(CameraGateway& camera, const ProbeOptions& options,
   }
 
   const auto target = std::find_if(
-      info->available_values.begin(), info->available_values.end(),
-      [&](const std::string& candidate) { return candidate != *original; });
+      info->available_values.begin(), info->available_values.end(), [&](const std::string& candidate) { return candidate != *original; });
   if (target == info->available_values.end()) {
     report.Skip(check, "no available value other than " + *original);
     return;
@@ -410,17 +397,14 @@ void RunEnumWriteSequence(CameraGateway& camera, const ProbeOptions& options,
   // Restoration runs regardless of the verification outcome above; leaving
   // the camera modified is the one result the write path must not produce.
   if (auto restore = camera.FeatureEnumSet(feature, *original); !restore) {
-    report.Fail(check + "/restore", "RESTORATION FAILED, camera left at " +
-                                        *target + ": " +
-                                        Describe(restore.error()));
+    report.Fail(check + "/restore", "RESTORATION FAILED, camera left at " + *target + ": " + Describe(restore.error()));
     return;
   }
   if (auto verify = camera.FeatureEnumGet(feature);
       verify && *verify == *original) {
     report.Pass(check + "/restore", "restored to " + *verify);
   } else if (verify) {
-    report.Fail(check + "/restore", "RESTORATION MISMATCH: expected " +
-                                        *original + ", read back " + *verify);
+    report.Fail(check + "/restore", "RESTORATION MISMATCH: expected " + *original + ", read back " + *verify);
   } else {
     report.Fail(check + "/restore",
                 "restoration readback: " + Describe(verify.error()));
@@ -447,11 +431,9 @@ int RunProbe()
   try {
     // Scope: the gateway and its service clients are destroyed before the
     // executor stops and the node is torn down.
-    auto created = VimbaXCameraGateway::Create(*node, options.camera_namespace,
-                                               options.timeout);
+    auto created = VimbaXCameraGateway::Create(*node, options.camera_namespace, options.timeout);
     if (!created) {
-      RCLCPP_FATAL(node->get_logger(), "%s",
-                   Describe(created.error()).c_str());
+      RCLCPP_FATAL(node->get_logger(), "%s", Describe(created.error()).c_str());
     } else if (auto bound = (*created)->BindToCurrentThread(); !bound) {
       RCLCPP_FATAL(node->get_logger(), "%s", Describe(bound.error()).c_str());
     } else {
@@ -488,14 +470,14 @@ int RunProbe()
       } else {
         RCLCPP_ERROR(node->get_logger(),
                      "probe complete: %d check(s) failed, %d skipped",
-                     report.FailureCount(), report.SkipCount());
+                     report.FailureCount(),
+                     report.SkipCount());
       }
     }
   } catch (const std::exception& e) {
     // Catching here keeps the stack from unwinding past the joinable
     // executor thread below, which would call std::terminate.
-    RCLCPP_FATAL(node->get_logger(), "probe aborted by exception: %s",
-                 e.what());
+    RCLCPP_FATAL(node->get_logger(), "probe aborted by exception: %s", e.what());
   } catch (...) {
     RCLCPP_FATAL(node->get_logger(), "probe aborted by unknown exception");
   }
@@ -520,8 +502,7 @@ int main(int argc, char** argv)
     // A throw before RunProbe()'s own handling exists -- e.g. a mistyped
     // parameter in DeclareOptions() -- still gets a message and an orderly
     // shutdown.
-    std::fprintf(stderr, "camera_gateway_probe: unhandled exception: %s\n",
-                 e.what());
+    std::fprintf(stderr, "camera_gateway_probe: unhandled exception: %s\n", e.what());
   } catch (...) {
     std::fprintf(stderr, "camera_gateway_probe: unhandled unknown exception\n");
   }

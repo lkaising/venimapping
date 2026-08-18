@@ -1,0 +1,38 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+ColumnLimit: 0
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ContinuationIndentWidth: 4
+
+AccessModifierOffset: -1
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: false
+  AfterStruct: false
+  BeforeCatch: false
+  BeforeElse: false
+  SplitEmptyFunction: true
+
+AllowShortFunctionsOnASingleLine: Inline
+
+BinPackParameters: false
+BinPackArguments: false
+
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+
+ReflowComments: false
+...
