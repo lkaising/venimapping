@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Implemented locally, section 9 verification passing (all gates, 2026-08-18); awaiting human commits per section 10 steps 2–3 |
+| Status | Rollout committed (02c8ae4, 0efc4e2), section 9 gates passing; editor follow-up per T-F (section 2.4 analysis, 5.2 editor keys, section 6 items) implemented locally, awaiting commit |
 | Scope | Root `.clang-tidy` policy file; toolchain update; analysis settings in `scripts/ide.sh` |
 | Date | 2026-08-18 |
 
@@ -105,6 +105,51 @@ the 18 baseline disappeared, and the set under 20 is identical with and
 without `ExtraArgs`. All four are resolved and fixed — section 8.1 — which
 returns the tree to exactly this 10-finding baseline under 20.
 
+### 2.4 The editor parse blocker (cpptools macro forwarding)
+
+Found the day analysis was first enabled in the editor: every TU died in
+cpptools' clang-tidy with parse errors from inside the libstdc++ headers
+("Error while processing" at 1:1), while CLI runs on the same tree stayed
+clean. Root cause: by default cpptools invokes clang-tidy not with the
+compile database's arguments but with a command line synthesized from the
+IntelliSense configuration, which emulates the configured compiler
+(`/usr/bin/c++`, GCC 13) by forwarding its several hundred predefined
+macros. Predefined macros are a compiler's description of its own
+abilities; force-fed to a clang frontend, they make libstdc++ take
+GCC-only branches that clang cannot parse. Which branch trips first
+depends on the clang major doing the parsing — both observed failures were
+reproduced from the CLI by injecting the specific macros:
+
+- Bundled clang-tidy 22: GCC's `__STDCPP_FLOAT16/32/64/128_T__` /
+  `__STDCPP_BFLOAT16_T__` flip the extended-floating-point branches
+  (`_Float32`, `__bfloat16_t`, `bf16` literals across `type_traits`,
+  `std_abs.h`, `c++config.h`), which clang 22 rejects.
+- Pinned clang-tidy-20: GCC's `__FLT128_DIG__` (with
+  `_GLIBCXX_HAVE_FLOAT128_MATH` from `os_defines.h:60`) flips `<format>`
+  into its `_Float128` branch (`format:1282`), which clang 20 rejects —
+  clang 22 happens to accept `_Float128` in C++, which is why the two
+  majors fail on different branches.
+
+A first fix — `-U` undefs for the five `__STDCPP_*` macros in `ExtraArgs`
+— was tried and rejected: it cured the 22 symptoms, whereupon the 20
+symptoms surfaced. Counteracting the injection macro-by-macro, with the
+trip point a function of the clang major, is unwinnable. The root fix is
+`C_Cpp.codeAnalysis.clangTidy.useBuildPath: true` (T-F, section 5.2): with
+`compileCommands` set, cpptools passes `-p <build dir>` instead of the
+synthesized arguments, making the editor invocation identical to the
+verified CLI gate. Nothing is forwarded, so nothing needs undefining, and
+`ExtraArgs` stays exactly the T-C workaround.
+
+Separately, the bundled 22 reports three findings on the normalized tree
+that clang-tidy 18/20 do not — all wrong here, and all check-behavior
+deltas rather than parse fallout (they survive a clean parse):
+`misc-use-internal-linkage` on `ServiceName` and `CheckDriverError`, both
+declared in `gateway_util.hpp` and called from the other TU (static would
+not link), and `misc-const-correctness` on `unbound`
+(`vimbax_camera_gateway.cpp:174`), the in-out `expected` argument of
+`compare_exchange_strong`, which takes a non-const reference. These three
+are the measured justification for T-F's binary pin.
+
 ## 3. Environment constraints
 
 - **cpptools integration is one key.** `C_Cpp.codeAnalysis.clangTidy.enabled`
@@ -115,8 +160,11 @@ returns the tree to exactly this 10-finding baseline under 20.
 - **Version skew.** CLI 18 (or 20 after the toolchain update) versus bundled
   22. A curated explicit check list keeps this benign — no `-*`-relative
   defaults to drift — but check behavior can still differ across majors.
-  Full closure would pin `...clangTidy.path` to the system binary; not done
-  by default, same stance as the style plan's clang-format contingency.
+  Closure is pinning `...clangTidy.path` to the system binary — originally
+  deferred, reversed for cause per T-F after the bundled 22 produced three
+  false positives on the normalized tree (section 2.4). Pinning closes the
+  skew but not the parse blocker; `useBuildPath` closes that (T-F,
+  section 2.4).
 - **Compile flags come from the ide.sh-merged database** for CLI runs
   (`-p build`); cpptools uses its own IntelliSense configuration. Both parse
   the same tree; findings matched in trials.
@@ -152,13 +200,27 @@ returns the tree to exactly this 10-finding baseline under 20.
   plain `apt install`) and sits closer to the cpptools-bundled 22, halving
   the CLI-versus-editor skew at no extra install cost. Newer majors (21/22)
   were rejected because they require the third-party apt.llvm.org repo,
-  against this plan's minimal-machine-prep stance; the documented closure
-  for the residual skew remains pinning
-  `C_Cpp.codeAnalysis.clangTidy.path`. clang-format is deliberately not
+  against this plan's minimal-machine-prep stance; the residual skew is
+  closed by pinning `C_Cpp.codeAnalysis.clangTidy.path` (T-F,
+  section 5.2). clang-format is deliberately not
   updated: no friction exists there, and a newer major would risk
   invalidating the normalization baseline for nothing.
 - **T-E — Editor-only, warnings-only.** No CI gate, no `WarningsAsErrors`.
   Enforcement escalation is deferred work.
+- **T-F — Editor runs the pinned binary against the build path (reverses
+  the original no-pin stance).** Two settings, both written by ide.sh
+  (section 5.2): `...clangTidy.path` pinned to `/usr/bin/clang-tidy-20`,
+  and `...clangTidy.useBuildPath: true`. The original stance (section 3)
+  left the path unset — accepting bundled-22 skew as theoretical, the same
+  posture as the style plan's clang-format contingency. The skew then
+  materialized as three false positives on the normalized tree the moment
+  the editor first ran analysis (section 2.4); that measurement is the
+  justification for the reversal. `useBuildPath` is the root fix for the
+  section 2.4 parse blocker: it replaces cpptools' synthesized
+  GCC-emulation arguments with the same `-p build` invocation the CLI gate
+  verifies, so the editor and CLI run the same binary with the same
+  arguments against the same config. An `-U`-undef counter in `ExtraArgs`
+  was rejected as symptom-chasing (section 2.4).
 - **T1 — RESOLVED: option (a), `NOLINT` trailers.** Each of `domain()`,
   `code()` and `text()` in `expected.hpp` takes a trailing
   `// NOLINT(readability-identifier-naming)`; the `FunctionCase` option
@@ -245,27 +307,40 @@ Notes:
 
 ### 5.2 `settings.json` addition (generated by ide.sh when absent)
 
-One key, inserted after the two `C_Cpp.clang_format_*` keys
+Three keys, inserted after the two `C_Cpp.clang_format_*` keys
 (`clang_format_style`, `clang_format_fallbackStyle`) and `C_Cpp.formatting`:
 
 ```json
     "C_Cpp.codeAnalysis.clangTidy.enabled": true,
+    "C_Cpp.codeAnalysis.clangTidy.path": "/usr/bin/clang-tidy-20",
+    "C_Cpp.codeAnalysis.clangTidy.useBuildPath": true,
 ```
 
-Everything else about the document is unchanged from the style plan's 5.2.
+Per T-F: the `path` pin makes the editor run the same binary as the
+verified CLI baseline, and `useBuildPath` makes it run with the same
+arguments (`-p` against `compileCommands` instead of synthesized
+GCC-emulation arguments — section 2.4). With both unset the bundled 22
+runs against synthesized arguments. Everything else about the document is
+unchanged from the style plan's 5.2.
 
 ## 6. `scripts/ide.sh` changes
 
 Confined to `ide_write_settings()` and its messages, mirroring the style
 rollout:
 
-1. **Fresh-file document**: add the section 5.2 key to the generator's `doc`.
-2. **Existence probe**: add `C_Cpp.codeAnalysis.clangTidy.enabled` to the
-   probed-marker list (making five). Warn path and its never-edit stance are
-   already generic ("missing keys: ..."); no message changes needed.
+1. **Fresh-file document**: add the section 5.2 keys to the generator's
+   `doc`.
+2. **Existence probe**: add `C_Cpp.codeAnalysis.clangTidy.enabled`,
+   `C_Cpp.codeAnalysis.clangTidy.path` and
+   `C_Cpp.codeAnalysis.clangTidy.useBuildPath` to the probed-marker list
+   (making seven). Warn path and its never-edit stance are already generic
+   ("missing keys: ..."); no message changes needed.
 3. **Policy-file check**: extend the existing `.clang-format` warn-only check
    to also warn when `.clang-tidy` is absent. Non-fatal, does not affect the
    summary.
+4. **Pinned-binary check**: warn (non-fatal, same shape as item 3) when
+   `/usr/bin/clang-tidy-20` — the binary section 5.2 pins — is missing,
+   since a dangling pin silently breaks editor analysis.
 
 ## 7. Toolchain update
 
