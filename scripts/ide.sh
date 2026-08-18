@@ -409,10 +409,14 @@ ide_write_settings() {
     warn "missing .clang-format at the workspace root; VS Code C++ formatting" \
       "will error until it is committed"
   fi
+  if [[ ! -f "${VENIMAPPING_WS}/.clang-tidy" ]]; then
+    warn "missing .clang-tidy at the workspace root; VS Code C++ analysis" \
+      "will not follow the project policy until it is committed"
+  fi
   if [[ -e "${IDE_SETTINGS}" ]]; then
     local -a missing=()
-    for key in C_Cpp.formatting editor.defaultFormatter \
-      python.defaultInterpreterPath python.envFile; do
+    for key in C_Cpp.formatting C_Cpp.codeAnalysis.clangTidy.enabled \
+      editor.defaultFormatter python.defaultInterpreterPath python.envFile; do
       if ! grep -qF -- "\"${key}\"" "${IDE_SETTINGS}" 2>/dev/null; then
         missing+=("$key")
       fi
@@ -435,6 +439,7 @@ doc = {
     "C_Cpp.formatting": "clangFormat",
     "C_Cpp.clang_format_style": "file",
     "C_Cpp.clang_format_fallbackStyle": "none",
+    "C_Cpp.codeAnalysis.clangTidy.enabled": True,
     "[cpp]": {
         "editor.defaultFormatter": "ms-vscode.cpptools",
         "editor.detectIndentation": False,
