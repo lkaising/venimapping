@@ -37,7 +37,7 @@ using venimapping::camera::VimbaXCameraGateway;
 std::string Describe(const Error& error)
 {
   const char* const domain =
-      error.domain() == ErrorDomain::driver ? "driver" : "gateway";
+      error.domain() == ErrorDomain::kDriver ? "driver" : "gateway";
   return std::string{"["} + domain + " error " + std::to_string(error.code()) +
          "] " + error.text();
 }

@@ -100,7 +100,7 @@ template <typename Service, typename Future>
 
 Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
     rclcpp::Node& node,
-    std::string camera_namespace,
+    const std::string& camera_namespace,
     std::chrono::milliseconds timeout)
 {
   if (camera_namespace.empty()) {
@@ -119,7 +119,7 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
 
   try {
     return std::unique_ptr<VimbaXCameraGateway>{
-        new VimbaXCameraGateway{node, std::move(camera_namespace), timeout}};
+        new VimbaXCameraGateway{node, camera_namespace, timeout}};
   } catch (const std::exception& e) {
     return std::unexpected(detail::GatewayError(
         detail::GatewayDiagnostic::kConstructionFailed,
@@ -132,7 +132,7 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::Create(
 }
 
 VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
-                                         std::string camera_namespace,
+                                         const std::string& camera_namespace,
                                          std::chrono::milliseconds timeout)
     : timeout_{timeout},
       context_{node.get_node_base_interface()->get_context()},

@@ -62,7 +62,7 @@ class VimbaXCameraGateway final : public CameraGateway {
   // duration; thread-scheduling overhead can stretch each bound slightly, so
   // the total is not a hard limit.
   //
-  // Fails with domain() == ErrorDomain::gateway when camera_namespace is empty,
+  // Fails with domain() == ErrorDomain::kGateway when camera_namespace is empty,
   // when timeout is not positive, or when client construction throws (exception
   // text preserved).
   //
@@ -71,7 +71,7 @@ class VimbaXCameraGateway final : public CameraGateway {
   // availability is checked per call.
   [[nodiscard]] static Expected<std::unique_ptr<VimbaXCameraGateway>> Create(
       rclcpp::Node& node,
-      std::string camera_namespace,
+      const std::string& camera_namespace,
       std::chrono::milliseconds timeout);
 
   VimbaXCameraGateway(const VimbaXCameraGateway&) = delete;
@@ -108,7 +108,7 @@ class VimbaXCameraGateway final : public CameraGateway {
 
  private:
   VimbaXCameraGateway(rclcpp::Node& node,
-                      std::string camera_namespace,
+                      const std::string& camera_namespace,
                       std::chrono::milliseconds timeout);
 
   template <typename Service>
