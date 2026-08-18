@@ -299,7 +299,7 @@ Expected<std::string> VimbaXCameraGateway::FeatureEnumGet(const std::string& nam
   return CallChecked<ServiceT>(
              *feature_enum_get_client_,
              MakeRemoteFeatureRequest<ServiceT>(name))
-      .transform([](auto response) { return std::move(response->value); });
+      .transform([](const auto& response) { return std::move(response->value); });
 }
 
 Expected<void> VimbaXCameraGateway::FeatureEnumSet(const std::string& name,
@@ -318,7 +318,7 @@ Expected<EnumInfo> VimbaXCameraGateway::FeatureEnumInfoGet(const std::string& na
   return CallChecked<ServiceT>(
              *feature_enum_info_get_client_,
              MakeRemoteFeatureRequest<ServiceT>(name))
-      .transform([](auto response) {
+      .transform([](const auto& response) {
         return EnumInfo{
             .possible_values = std::move(response->possible_values),
             .available_values = std::move(response->available_values),
@@ -346,7 +346,7 @@ Expected<std::vector<std::string>> VimbaXCameraGateway::FeaturesListGet()
   return CallChecked<ServiceT>(
              *features_list_get_client_,
              MakeRemoteDeviceRequest<ServiceT>())
-      .transform([](auto response) { return std::move(response->feature_list); });
+      .transform([](const auto& response) { return std::move(response->feature_list); });
 }
 
 Expected<CameraStatus> VimbaXCameraGateway::CameraStatusGet()
@@ -355,7 +355,7 @@ Expected<CameraStatus> VimbaXCameraGateway::CameraStatusGet()
   return CallChecked<ServiceT>(
              *status_client_,
              std::make_shared<ServiceT::Request>())
-      .transform([](auto response) {
+      .transform([](const auto& response) {
         return CameraStatus{
             .model_name = std::move(response->model_name),
             .device_serial_number = std::move(response->device_serial_number),

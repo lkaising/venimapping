@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft — T1–T3 resolved; section 7 verification run and passing under `clang-tidy-20`, with four new findings awaiting disposition (section 8.1) |
+| Status | Resolved and verified — no open decisions; all findings have a disposition. Remaining work is the rollout itself (sections 8, 5.1, 6 per section 10) |
 | Scope | Root `.clang-tidy` policy file; toolchain update; analysis settings in `scripts/ide.sh` |
 | Date | 2026-08-18 |
 
@@ -102,7 +102,8 @@ continuations of the form `[](auto response) { ... }`, where the
 `shared_ptr` response parameter is taken by value but only dereferenced;
 18's copy of the check does not reach into lambda parameters. Nothing from
 the 18 baseline disappeared, and the set under 20 is identical with and
-without `ExtraArgs`. Dispositions for the four are open — section 8.1.
+without `ExtraArgs`. All four are resolved and fixed — section 8.1 — which
+returns the tree to exactly this 10-finding baseline under 20.
 
 ## 3. Environment constraints
 
@@ -320,29 +321,41 @@ In `vimbax_camera_gateway.cpp`:
 
 That accounts for all 10 findings of the section 2.3 baseline.
 
-### 8.1 Pending human review — the clang-tidy-20 delta
+### 8.1 The clang-tidy-20 delta — RESOLVED, and already applied
 
 The four `performance-unnecessary-value-param` findings that only
-clang-tidy 20 reports (section 2.3) are **not decided**. Each is a
-`.transform()` continuation whose `response` parameter — a `shared_ptr` —
-is taken by value and only dereferenced:
+clang-tidy 20 reports (section 2.3) are resolved as proposed: each
+`.transform()` continuation now takes its `response` parameter by
+`const auto&`.
 
-| Site | Proposed disposition |
-|---|---|
-| `vimbax_camera_gateway.cpp:302` | `[](auto response)` → `[](const auto& response)` |
-| `vimbax_camera_gateway.cpp:321` | as above |
-| `vimbax_camera_gateway.cpp:349` | as above |
-| `vimbax_camera_gateway.cpp:358` | as above |
+| Site | Function | Edit |
+|---|---|---|
+| `vimbax_camera_gateway.cpp:302` | `FeatureEnumGet` | `[](auto response)` → `[](const auto& response)` |
+| `vimbax_camera_gateway.cpp:321` | `FeatureEnumInfoGet` | as above |
+| `vimbax_camera_gateway.cpp:349` | `FeaturesListGet` | as above |
+| `vimbax_camera_gateway.cpp:358` | `CameraStatusGet` | as above |
 
-Fixing rather than annotating is *proposed* on two grounds: it matches the
-disposition already chosen for the same check at `:135`, and `shared_ptr`
-constness is shallow, so `std::move(response->field)` still moves through a
-`const auto&` — the lambda bodies are untouched. The counter-argument to
-weigh before accepting: `expected::transform` invokes the continuation with
-an rvalue, so the by-value parameter is move-constructed rather than
-copied, and the check therefore overstates the real cost — which would
-argue for `NOLINT` trailers instead. Either way the choice is a human one;
-resolve before commit 1 and fold the outcome into the list above.
+The deciding argument is that `const auto&` is never worse. On the current
+chains it costs nothing — `expected::transform` hands the continuation an
+rvalue either way — and if a future refactor ever transforms an lvalue, the
+by-reference form is the one that avoids a real `shared_ptr` copy. It also
+unifies all ten `.transform()` lambdas in the file on a single parameter
+form. The bodies are untouched: `shared_ptr` constness is shallow, so every
+`std::move(response->field)` still moves.
+
+The counter-argument was weighed rather than dismissed, and it is correct on
+its own terms — because the chain is an rvalue the by-value parameter is
+move-constructed, not copied, so the check overstated the cost and a
+`NOLINT` trailer would have been defensible. What sank it is that the
+by-value form had no advantage of its own to defend: not clearer, not
+faster, not more general. Annotating would have meant carrying four
+permanent suppressions to preserve nothing.
+
+This edit is applied to the tree already, ahead of the rest of section 8;
+the remainder lands with commit 1. Re-measured after it: the full 5.1
+config under `clang-tidy-20` reports exactly the 10-finding section 2.3
+baseline, 0 errors — the four lambda findings gone, nothing new introduced,
+and the 18 and 20 finding sets now agree.
 
 ## 9. Verification
 
