@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft — implementation sidelined; three open decisions (T1–T3) |
+| Status | Draft — T1–T3 resolved; section 7 verification run and passing under `clang-tidy-20`, with four new findings awaiting disposition (section 8.1) |
 | Scope | Root `.clang-tidy` policy file; toolchain update; analysis settings in `scripts/ide.sh` |
-| Date | 2026-08-17 |
+| Date | 2026-08-18 |
 
 This document is the source of truth for adding clang-tidy static analysis to
 the workspace. It is the companion to the (now implemented) C++ style
@@ -36,7 +36,7 @@ known violation, the lowercase `ErrorDomain` enumerators.
 | `/usr/bin/c++` (libstdc++) | GCC 13.3.0 | Provides the standard library clang-tidy parses against |
 | cpptools (active) | 1.33.8 | 1.32.2 also on disk; 1.33.8 is the loaded one |
 | cpptools bundled clang-tidy | 22.1.3 | Used when `C_Cpp.codeAnalysis.clangTidy.path` is unset |
-| Ubuntu 24.04 archive | `clang-tidy-19` (19.1.1), `clang-tidy-20` | Plain `apt install`; installs alongside 18, does not replace it |
+| Ubuntu 24.04 archive | `clang-tidy-19` (19.1.1), `clang-tidy-20` (20.1.2, `noble-updates`) | Plain `apt install`; installs alongside 18, does not replace it. `clang-tidy-20` is the T-D choice |
 
 ### 2.2 The parse blocker (and its fix)
 
@@ -84,10 +84,25 @@ The curated section 5.1 config yields **10 findings, 0 errors**:
 | Site | Check | Disposition |
 |---|---|---|
 | `expected.hpp:27,28` (`driver`, `gateway`) | `readability-identifier-naming` | The known `ErrorDomain` inconsistency; rename to `kDriver`/`kGateway` (2 definition sites, 3 use sites, 1 comment) |
-| `expected.hpp:53,57,60` (`domain`, `code`, `text`) | `readability-identifier-naming` | False positives: Google-sanctioned lower_case trivial accessors — open decision T1 |
-| `expected.hpp:53,57,60` | `modernize-use-nodiscard` | Open decision T2 |
-| `gateway_util.hpp:19` (`GatewayDiagnostic`) | `performance-enum-size` | Open decision T3 |
+| `expected.hpp:53,57,60` (`domain`, `code`, `text`) | `readability-identifier-naming` | False positives: Google-sanctioned lower_case trivial accessors — `NOLINT` trailers per resolved T1 |
+| `expected.hpp:53,57,60` | `modernize-use-nodiscard` | Add `[[nodiscard]]` per resolved T2 |
+| `gateway_util.hpp:19` (`GatewayDiagnostic`) | `performance-enum-size` | Single annotated `NOLINT` per resolved T3 |
 | `vimbax_camera_gateway.cpp:135` | `performance-unnecessary-value-param` | Real: the constructor copies `camera_namespace` but only reads it; take `const std::string&`. (`Create()` at `:103` is correctly not flagged — it moves.) |
+
+**Provenance, and the clang-tidy-20 delta.** Everything above was measured
+under clang-tidy 18.1.3 and stands as the record of that measurement; it
+reproduces exactly — 10 findings, 0 errors, row for row — re-running the
+5.1 config under 18 on 2026-08-18. Section 7's verification re-measures
+under `clang-tidy-20` (T-D), and the group wildcards in `Checks` enable
+checks that did not exist in 18, so the finding set can grow. It does:
+**14 findings, 0 errors** under 20 — the same 10, plus four new
+`performance-unnecessary-value-param` hits at `vimbax_camera_gateway.cpp`
+`:302`, `:321`, `:349` and `:358`. All four are `.transform()`
+continuations of the form `[](auto response) { ... }`, where the
+`shared_ptr` response parameter is taken by value but only dereferenced;
+18's copy of the check does not reach into lambda parameters. Nothing from
+the 18 baseline disappeared, and the set under 20 is identical with and
+without `ExtraArgs`. Dispositions for the four are open — section 8.1.
 
 ## 3. Environment constraints
 
@@ -96,7 +111,7 @@ The curated section 5.1 config yields **10 findings, 0 errors**:
   `...clangTidy.path` unset the bundled binary (22.1.3) runs; `.clang-tidy`
   is discovered upward from each source like `.clang-format`. Key names
   verified against the installed extension's `package.json`.
-- **Version skew.** CLI 18 (or 19 after the toolchain update) versus bundled
+- **Version skew.** CLI 18 (or 20 after the toolchain update) versus bundled
   22. A curated explicit check list keeps this benign — no `-*`-relative
   defaults to drift — but check behavior can still differ across majors.
   Full closure would pin `...clangTidy.path` to the system binary; not done
@@ -127,38 +142,59 @@ The curated section 5.1 config yields **10 findings, 0 errors**:
 - **T-C — Keep the `ExtraArgs` workaround in the config.** It is required on
   clang-tidy 18, harmless on ≥ 19 and on the bundled 22. It can be deleted
   once nothing that runs the config is on 18, but nothing forces that.
-- **T-D — Update the CLI toolchain to `clang-tidy-19`** (section 7). This
+- **T-D — Update the CLI toolchain to `clang-tidy-20`** (section 7). This
   removes the *dependence* on T-C for CLI runs and closes most of the skew
   gap. `/usr/bin/clang-tidy` remains 18; the newer binary is invoked
-  explicitly as `clang-tidy-19`. clang-format is deliberately not updated:
-  no friction exists there, and a newer major would risk invalidating the
-  normalization baseline for nothing.
+  explicitly as `clang-tidy-20`. Both 19 and 20 carry the `__cpp_concepts`
+  fix, so either removes the `ExtraArgs` dependence; 20 is chosen because it
+  is equally available from the noble archive (20.1.2 via `noble-updates`,
+  plain `apt install`) and sits closer to the cpptools-bundled 22, halving
+  the CLI-versus-editor skew at no extra install cost. Newer majors (21/22)
+  were rejected because they require the third-party apt.llvm.org repo,
+  against this plan's minimal-machine-prep stance; the documented closure
+  for the residual skew remains pinning
+  `C_Cpp.codeAnalysis.clangTidy.path`. clang-format is deliberately not
+  updated: no friction exists there, and a newer major would risk
+  invalidating the normalization baseline for nothing.
 - **T-E — Editor-only, warnings-only.** No CI gate, no `WarningsAsErrors`.
   Enforcement escalation is deferred work.
-- **T1 — OPEN: the three lower_case accessors versus `FunctionCase`.**
-  clang-tidy cannot express "trivial accessors may be lower_case". Options:
-  (a) three `NOLINT(readability-identifier-naming)` trailers — full
-  enforcement, three annotations; (b) drop the `FunctionCase` option — zero
-  annotations, but future misnamed functions go uncaught; (c) rename the
-  accessors — abandons a Google-sanctioned convention. Leaning (a): the
-  annotations are self-documenting and the check stays armed.
-- **T2 — OPEN: `modernize-use-nodiscard` on the same three accessors.**
-  Adding `[[nodiscard]]` is arguably correct and settles it; disabling the
-  check is the no-churn alternative. Independent of T1 but touches the same
-  lines — resolve together.
-- **T3 — OPEN: `performance-enum-size` on `GatewayDiagnostic`.** Its
-  `std::int32_t` base matches the `Error::code()` contract, which reads as
-  deliberate. Options: disable the check, or a single `NOLINT` with a
-  comment stating the contract. Leaning the `NOLINT`: the check stays armed
-  for future enums.
+- **T1 — RESOLVED: option (a), `NOLINT` trailers.** Each of `domain()`,
+  `code()` and `text()` in `expected.hpp` takes a trailing
+  `// NOLINT(readability-identifier-naming)`; the `FunctionCase` option
+  stays. clang-tidy cannot express "trivial accessors may be lower_case",
+  so the choice was between annotating and surrendering enforcement. The
+  accessors are Google-sanctioned — a trivial accessor named after the
+  member it returns — so renaming them (option (c)) abandons that
+  convention, and dropping `FunctionCase` (option (b)) disarms the
+  motivating check for every future function. Three self-documenting
+  annotations keep the check armed, and any future trivial accessor requires
+  a deliberate annotation — which is the desired sign-off moment.
+- **T2 — RESOLVED: add `[[nodiscard]]` to the same three accessors.**
+  `modernize-use-nodiscard` stays enabled. For pure const accessors on an
+  error type the attribute is semantically correct — discarding
+  `error.code()` is always a bug — so this is a genuine improvement, not
+  check-appeasement. The no-churn argument for disabling the check is void:
+  T1 already touches exactly these lines. The static factories
+  `FromDriver`/`FromGateway` are not flagged (the check targets const member
+  functions only), so the tree is quiet once the three accessors are
+  annotated.
+- **T3 — RESOLVED: a single `NOLINT` stating the contract.** The
+  `GatewayDiagnostic` enum in `gateway_util.hpp` takes a trailing
+  `// NOLINT(performance-enum-size): int32_t base matches the Error::code() contract`
+  and the check stays enabled. `GatewayError()` feeds the enum value
+  directly into `Error::code()`, whose type is `std::int32_t`, so the base
+  *is* the contract expressed in the type. A global disable would let a
+  genuinely oversized future enum slip through unnoticed. `ErrorDomain`
+  already uses `std::uint8_t` and does not trip the check, so this stays a
+  one-off annotation rather than a recurring cost.
 
 ## 5. Artifacts
 
 ### 5.1 `.clang-tidy` (repo root, committed)
 
-As trialed (10 findings, 0 errors, section 2.3). T1–T3 may remove the
-`FunctionCase` option or add per-check disables; the annotated lines mark
-the dependencies.
+As trialed (10 findings, 0 errors, section 2.3). T1–T3 resolved without
+touching this file: no option removed, no per-check disable added — all
+three outcomes are source annotations (section 8).
 
 ```yaml
 ---
@@ -185,7 +221,7 @@ CheckOptions:
   readability-identifier-naming.EnumCase: CamelCase
   readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.EnumConstantPrefix: k
-  readability-identifier-naming.FunctionCase: CamelCase   # T1 pending
+  readability-identifier-naming.FunctionCase: CamelCase   # kept per T1
   readability-identifier-naming.NamespaceCase: lower_case
   readability-identifier-naming.ParameterCase: lower_case
   readability-identifier-naming.PrivateMemberCase: lower_case
@@ -197,8 +233,9 @@ CheckOptions:
 
 Notes:
 
-- `modernize-use-nodiscard` stays enabled or joins the disables per T2;
-  `performance-enum-size` likewise per T3.
+- `modernize-use-nodiscard` stays enabled per T2 (the three accessors gain
+  `[[nodiscard]]`); `performance-enum-size` stays enabled per T3 (one
+  annotated `NOLINT` on `GatewayDiagnostic`).
 - The naming options reproduce the conventions table in the style plan;
   `EnumConstantPrefix: k` + `CamelCase` accepts the existing
   `kPascalCase` enumerators (verified — zero false positives on
@@ -233,33 +270,86 @@ rollout:
 Machine prep, no commit (parallel to the style plan's "local migration"):
 
 ```bash
-sudo apt install clang-tidy-19
+sudo apt install clang-tidy-20
 ```
 
-Then verify the expectation this plan could not test read-only: that
-clang-tidy-19 parses `std::expected` against libstdc++ 13 **without** the
-`ExtraArgs` workaround (temporarily strip the two lines and run the section 8
-gate with `clang-tidy-19`). If it does not, 19 brings no benefit — stay on
-18 + workaround and strike T-D.
+Two things are then verified, both read-only against the tree, both with the
+config passed explicitly (`--config-file=`): clang-tidy discovers
+`.clang-tidy` upward from the *source* files, so a trial config parked in
+`/tmp` is never found by discovery.
+
+1. **Workaround independence.** Strip the whole `ExtraArgs` block from a
+   copy of the section 5.1 config and run every TU
+   (`git ls-files '*.cpp'`, `-p build`) through `clang-tidy-20`. Expected:
+   zero parse errors — findings are fine, errors are not. Negative control:
+   the same stripped config under system `clang-tidy` (18) must still fail
+   on `std::expected`, and the unstripped config under 18 must parse
+   cleanly; together these confirm the workaround is exactly what carries
+   18. If clang-tidy-20 needs the workaround too, 20 brings no benefit —
+   stay on 18 + workaround and strike T-D.
+2. **Finding-set drift.** Run the full curated 5.1 config under
+   `clang-tidy-20` and diff the finding set against the section 2.3
+   baseline, which was measured under 18. The group wildcards in `Checks`
+   enable checks that did not exist in 18, so the set can grow. Every new
+   finding gets a disposition — fix it, `NOLINT` it, or disable the check
+   with rationale — folded into section 8 before commit 1. The result is
+   recorded in the section 2.3 provenance note.
 
 ## 8. Normalization
 
 Before the config lands, the baseline is made clean so analysis starts at
-zero findings:
+zero findings. Every edit, enumerated:
 
-- Rename `ErrorDomain::driver/gateway` to `kDriver`/`kGateway` (6 sites,
-  section 2.3).
-- Constructor `camera_namespace` parameter to `const std::string&`
-  (`vimbax_camera_gateway.cpp:134`).
-- T1/T2/T3 outcomes: `NOLINT` trailers and/or `[[nodiscard]]` and/or config
-  disables.
+In `expected.hpp`:
+
+1. Rename `ErrorDomain::driver`/`gateway` to `kDriver`/`kGateway` — 6 sites
+   (2 definitions, 3 uses, 1 comment), section 2.3.
+2. `domain()`, `code()` and `text()` each take one combined edit: prepend
+   `[[nodiscard]]` (T2) and append `// NOLINT(readability-identifier-naming)`
+   (T1). Three accessors, three edited lines.
+
+In `detail/gateway_util.hpp`:
+
+3. Append to the `GatewayDiagnostic` enum (T3):
+   `// NOLINT(performance-enum-size): int32_t base matches the Error::code() contract`
+
+In `vimbax_camera_gateway.cpp`:
+
+4. Constructor `camera_namespace` parameter to `const std::string&`
+   (`:134`).
+
+That accounts for all 10 findings of the section 2.3 baseline.
+
+### 8.1 Pending human review — the clang-tidy-20 delta
+
+The four `performance-unnecessary-value-param` findings that only
+clang-tidy 20 reports (section 2.3) are **not decided**. Each is a
+`.transform()` continuation whose `response` parameter — a `shared_ptr` —
+is taken by value and only dereferenced:
+
+| Site | Proposed disposition |
+|---|---|
+| `vimbax_camera_gateway.cpp:302` | `[](auto response)` → `[](const auto& response)` |
+| `vimbax_camera_gateway.cpp:321` | as above |
+| `vimbax_camera_gateway.cpp:349` | as above |
+| `vimbax_camera_gateway.cpp:358` | as above |
+
+Fixing rather than annotating is *proposed* on two grounds: it matches the
+disposition already chosen for the same check at `:135`, and `shared_ptr`
+constness is shallow, so `std::move(response->field)` still moves through a
+`const auto&` — the lambda bodies are untouched. The counter-argument to
+weigh before accepting: `expected::transform` invokes the continuation with
+an rvalue, so the by-value parameter is move-constructed rather than
+copied, and the check therefore overstates the real cost — which would
+argue for `NOLINT` trailers instead. Either way the choice is a human one;
+resolve before commit 1 and fold the outcome into the list above.
 
 ## 9. Verification
 
 - `git ls-files '*.cpp'` piped to the chosen clang-tidy binary with
   `-p build` reports zero findings and zero errors after normalization.
 - Repro check: the same run with `ExtraArgs` stripped still parses under
-  clang-tidy-19 (section 7); still fails under 18 (confirming the workaround
+  clang-tidy-20 (section 7); still fails under 18 (confirming the workaround
   is what carries 18).
 - In VS Code: analysis produces zero squiggles on the normalized tree; a
   deliberately misnamed local produces a `readability-identifier-naming`
