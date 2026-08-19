@@ -22,7 +22,7 @@ CheckOptions:
   readability-identifier-naming.EnumCase: CamelCase
   readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.EnumConstantPrefix: k
-  readability-identifier-naming.FunctionCase: CamelCase   # kept per T1
+  readability-identifier-naming.FunctionCase: CamelCase
   readability-identifier-naming.NamespaceCase: lower_case
   readability-identifier-naming.ParameterCase: lower_case
   readability-identifier-naming.PrivateMemberCase: lower_case
