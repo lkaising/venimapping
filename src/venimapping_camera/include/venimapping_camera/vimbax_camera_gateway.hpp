@@ -74,11 +74,6 @@ class VimbaXCameraGateway final : public CameraGateway {
       const std::string& camera_namespace,
       std::chrono::milliseconds timeout);
 
-  VimbaXCameraGateway(const VimbaXCameraGateway&) = delete;
-  VimbaXCameraGateway& operator=(const VimbaXCameraGateway&) = delete;
-  VimbaXCameraGateway(VimbaXCameraGateway&&) = delete;
-  VimbaXCameraGateway& operator=(VimbaXCameraGateway&&) = delete;
-
   // Records the calling thread as the designated worker thread. It shall be
   // called exactly once, from that thread, before the first gateway call, and
   // every later call shall come from that same thread. Violations are

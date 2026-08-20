@@ -54,6 +54,10 @@ struct CameraStatus {
 // mutable state, and concrete implementations mutate internal client state.
 class CameraGateway {
  public:
+  CameraGateway(const CameraGateway&) = delete;
+  CameraGateway(CameraGateway&&) = delete;
+  CameraGateway& operator=(const CameraGateway&) = delete;
+  CameraGateway& operator=(CameraGateway&&) = delete;
   virtual ~CameraGateway() = default;
 
   [[nodiscard]] virtual Expected<double> feature_float_get(const std::string& name) = 0;
@@ -83,6 +87,9 @@ class CameraGateway {
   // reports the driver's connection state and is not a precondition for any
   // other call.
   [[nodiscard]] virtual Expected<bool> connection_status_get() = 0;
+
+ protected:
+  CameraGateway() = default;
 };
 
 }  // namespace venimapping::camera

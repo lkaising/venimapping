@@ -164,6 +164,11 @@ if [[ "${mode}" == "check" ]]; then
   exit 0
 fi
 
+if [[ ! -s "${fixes}" ]]; then
+  printf '\n[venimapping] no automatic fixes to apply\n'
+  exit 0
+fi
+
 # --- Automatic fixes ----------------------------------------------------------
 
 printf '\n[venimapping] applying available automatic fixes...\n'
