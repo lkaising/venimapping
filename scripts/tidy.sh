@@ -9,7 +9,15 @@
 #  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 # ------------------------------------------------------------------------------
 
-set -euo pipefail
+# --- Guards -------------------------------------------------------------------
+
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  echo "[venimapping] ERROR: execute this file instead of sourcing it:" >&2
+  echo "  ${BASH_SOURCE[0]}" >&2
+  return 1
+fi
+
+set -Eeuo pipefail
 
 # --- Configuration ------------------------------------------------------------
 
