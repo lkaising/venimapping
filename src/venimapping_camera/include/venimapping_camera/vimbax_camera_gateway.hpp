@@ -62,22 +62,17 @@ class VimbaXCameraGateway final : public CameraGateway {
   // duration; thread-scheduling overhead can stretch each bound slightly, so
   // the total is not a hard limit.
   //
-  // Fails with domain() == ErrorDomain::gateway when camera_namespace is empty,
+  // Fails with domain() == ErrorDomain::kGateway when camera_namespace is empty,
   // when timeout is not positive, or when client construction throws (exception
   // text preserved).
   //
   // Success means every service client object was constructed. It does not mean
   // the services are currently available or that a camera is connected;
   // availability is checked per call.
-  [[nodiscard]] static Expected<std::unique_ptr<VimbaXCameraGateway>> Create(
+  [[nodiscard]] static Expected<std::unique_ptr<VimbaXCameraGateway>> create(
       rclcpp::Node& node,
-      std::string camera_namespace,
+      const std::string& camera_namespace,
       std::chrono::milliseconds timeout);
-
-  VimbaXCameraGateway(const VimbaXCameraGateway&) = delete;
-  VimbaXCameraGateway& operator=(const VimbaXCameraGateway&) = delete;
-  VimbaXCameraGateway(VimbaXCameraGateway&&) = delete;
-  VimbaXCameraGateway& operator=(VimbaXCameraGateway&&) = delete;
 
   // Records the calling thread as the designated worker thread. It shall be
   // called exactly once, from that thread, before the first gateway call, and
@@ -85,50 +80,50 @@ class VimbaXCameraGateway final : public CameraGateway {
   // debug-asserted; where assertions are disabled they are instead reported
   // as a gateway error: a second bind fails, and gateway calls made before
   // binding or from another thread fail without touching ROS.
-  [[nodiscard]] Expected<void> BindToCurrentThread();
+  [[nodiscard]] Expected<void> bind_to_current_thread();
 
-  [[nodiscard]] Expected<double> FeatureFloatGet(const std::string& name) override;
-  [[nodiscard]] Expected<void> FeatureFloatSet(const std::string& name, double value) override;
-  [[nodiscard]] Expected<FloatInfo> FeatureFloatInfoGet(const std::string& name) override;
+  [[nodiscard]] Expected<double> feature_float_get(const std::string& name) override;
+  [[nodiscard]] Expected<void> feature_float_set(const std::string& name, double value) override;
+  [[nodiscard]] Expected<FloatInfo> feature_float_info_get(const std::string& name) override;
 
-  [[nodiscard]] Expected<std::string> FeatureEnumGet(const std::string& name) override;
-  [[nodiscard]] Expected<void> FeatureEnumSet(const std::string& name,
-                                              const std::string& value) override;
-  [[nodiscard]] Expected<EnumInfo> FeatureEnumInfoGet(const std::string& name) override;
+  [[nodiscard]] Expected<std::string> feature_enum_get(const std::string& name) override;
+  [[nodiscard]] Expected<void> feature_enum_set(const std::string& name,
+                                                const std::string& value) override;
+  [[nodiscard]] Expected<EnumInfo> feature_enum_info_get(const std::string& name) override;
 
-  [[nodiscard]] Expected<AccessMode> FeatureAccessModeGet(const std::string& name) override;
+  [[nodiscard]] Expected<AccessMode> feature_access_mode_get(const std::string& name) override;
 
   // The Vimba X driver serves this list from a per-module cache built when it
   // opens the camera, so the result is a snapshot refreshed on reopen after a
   // reconnect rather than a live query.
-  [[nodiscard]] Expected<std::vector<std::string>> FeaturesListGet() override;
+  [[nodiscard]] Expected<std::vector<std::string>> features_list_get() override;
 
-  [[nodiscard]] Expected<CameraStatus> CameraStatusGet() override;
-  [[nodiscard]] Expected<bool> ConnectionStatusGet() override;
+  [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
+  [[nodiscard]] Expected<bool> connection_status_get() override;
 
  private:
   VimbaXCameraGateway(rclcpp::Node& node,
-                      std::string camera_namespace,
+                      const std::string& camera_namespace,
                       std::chrono::milliseconds timeout);
 
   template <typename Service>
-  [[nodiscard]] Expected<typename Service::Response::SharedPtr> Call(
+  [[nodiscard]] Expected<typename Service::Response::SharedPtr> call(
       rclcpp::Client<Service>& client,
       typename Service::Request::SharedPtr request);
 
-  // ConnectionStatusGet() alone stays on Call(), because its response has no
+  // connection_status_get() alone stays on call(), because its response has no
   // error member.
   template <typename Service>
-  [[nodiscard]] Expected<typename Service::Response::SharedPtr> CallChecked(
+  [[nodiscard]] Expected<typename Service::Response::SharedPtr> call_checked(
       rclcpp::Client<Service>& client,
       typename Service::Request::SharedPtr request);
 
-  [[nodiscard]] Expected<void> CheckCallableFromThisThread() const;
+  [[nodiscard]] Expected<void> check_callable_from_this_thread() const;
 
   std::chrono::milliseconds timeout_;
   // Default-constructed thread::id is the unbound sentinel: the standard
   // guarantees it never equals the id of a running thread.
-  std::atomic<std::thread::id> bound_thread_{};
+  std::atomic<std::thread::id> bound_thread_;
   rclcpp::Context::SharedPtr context_;
 
   rclcpp::Client<vimbax_camera_msgs::srv::ConnectionStatus>::SharedPtr

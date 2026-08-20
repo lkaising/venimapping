@@ -24,8 +24,8 @@ namespace venimapping::camera {
 
 // Which layer defines and reports the meaning of a failure.
 enum class ErrorDomain : std::uint8_t {
-  driver,   // vimbax_ros2_driver reported it; code and text are its verbatim wire values
-  gateway,  // the gateway defined it; code is an implementation diagnostic
+  kDriver,   // vimbax_ros2_driver reported it; code and text are its verbatim wire values
+  kGateway,  // the gateway defined it; code is an implementation diagnostic
 };
 
 class Error {
@@ -35,29 +35,29 @@ class Error {
   //
   // Precondition (debug-asserted): code != 0. A zero code means success, not
   // an Error.
-  static Error FromDriver(std::int32_t code, std::string text)
+  static Error from_driver(std::int32_t code, std::string text)
   {
     assert(code != 0);
-    return Error{ErrorDomain::driver, code, std::move(text)};
+    return Error{ErrorDomain::kDriver, code, std::move(text)};
   }
 
   // Records a failure the gateway itself defines.
   //
   // Precondition (debug-asserted): diagnostic != 0.
-  static Error FromGateway(std::int32_t diagnostic, std::string text)
+  static Error from_gateway(std::int32_t diagnostic, std::string text)
   {
     assert(diagnostic != 0);
-    return Error{ErrorDomain::gateway, diagnostic, std::move(text)};
+    return Error{ErrorDomain::kGateway, diagnostic, std::move(text)};
   }
 
-  ErrorDomain domain() const noexcept { return domain_; }
+  [[nodiscard]] ErrorDomain domain() const noexcept { return domain_; }  // NOLINT(readability-identifier-naming)
 
-  // driver: the driver's VmbC code, verbatim.
-  // gateway: a non-contractual diagnostic identifier -- do not branch on it.
-  std::int32_t code() const noexcept { return code_; }
+  // kDriver: the driver's VmbC code, verbatim.
+  // kGateway: a non-contractual diagnostic identifier -- do not branch on it.
+  [[nodiscard]] std::int32_t code() const noexcept { return code_; }  // NOLINT(readability-identifier-naming)
 
   // Diagnostic context. Format is not contractual.
-  const std::string& text() const noexcept { return text_; }
+  [[nodiscard]] const std::string& text() const noexcept { return text_; }  // NOLINT(readability-identifier-naming)
 
  private:
   Error(ErrorDomain domain, std::int32_t code, std::string text)
