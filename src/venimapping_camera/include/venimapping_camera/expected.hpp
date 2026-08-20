@@ -35,7 +35,7 @@ class Error {
   //
   // Precondition (debug-asserted): code != 0. A zero code means success, not
   // an Error.
-  static Error FromDriver(std::int32_t code, std::string text)
+  static Error from_driver(std::int32_t code, std::string text)
   {
     assert(code != 0);
     return Error{ErrorDomain::kDriver, code, std::move(text)};
@@ -44,7 +44,7 @@ class Error {
   // Records a failure the gateway itself defines.
   //
   // Precondition (debug-asserted): diagnostic != 0.
-  static Error FromGateway(std::int32_t diagnostic, std::string text)
+  static Error from_gateway(std::int32_t diagnostic, std::string text)
   {
     assert(diagnostic != 0);
     return Error{ErrorDomain::kGateway, diagnostic, std::move(text)};

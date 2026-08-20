@@ -24,10 +24,10 @@ enum class GatewayDiagnostic : std::int32_t {  // NOLINT(performance-enum-size):
   kThreadContractViolation = 5,
 };
 
-Error GatewayError(GatewayDiagnostic diagnostic, std::string text);
+Error gateway_error(GatewayDiagnostic diagnostic, std::string text);
 
-std::string ServiceName(std::string_view camera_namespace, std::string_view leaf);
+std::string service_name(std::string_view camera_namespace, std::string_view leaf);
 
-Expected<void> CheckDriverError(std::int32_t code, const std::string& text);
+Expected<void> check_driver_error(std::int32_t code, const std::string& text);
 
 }  // namespace venimapping::camera::detail
