@@ -2,8 +2,7 @@
 # ------------------------------------------------------------------------------
 #  Filename: tidy.sh
 #
-#  Purpose:  Runs clang-tidy 20 for venimapping_camera and optionally applies
-#            available automatic fixes.
+#  Purpose:  Runs clang-tidy 20 for venimapping_camera and applies optional automatic fixes.
 #
 #  Usage:    scripts/tidy.sh [check|fix]
 #
@@ -14,8 +13,12 @@ set -euo pipefail
 
 # --- Configuration ------------------------------------------------------------
 
-readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly project_root="$(cd -- "${script_dir}/.." && pwd)"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+
+project_root="$(cd -- "${script_dir}/.." && pwd)"
+readonly project_root
+
 readonly build_dir="${project_root}/build/venimapping_camera"
 readonly output_dir="${build_dir}/tidy"
 readonly report="${output_dir}/report.txt"
@@ -24,7 +27,7 @@ readonly fixes="${output_dir}/fixes.yaml"
 readonly run_clang_tidy="run-clang-tidy"
 readonly clang_tidy="/usr/bin/clang-tidy-20"
 readonly apply_replacements="/usr/bin/clang-apply-replacements-20"
-readonly header_filter='.*venimapping_camera.*'
+readonly header_filter='venimapping_camera'
 
 # --- Diagnostics --------------------------------------------------------------
 
@@ -45,7 +48,9 @@ print_summary() {
   local findings
 
   findings="$(
-    grep -oE '\[[a-z0-9,.-]+\]$' "${report}" |
+    grep -E '\[[a-z0-9,.-]+\]$' "${report}" |
+      sort -u |
+      grep -oE '\[[a-z0-9,.-]+\]$' |
       sort |
       uniq -c |
       sort -rn || true
@@ -102,6 +107,25 @@ fi
 if [[ "${mode}" == "fix" && ! -x "${apply_replacements}" ]]; then
   error "clang-apply-replacements 20 was not found: ${apply_replacements}"
   exit 1
+fi
+
+if [[ "${mode}" == "fix" && ! -f "${project_root}/.clang-format" ]]; then
+  error "missing formatting configuration: ${project_root}/.clang-format"
+  exit 1
+fi
+
+if [[ "${mode}" == "fix" ]]; then
+  if ! git -C "${project_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    error "project root is not a Git working tree: ${project_root}"
+    exit 1
+  fi
+
+  worktree_status="$(git -C "${project_root}" status --porcelain)"
+
+  if [[ -n "${worktree_status}" ]]; then
+    error "working tree is not clean; commit or stash changes before 'fix'"
+    exit 1
+  fi
 fi
 
 mkdir -p -- "${output_dir}"
