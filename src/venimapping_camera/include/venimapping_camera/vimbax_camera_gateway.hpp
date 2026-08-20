@@ -111,7 +111,7 @@ class VimbaXCameraGateway final : public CameraGateway {
       rclcpp::Client<Service>& client,
       typename Service::Request::SharedPtr request);
 
-  // ConnectionStatusGet() alone stays on Call(), because its response has no
+  // connection_status_get() alone stays on call(), because its response has no
   // error member.
   template <typename Service>
   [[nodiscard]] Expected<typename Service::Response::SharedPtr> call_checked(

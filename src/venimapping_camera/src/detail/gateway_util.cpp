@@ -21,8 +21,8 @@ Error gateway_error(GatewayDiagnostic diagnostic, std::string text)
 
 std::string service_name(std::string_view camera_namespace, std::string_view leaf)
 {
-  assert(!leaf.empty() && "ServiceName: leaf shall be non-empty");
-  assert(leaf.front() != '/' && "ServiceName: leaf shall not begin with '/'");
+  assert(!leaf.empty() && "service_name: leaf shall be non-empty");
+  assert(leaf.front() != '/' && "service_name: leaf shall not begin with '/'");
 
   const std::size_t last_kept = camera_namespace.find_last_not_of('/');
   std::string name{camera_namespace.substr(

@@ -77,7 +77,7 @@ class CameraGateway {
 
   // Returns the names of the features the camera defines. This is not an
   // availability check: a listed name may be currently unreadable or
-  // unwritable, and current access state comes from FeatureAccessModeGet().
+  // unwritable, and current access state comes from feature_access_mode_get().
   // An empty list on success is a valid answer, not an error.
   [[nodiscard]] virtual Expected<std::vector<std::string>> features_list_get() = 0;
 

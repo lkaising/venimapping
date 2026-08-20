@@ -499,8 +499,8 @@ int main(int argc, char** argv)
   try {
     exit_code = run_probe();
   } catch (const std::exception& e) {
-    // A throw before RunProbe()'s own handling exists -- e.g. a mistyped
-    // parameter in DeclareOptions() -- still gets a message and an orderly
+    // A throw before run_probe()'s own handling exists -- e.g. a mistyped
+    // parameter in declare_options() -- still gets a message and an orderly
     // shutdown.
     std::fprintf(stderr, "camera_gateway_probe: unhandled exception: %s\n", e.what());
   } catch (...) {
