@@ -1,19 +1,12 @@
 // -----------------------------------------------------------------------------
 //  Filename: expected.hpp
 //
-//  Purpose:  Defines the shared success/error vocabulary returned by the camera
-//            gateway layers.
+//  Purpose:  Defines the shared success/error vocabulary returned by the camera layers.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
 
 #pragma once
-
-#include <version>
-
-#if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202211L
-#error "venimapping_camera requires std::expected with monadic operations (__cpp_lib_expected >= 202211L)"
-#endif
 
 #include <cassert>
 #include <cstdint>
@@ -22,46 +15,34 @@
 
 namespace venimapping::camera {
 
-// Which layer defines and reports the meaning of a failure.
 enum class ErrorDomain : std::uint8_t {
-  kDriver,   // vimbax_ros2_driver reported it; code and text are its verbatim wire values
-  kGateway,  // the gateway defined it; code is an implementation diagnostic
+  kDriver = 0,
+  kGateway = 1,
 };
 
-class Error {
+class [[nodiscard]] Error final {
  public:
-  // Wraps a driver response error pair verbatim; nothing is translated or
-  // classified.
-  //
-  // Precondition (debug-asserted): code != 0. A zero code means success, not
-  // an Error.
-  static Error from_driver(std::int32_t code, std::string text)
+  [[nodiscard]] static constexpr Error from_driver(std::int32_t code, std::string text) noexcept
   {
-    assert(code != 0);
+    assert(code != 0 && "a driver error code must be nonzero");
     return Error{ErrorDomain::kDriver, code, std::move(text)};
   }
 
-  // Records a failure the gateway itself defines.
-  //
-  // Precondition (debug-asserted): diagnostic != 0.
-  static Error from_gateway(std::int32_t diagnostic, std::string text)
+  [[nodiscard]] static constexpr Error from_gateway(std::int32_t code, std::string text) noexcept
   {
-    assert(diagnostic != 0);
-    return Error{ErrorDomain::kGateway, diagnostic, std::move(text)};
+    assert(code != 0 && "a gateway error code must be nonzero");
+    return Error{ErrorDomain::kGateway, code, std::move(text)};
   }
 
-  [[nodiscard]] ErrorDomain domain() const noexcept { return domain_; }  // NOLINT(readability-identifier-naming)
-
-  // kDriver: the driver's VmbC code, verbatim.
-  // kGateway: a non-contractual diagnostic identifier -- do not branch on it.
-  [[nodiscard]] std::int32_t code() const noexcept { return code_; }  // NOLINT(readability-identifier-naming)
-
-  // Diagnostic context. Format is not contractual.
-  [[nodiscard]] const std::string& text() const noexcept { return text_; }  // NOLINT(readability-identifier-naming)
+  [[nodiscard]] constexpr ErrorDomain domain() const noexcept { return domain_; }
+  [[nodiscard]] constexpr std::int32_t code() const noexcept { return code_; }
+  [[nodiscard]] constexpr const std::string& text() const noexcept { return text_; }
 
  private:
-  Error(ErrorDomain domain, std::int32_t code, std::string text)
-      : domain_{domain}, code_{code}, text_{std::move(text)} {}
+  constexpr Error(ErrorDomain domain, std::int32_t code, std::string text) noexcept
+      : domain_{domain}, code_{code}, text_{std::move(text)}
+  {
+  }
 
   ErrorDomain domain_;
   std::int32_t code_;
@@ -70,5 +51,17 @@ class Error {
 
 template <typename T>
 using Expected = std::expected<T, Error>;
+
+// using Unexpected = std::unexpected<Error>;
+
+// [[nodiscard]] constexpr Unexpected make_driver_error(std::int32_t code, std::string text) noexcept
+// {
+//   return Unexpected{Error::from_driver(code, std::move(text))};
+// }
+
+// [[nodiscard]] constexpr Unexpected make_gateway_error(std::int32_t code, std::string text) noexcept
+// {
+//   return Unexpected{Error::from_gateway(code, std::move(text))};
+// }
 
 }  // namespace venimapping::camera
