@@ -18,9 +18,10 @@ namespace venimapping::camera {
 
 namespace {
 
+using Clock = std::chrono::steady_clock;
 using ContextPtr = rclcpp::Context::SharedPtr;
+using Deadline = Clock::time_point;
 using StringView = std::string_view;
-using Timeout = std::chrono::milliseconds;
 
 template <typename Service>
 using Client = rclcpp::Client<Service>;
@@ -61,10 +62,11 @@ template <typename Service>
 template <typename Service>
 [[nodiscard]] Expected<void> wait_for_service(Client<Service>& client,
                                               const ContextPtr& context,
-                                              Timeout timeout,
+                                              Deadline deadline,
                                               StringView service_name)
 {
-  if (client.wait_for_service(timeout)) {
+  const auto remaining = std::max(deadline - Clock::now(), Clock::duration::zero());
+  if (client.wait_for_service(remaining)) {
     return {};
   }
 
@@ -76,16 +78,16 @@ template <typename Service>
 
   return std::unexpected(detail::gateway_error(
       detail::GatewayDiagnostic::kServiceUnavailable,
-      std::format("service {} unavailable after {} ms", service_name, timeout.count())));
+      std::format("service {} unavailable: call deadline reached", service_name)));
 }
 
 template <typename Service, typename Future>
 [[nodiscard]] Expected<ResponsePtr<Service>> wait_for_response(Client<Service>& client,
                                                                Future& future,
-                                                               Timeout timeout,
+                                                               Deadline deadline,
                                                                StringView service_name)
 {
-  if (future.wait_for(timeout) == std::future_status::ready) {
+  if (future.wait_until(deadline) == std::future_status::ready) {
     return future.get();
   }
 
@@ -93,7 +95,7 @@ template <typename Service, typename Future>
 
   return std::unexpected(detail::gateway_error(
       detail::GatewayDiagnostic::kResponseTimeout,
-      std::format("timeout on {} after {} ms", service_name, timeout.count())));
+      std::format("timeout on {}: call deadline reached", service_name)));
 }
 
 }  // namespace
@@ -172,11 +174,7 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
 Expected<void> VimbaXCameraGateway::bind_to_current_thread()
 {
   std::thread::id unbound{};
-  const bool bound_now = bound_thread_.compare_exchange_strong(unbound, std::this_thread::get_id());
-
-  assert(bound_now && "VimbaXCameraGateway: bind_to_current_thread() called more than once");
-
-  if (!bound_now) {
+  if (!bound_thread_.compare_exchange_strong(unbound, std::this_thread::get_id())) {
     return std::unexpected(detail::gateway_error(
         detail::GatewayDiagnostic::kThreadContractViolation,
         "bind_to_current_thread() called more than once"));
@@ -189,9 +187,6 @@ Expected<void> VimbaXCameraGateway::check_callable_from_this_thread() const
 {
   const std::thread::id bound = bound_thread_.load();
   const std::thread::id current = std::this_thread::get_id();
-
-  assert(bound != std::thread::id{} && "VimbaXCameraGateway: call before bind_to_current_thread()");
-  assert(bound == current && "VimbaXCameraGateway: call from a thread other than the bound worker");
 
   if (bound == std::thread::id{}) {
     return std::unexpected(detail::gateway_error(
@@ -217,19 +212,20 @@ Expected<typename Service::Response::SharedPtr> VimbaXCameraGateway::call(
     return std::unexpected(std::move(thread_check).error());
   }
 
+  const Deadline deadline = Clock::now() + timeout_;
   std::string service_name{"(unresolved service)"};
 
   try {
     service_name = client.get_service_name();
 
-    auto service_check = wait_for_service(client, context_, timeout_, service_name);
+    auto service_check = wait_for_service(client, context_, deadline, service_name);
     if (!service_check) {
       return std::unexpected(std::move(service_check).error());
     }
 
     auto future = client.async_send_request(std::move(request));
 
-    return wait_for_response<Service>(client, future, timeout_, service_name);
+    return wait_for_response<Service>(client, future, deadline, service_name);
   } catch (const std::exception& e) {
     return std::unexpected(detail::gateway_error(
         detail::GatewayDiagnostic::kRosClientFailure,

@@ -57,10 +57,10 @@ class VimbaXCameraGateway final : public CameraGateway {
   // node, the ROS executor, or the worker thread; the caller shall ensure the
   // node and ROS context outlive the gateway's use of its clients.
   //
-  // timeout bounds the per-call service-availability wait and the response
-  // wait separately, so a single gateway call can block for about twice this
-  // duration; thread-scheduling overhead can stretch each bound slightly, so
-  // the total is not a hard limit.
+  // timeout bounds each call as a whole: one deadline, started when the call
+  // begins, is shared by the service-availability wait and the response wait.
+  // Thread-scheduling overhead can stretch it slightly, so it is not a hard
+  // limit.
   //
   // Fails with domain() == ErrorDomain::kGateway when camera_namespace is empty,
   // when timeout is not positive, or when client construction throws (exception
@@ -76,8 +76,7 @@ class VimbaXCameraGateway final : public CameraGateway {
 
   // Records the calling thread as the designated worker thread. It shall be
   // called exactly once, from that thread, before the first gateway call, and
-  // every later call shall come from that same thread. Violations are
-  // debug-asserted; where assertions are disabled they are instead reported
+  // every later call shall come from that same thread. Violations are reported
   // as a gateway error: a second bind fails, and gateway calls made before
   // binding or from another thread fail without touching ROS.
   [[nodiscard]] Expected<void> bind_to_current_thread();
@@ -123,7 +122,7 @@ class VimbaXCameraGateway final : public CameraGateway {
   std::chrono::milliseconds timeout_;
   // Default-constructed thread::id is the unbound sentinel: the standard
   // guarantees it never equals the id of a running thread.
-  std::atomic<std::thread::id> bound_thread_;
+  std::atomic<std::thread::id> bound_thread_{std::thread::id{}};
   rclcpp::Context::SharedPtr context_;
 
   rclcpp::Client<vimbax_camera_msgs::srv::ConnectionStatus>::SharedPtr
