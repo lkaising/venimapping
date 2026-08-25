@@ -101,21 +101,31 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<bool> connection_status_get() override;
 
  private:
+  template <typename Service>
+  using Client = rclcpp::Client<Service>;
+
+  template <typename Service>
+  using ClientPtr = typename Client<Service>::SharedPtr;
+
+  template <typename Service>
+  using RequestPtr = typename Service::Request::SharedPtr;
+
+  template <typename Service>
+  using ResponsePtr = typename Service::Response::SharedPtr;
+
   VimbaXCameraGateway(rclcpp::Node& node,
                       const std::string& camera_namespace,
                       std::chrono::milliseconds timeout);
 
   template <typename Service>
-  [[nodiscard]] Expected<typename Service::Response::SharedPtr> call(
-      rclcpp::Client<Service>& client,
-      typename Service::Request::SharedPtr request);
+  [[nodiscard]] Expected<ResponsePtr<Service>> call(Client<Service>& client,
+                                                    RequestPtr<Service> request);
 
   // connection_status_get() alone stays on call(), because its response has no
   // error member.
   template <typename Service>
-  [[nodiscard]] Expected<typename Service::Response::SharedPtr> call_checked(
-      rclcpp::Client<Service>& client,
-      typename Service::Request::SharedPtr request);
+  [[nodiscard]] Expected<ResponsePtr<Service>> call_checked(Client<Service>& client,
+                                                            RequestPtr<Service> request);
 
   [[nodiscard]] Expected<void> check_callable_from_this_thread() const;
 
@@ -125,25 +135,16 @@ class VimbaXCameraGateway final : public CameraGateway {
   std::atomic<std::thread::id> bound_thread_{std::thread::id{}};
   rclcpp::Context::SharedPtr context_;
 
-  rclcpp::Client<vimbax_camera_msgs::srv::ConnectionStatus>::SharedPtr
-      connection_status_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::Status>::SharedPtr status_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeaturesListGet>::SharedPtr
-      features_list_get_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureAccessModeGet>::SharedPtr
-      feature_access_mode_get_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureFloatGet>::SharedPtr
-      feature_float_get_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureFloatSet>::SharedPtr
-      feature_float_set_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureFloatInfoGet>::SharedPtr
-      feature_float_info_get_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureEnumGet>::SharedPtr
-      feature_enum_get_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureEnumSet>::SharedPtr
-      feature_enum_set_client_;
-  rclcpp::Client<vimbax_camera_msgs::srv::FeatureEnumInfoGet>::SharedPtr
-      feature_enum_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::ConnectionStatus> connection_status_client_;
+  ClientPtr<vimbax_camera_msgs::srv::Status> status_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeaturesListGet> features_list_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureAccessModeGet> feature_access_mode_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureFloatGet> feature_float_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureFloatSet> feature_float_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureFloatInfoGet> feature_float_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumGet> feature_enum_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumSet> feature_enum_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumInfoGet> feature_enum_info_get_client_;
 };
 
 }  // namespace venimapping::camera
