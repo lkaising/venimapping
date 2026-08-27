@@ -1,445 +1,405 @@
-# Building VeniMapping on macOS — Investigation, Architecture, and Plan
+# Building VeniMapping on macOS
 
-**Status:** analysis / proposal only — no implementation yet.
-**Scope:** make the *build environment* reproducible on a macOS machine so that
-`colcon build`, `clang-tidy`, and the IDE tooling behave identically to the
-native Ubuntu 24.04 machine. Camera hardware access is explicitly out of scope.
+**Status:** design document. Nothing here is implemented; no existing file changes.
+**Goal:** reproduce the Ubuntu 24.04 build environment on a macOS machine so that
+`source scripts/env.sh && colcon build`, `scripts/tidy.sh`, and `scripts/ide.sh`
+behave exactly as they do on the native machine. Camera hardware is out of scope.
 
----
-
-## 1. TL;DR
-
-What you remember from your previous workplace is, almost certainly, **VS Code
-Remote Development** — specifically the **Dev Containers** flavor (and possibly
-Remote-SSH layered on top of it). The "local server" you SSH'd into was most
-likely the Linux VM that Docker Desktop transparently runs on every Mac; the
-"VS Code window on a server" was the VS Code Server that the Dev Containers
-extension injects into a running container. This is a mature, well-trodden,
-first-class-supported workflow, and it maps onto this repository cleanly.
-
-**Recommendation:** add a `.devcontainer/` directory to this repo containing a
-`Dockerfile` (Ubuntu 24.04 + ROS 2 Jazzy + source-built `vimbax_ros2_driver` +
-Vimba X SDK + LLVM 20 tooling, laid out exactly the way `scripts/env.sh`
-expects) and a `devcontainer.json`. On the Mac, install a container runtime
-(OrbStack or Docker Desktop) plus the VS Code Dev Containers extension. Open
-the repo, click "Reopen in Container," and you get a terminal where
-`source scripts/env.sh && colcon build` works verbatim — same paths, same
-compiler, same clang-tidy 20, same everything. The same image doubles as a CI
-image later, essentially for free.
-
-The rest of this document is the audit of what the environment actually
-requires, how the pieces of the remembered workflow fit together, the proposed
-architecture in detail, macOS-specific caveats (Apple Silicon vs Intel), the
-alternatives I considered and why I rejected them, and a phased implementation
-plan.
+Sources for this analysis: this repository's `scripts/` and package manifests,
+plus the three provisioning tools that define the Ubuntu machine —
+[`ros2-jazzy-bootstrap`](https://github.com/lkaising/ros2-jazzy-bootstrap),
+[`vimbax-ros2-driver-bootstrap`](https://github.com/lkaising/vimbax-ros2-driver-bootstrap),
+and [`vimbax-sdk-bootstrap`](https://github.com/lkaising/vimbax-sdk-bootstrap).
 
 ---
 
-## 2. Audit: what the environment contract actually is today
+## 1. Summary
 
-Everything below is derived from the current branch — `scripts/env.sh`,
-`scripts/ide.sh`, `scripts/tidy.sh`, the two `package.xml` files, and the
-`CMakeLists.txt` files. This is the exact contract any macOS solution has to
-reproduce.
+The workflow you remember from your previous workplace is VS Code Remote
+Development, in its Dev Containers form: the repository carries a
+`.devcontainer/` definition of the build environment, a container runtime on
+the Mac instantiates it inside a hidden Linux VM, and VS Code runs its backend
+(terminals, IntelliSense, clang-tidy) inside the container while the UI stays
+native. Proposal:
 
-### 2.1 Operating system and toolchain
+- Add `.devcontainer/Dockerfile` + `devcontainer.json` to this repo.
+- Inside the image, provision the driver overlay and SDK registration by
+  **running your existing bootstrap tools**, not by duplicating their logic in
+  Dockerfile commands. The bootstraps stay the single source of truth for how
+  the environment is constructed.
+- Replace only the Jazzy source build with the binary apt distribution
+  (`/opt/ros/jazzy` + a symlink at the path `env.sh` expects). You confirmed
+  the source build exists for code-reading, not as a build requirement, and it
+  is the one bootstrap that cannot run on Apple Silicon (§2.1) or in
+  reasonable image-build time.
+- One Dockerfile serves both Mac architectures via `TARGETARCH`; Apple Silicon
+  builds natively on arm64 (§5).
 
-| Requirement | Where it comes from |
-|---|---|
-| Ubuntu 24.04 (Noble) | ROS 2 Jazzy's Tier-1 platform; everything below assumes it |
-| C++23 compiler at `/usr/bin/c++` | `target_compile_features(... cxx_std_23)`; `ide.sh` pins `IDE_COMPILER_PATH=/usr/bin/c++` (GCC 13 on Noble) |
-| CMake ≥ 3.20 | both `CMakeLists.txt` files |
-| `colcon` + `ament_cmake` | build tool for the workspace |
-| `clang-tidy-20` at `/usr/bin/clang-tidy-20` | `tidy.sh`, `ide.sh` (settings.json pins the path); `clang-apply-replacements-20` for fix mode |
-| `run-clang-tidy` on `PATH` | `tidy.sh` |
-| Python 3 at `/usr/bin/python3` | `ide.sh` JSON writers; ROS 2 launch |
-| Bash (scripts refuse non-Bash shells) | `env.sh` guard |
-
-### 2.2 The upstream layout (`~/workspace/upstream`)
-
-`scripts/env.sh` validates and sources a very specific directory layout under
-`${HOME}/workspace/upstream`, and refuses to proceed without all of it:
-
-```
-${HOME}/workspace/upstream/
-├── ros2-jazzy/install/setup.bash          # ROS 2 Jazzy underlay (colcon-style install tree)
-├── vimbax-ros2-driver/install/setup.bash  # source-built alliedvision/vimbax_ros2_driver overlay
-└── vimbax-sdk/
-    └── cti/*.cti                          # Vimba X GenTL producers
-```
-
-Additional environment expectations:
-
-- `GENICAM_GENTL64_PATH` must already contain `~/workspace/upstream/vimbax-sdk/cti`
-  (on the Ubuntu machine this presumably comes from the SDK's
-  `/etc/profile.d/VimbaX_GenTL_Path_64bit.sh`, which `ide.sh` deliberately
-  avoids when capturing the IDE env).
-- `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` is auto-selected when the CycloneDDS
-  RMW package is present, so the container should install it.
-- An optional project virtualenv at `.venv/` and project overlay at
-  `install/` are sourced when present.
-
-### 2.3 Package dependencies
-
-- `venimapping_camera`: `rclcpp`, `vimbax_camera_msgs` (from the driver
-  overlay), `ament_cmake_gtest` for tests.
-- `venimapping_bringup`: `launch`, `launch_ros`, `ros2launch`, and
-  `vimbax_camera` (exec-only — the driver node the launch file starts).
-
-**Key observation:** the project's *compile-time* dependency on Allied Vision
-is only `vimbax_camera_msgs` (service/message types). The gateway talks to the
-driver over ROS 2 services. The Vimba X SDK and its GenTL producers are
-runtime concerns for the *driver node*, not for compiling this repo — but
-`env.sh` refuses to run without them, and building the driver overlay itself
-does need the SDK. So a faithful environment includes all of it.
-
-### 2.4 One notable fork in the road: source-built vs apt-installed Jazzy
-
-The underlay path `~/workspace/upstream/ros2-jazzy/install/setup.bash` implies
-ROS 2 Jazzy is **built from source** on the Ubuntu machine (an apt install
-would live at `/opt/ros/jazzy/setup.bash`). This matters for the container
-design — see §4.3 for the options. It's also one of my open questions for you
-(§8): if there's no hard reason for the source build, the container gets much
-simpler and faster to build by using the official binary packages and
-symlinking the expected path.
+The container passes a stronger acceptance test than "it compiles": the Vimba X
+SDK ships a camera simulator, and the driver bootstrap's smoke test runs
+`vimbax_camera_node` against it. The full stack — build, tidy, IDE config,
+driver node runtime — is verifiable on a Mac with no camera attached.
 
 ---
 
-## 3. Decoding the remembered workflow
+## 2. The environment, as actually defined
 
-Your recollection — "SSH onto a server, launch a VS Code window on that
-server, which has a Dockerized container with all dependencies, then run
-`build.sh` inside it" — describes the standard **VS Code Remote Development**
-architecture. Here's how the pieces actually fit, because it clarifies which
-variant we want:
+The Ubuntu machine is not hand-configured; it is the output of three pinned,
+idempotent bootstrap tools plus this repo's own scripts. That is the best
+possible starting position for containerization, because the environment is
+already code. What each layer contributes:
 
-1. **VS Code's client/server split.** VS Code always runs your editor UI
-   locally, but it can run its backend (the "VS Code Server": file watcher,
-   language servers, terminals, debuggers) somewhere else — inside a
-   container, on an SSH host, or in WSL. Extensions like C/C++ IntelliSense
-   run *in the backend*, so they see the container's headers and compilers,
-   not your Mac's.
+### 2.1 ROS 2 Jazzy underlay — `ros2-jazzy-bootstrap`
 
-2. **Dev Containers extension.** Reads `.devcontainer/devcontainer.json` in
-   the repo, builds/starts the described Docker image, mounts your source
-   tree into it, injects the VS Code Server, and reopens your window
-   "inside" the container. Your terminal in VS Code is now a shell in
-   Ubuntu 24.04 with everything installed. This is the "Dockerized container
-   that has all the dependencies in the file system."
+- Source-builds ~350 packages into `~/workspace/upstream/ros2-jazzy`, from the
+  `ros2.repos` manifest at tag `release-jazzy-20260618`, colcon `release`
+  mixin, rosdep skip keys `fastcdr rti-connext-dds-6.0.1 urdfdom_headers`.
+- Overlays `ros-perception/vision_opencv` at tag `4.1.0` onto the manifest —
+  this is what provides **`cv_bridge`**, which the Vimba X driver requires and
+  which is not part of the core `ros2.repos` set.
+- Installs the official dev-tool apt set (`ros-dev-tools`, pytest/flake8/mypy
+  packages).
+- **Refuses any architecture but amd64**, refuses root, refuses shells with a
+  ROS environment already sourced. Build takes 30 min–2 h and ~13–15 GB.
 
-3. **Where Docker actually runs on a Mac.** Linux containers need a Linux
-   kernel, so every macOS container runtime (Docker Desktop, OrbStack,
-   Colima) runs a lightweight, invisible Linux VM and executes containers
-   inside it. That VM is the "local server running on my macOS computer" you
-   remember. Some setups do literally SSH into a local or remote VM/host and
-   attach from there (VS Code Remote-SSH → then attach to a container), which
-   would explain the SSH step; other workplaces put the containers on a
-   beefy shared Linux build server and had developers Remote-SSH into it.
-   Both variants use identical container definitions — which is one of the
-   strengths of this approach: the same `.devcontainer/` works locally on
-   the Mac, on a remote build server, and in CI.
+### 2.2 Vimba X SDK — `vimbax-sdk-bootstrap`
 
-So the feature you're asking for is: **commit a machine-readable definition of
-the Ubuntu build environment into the repo, and let any machine — macOS
-included — instantiate it in a container.** That's the whole idea.
+- Does **not** download or install the SDK. It registers an SDK already
+  unpacked at `~/workspace/upstream/vimbax-sdk` by writing exactly two
+  root-owned files:
+  - `/etc/profile.d/VimbaX_GenTL_Path_64bit.sh` — exports
+    `GENICAM_GENTL64_PATH` pointing at `<sdk>/cti`;
+  - `/etc/udev/rules.d/99-AVTUSBTL.rules` — USB permissions (vendor `1ab2`).
+- Validates that the SDK binaries' ELF architecture matches the host.
+- `verify` runs `ListCameras_VmbC` and passes when at least one transport
+  layer and one camera are found — the SDK's **camera simulator** provides a
+  camera with no hardware attached.
+
+Consequence for the container: something else must acquire the SDK tarball
+(Allied Vision publishes `VimbaX_Setup-<ver>-Linux64.tar.gz` and
+`-Linux_ARM64.tar.gz`), and the bootstrap then registers it exactly as on
+metal.
+
+### 2.3 Driver overlay — `vimbax-ros2-driver-bootstrap`
+
+- Clones and colcon-builds `alliedvision/vimbax_ros2_driver` into
+  `~/workspace/upstream/vimbax-ros2-driver`, `--symlink-install`, on top of
+  the Jazzy underlay.
+- **Ref `dev`, deliberately**: driver releases through 1.0.1 use `_Float64`
+  in a way GCC 13 on Ubuntu 24.04 rejects.
+- Supports **x86_64 and aarch64** (unlike the Jazzy bootstrap).
+- Underlay resolution accepts a workspace root, an **install prefix**, or a
+  `setup.bash` path — so `/opt/ros/jazzy` is a valid `--ros-underlay` as-is.
+- Validates that the underlay provides `rclcpp`, `rclcpp_components`,
+  `image_transport`, `camera_info_manager`, `rosidl_default_generators`, and
+  `cv_bridge` (hard error), and warns without `rmw_cyclonedds_cpp`.
+- SDK is optional at build time (`vmbc_interface` vendors the VmbC headers);
+  required at runtime. With a usable SDK, `verify` runs the node for 8 s
+  against the simulator, on `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` and a
+  randomized domain ID.
+- Refuses root; uses sudo only for rosdep-installed system packages.
+  `install --yes` is non-interactive on a fresh machine.
+
+### 2.4 This repository's contract (`scripts/`)
+
+`env.sh` validates and sources, in order: the underlay setup at
+`~/workspace/upstream/ros2-jazzy/install/setup.bash`, the driver overlay
+setup, `GENICAM_GENTL64_PATH` containing `~/workspace/upstream/vimbax-sdk/cti`
+with at least one `.cti` present, then optionally the project overlay and
+`.venv`. It selects `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` when available.
+`ide.sh` pins `/usr/bin/c++` (GCC 13 on Noble) and `/usr/bin/python3`;
+`tidy.sh` and the generated VS Code settings pin `/usr/bin/clang-tidy-20`,
+`clang-apply-replacements-20`, and `run-clang-tidy`. The packages need
+CMake ≥ 3.20, C++23, colcon, and `ament_cmake_gtest`.
+
+Note that `env.sh` checks paths and files, not provenance: any directory tree
+that provides those `setup.bash` files and `.cti` producers satisfies it.
+That is the hook the container design hangs on.
 
 ---
 
-## 4. Proposed architecture
+## 3. The remembered workflow, decoded
 
-### 4.1 Overview
+VS Code splits into a local UI and a backend ("VS Code Server") that can run
+elsewhere — over SSH, in WSL, or in a container. The Dev Containers extension
+reads `.devcontainer/devcontainer.json` from the repo, builds or pulls the
+image, mounts the source tree, injects the server, and reopens the window
+inside the container; every terminal and every extension that inspects code
+(cpptools, clangd, Python) now sees the container's filesystem and toolchain.
+
+The pieces of your recollection map as follows. Linux containers need a Linux
+kernel, so every macOS runtime (Docker Desktop, OrbStack, Colima) runs a
+lightweight VM — that is the "local server running on my Mac." The "VS Code
+window on a server" is the injected VS Code Server. The SSH step was either
+Remote-SSH into that VM or into a shared Linux build host; both attach to
+containers the same way, from the same container definition. The `build.sh`
+inside the container corresponds to `source scripts/env.sh && colcon build`
+here.
+
+The feature, stated precisely: commit a machine-readable definition of the
+Ubuntu environment into this repo, so any machine with a container runtime can
+instantiate it. The definition already half-exists — it is the three
+bootstraps. The container work is mostly plumbing them into an image.
+
+---
+
+## 4. Design
+
+### 4.1 Principle: the bootstraps provision the container
+
+A naive Dockerfile would re-encode apt lists, clone commands, and colcon
+invocations, and would drift from the bootstraps the moment either changed.
+Instead the image build creates a non-root `dev` user with passwordless sudo
+(the bootstraps refuse root and expect sudo, exactly as on metal) and runs:
+
+| Layer | On the Ubuntu machine | In the image |
+|---|---|---|
+| Jazzy underlay | `ros2-jazzy-bootstrap` source build | **apt binary Jazzy** at `/opt/ros/jazzy` + symlink (see 4.2) |
+| Vimba X SDK | manual unpack + `bootstrap-vimbax-sdk install` | fetch tarball for `TARGETARCH`, unpack to `~/workspace/upstream/vimbax-sdk`, run `bootstrap-vimbax-sdk install --yes` |
+| Driver overlay | `bootstrap-vimbax-ros2-driver install` | `bootstrap-vimbax-ros2-driver install --yes --ros-underlay /opt/ros/jazzy` (prefix form is supported) |
+| Lint/IDE toolchain | apt: `clang-tidy-20` etc. | same apt packages, same paths |
+| VeniMapping | this repo, built by hand | bind-mounted at container start; built by the same `scripts/` |
+
+The bootstraps' host checks cooperate with this: a fresh image layer has no
+sourced ROS environment, a non-root user, Ubuntu 24.04, and (for the driver
+bootstrap) a supported architecture on both amd64 and arm64. Their
+idempotence also gives Docker layer caching clean stage boundaries. The udev
+rule the SDK bootstrap writes is inert in a container; harmless.
+
+Two deviations from metal, both deliberate:
+
+1. **Underlay from apt, not source.** You confirmed the source build is for
+   code-diving, not a build requirement. The apt distribution is the same
+   Jazzy release stream the source tag pins, is multi-arch (the Jazzy
+   bootstrap is amd64-only and would take hours per image build), and
+   `cv_bridge` plus everything the driver bootstrap checks for is available
+   as `ros-jazzy-*` packages: `ros-jazzy-ros-base`, `ros-jazzy-cv-bridge`,
+   `ros-jazzy-image-transport`, `ros-jazzy-camera-info-manager`,
+   `ros-jazzy-rmw-cyclonedds-cpp`, `ros-jazzy-ament-cmake-gtest`,
+   `ros-jazzy-launch*`. When you want to dig through ROS sources, the
+   source checkout on the Ubuntu machine remains the place to do it — the
+   container is a build environment, not a replacement for that habit.
+2. **Driver ref pinned, not `dev`.** `dev` is a moving branch; an image
+   rebuilt next month would silently pick up different driver code. The image
+   should pass `--ref <commit or tag>` — today that means pinning the `dev`
+   commit the Ubuntu machine currently has (`git -C
+   ~/workspace/upstream/vimbax-ros2-driver/src/vimbax_ros2_driver rev-parse
+   HEAD`), revisited when Allied Vision ships a release that compiles under
+   GCC 13.
+
+### 4.2 Satisfying `env.sh` without modifying it
+
+`env.sh` hardcodes `~/workspace/upstream/{ros2-jazzy/install, 
+vimbax-ros2-driver/install, vimbax-sdk}`. In the image, `$HOME` is
+`/home/dev`, the driver overlay and SDK land at the real expected paths, and
+the underlay is bridged with one symlink:
 
 ```
-┌─────────────────────────── macOS host ───────────────────────────┐
-│  VS Code (UI)          Container runtime (OrbStack / Docker      │
-│      │                 Desktop) → lightweight Linux VM           │
-│      │ Dev Containers ext.        │                              │
-│      ▼                            ▼                              │
-│  ┌──────────────── Ubuntu 24.04 dev container ────────────────┐  │
-│  │  VS Code Server, terminals, cpptools, clangd/clang-tidy-20 │  │
-│  │                                                            │  │
-│  │  /home/dev/workspace/upstream/                             │  │
-│  │    ├── ros2-jazzy/install/      (underlay, baked in image) │  │
-│  │    ├── vimbax-ros2-driver/install/  (built in image)       │  │
-│  │    └── vimbax-sdk/cti/*.cti     (SDK, baked in image)      │  │
-│  │                                                            │  │
-│  │  /home/dev/venimapping   ← bind mount of the repo on macOS │  │
-│  │    ├── build/, install/, log/  ← named volume (Linux-only  │  │
-│  │    │                             artifacts, fast I/O)      │  │
-│  │    └── source scripts/env.sh && colcon build   ← unchanged │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+/home/dev/workspace/upstream/
+├── ros2-jazzy/install  -> /opt/ros/jazzy        # setup.bash resolves; env.sh only checks -f
+├── vimbax-ros2-driver/install/…                  # built in-image by the driver bootstrap
+└── vimbax-sdk/cti/*.cti                          # unpacked in-image, registered by the SDK bootstrap
 ```
 
-Design principle: **the container replicates the Ubuntu machine's layout
-exactly**, so `env.sh`, `ide.sh`, and `tidy.sh` run unmodified. The repo's
-scripts stay the single source of truth for how to build; the container is
-just a portable place to run them.
+One subtlety: the SDK bootstrap registers `GENICAM_GENTL64_PATH` via
+`/etc/profile.d`, which only login shells read, and `env.sh` hard-fails when
+the variable is missing. The Dockerfile should additionally set it with `ENV`
+so every process — login shell or not, VS Code task or terminal — sees it.
+`scripts/env.sh`, `ide.sh`, and `tidy.sh` then run byte-for-byte unmodified,
+and `ide.sh`'s pinned paths (`/usr/bin/c++`, `/usr/bin/clang-tidy-20`)
+become guarantees the image enforces rather than assumptions about a host.
 
-### 4.2 The Dockerfile (sketch, not implementation)
-
-Multi-stage, roughly:
+### 4.3 Dockerfile shape
 
 ```dockerfile
-# Stage 0: base — Ubuntu 24.04 with ROS 2 Jazzy
-FROM ros:jazzy AS base            # official OSRF image, ubuntu:24.04, multi-arch (amd64+arm64)
-# + apt: build-essential, cmake, colcon, rmw-cyclonedds-cpp, ament-cmake-gtest, ...
-# + LLVM apt repo: clang-tidy-20, clang-apply-replacements-20, clang-tools (run-clang-tidy)
+FROM ros:jazzy                        # official, Ubuntu 24.04, multi-arch
+ARG TARGETARCH                        # amd64 | arm64
+ARG VIMBAX_VERSION=2026-2             # pin to whatever the Ubuntu machine runs
+ARG DRIVER_REF=<pinned commit>
 
-# Stage 1: vimba-sdk — fetch & unpack the Vimba X SDK for TARGETARCH
-#   VimbaX_Setup-<ver>-Linux64.tar.gz or -Linux_ARM64.tar.gz
-#   → /opt/vimbax  (cti/ inside)
-
-# Stage 2: driver — colcon build alliedvision/vimbax_ros2_driver (pinned tag)
-#   against the Jazzy underlay + SDK
-
-# Stage 3: dev — assemble the developer image
-#   - non-root user `dev` (UID remapped by the dev container tooling)
-#   - /home/dev/workspace/upstream/{ros2-jazzy,vimbax-ros2-driver,vimbax-sdk}
-#     laid out exactly as env.sh expects (symlinks to /opt/... are fine:
-#     env.sh checks for files/dirs, not for physical directories)
-#   - GENICAM_GENTL64_PATH baked via /etc/profile.d, matching the Ubuntu box
-#   - ccache, gdb, valgrind, python venv tooling, etc.
+# 1. apt layer: ros-jazzy-* set from §4.1, build-essential, ros-dev-tools,
+#    clang-tidy-20 + clang-apply-replacements-20 + clang-tools (run-clang-tidy)
+#    from apt.llvm.org for noble, gdb, ccache, python3-venv, sudo
+# 2. non-root user `dev`, passwordless sudo, underlay symlink from §4.2
+# 3. SDK: fetch/COPY VimbaX_Setup-${VIMBAX_VERSION}-Linux{64,_ARM64}.tar.gz
+#    per TARGETARCH → ~/workspace/upstream/vimbax-sdk;
+#    clone vimbax-sdk-bootstrap → install --yes;  ENV GENICAM_GENTL64_PATH
+# 4. driver: clone vimbax-ros2-driver-bootstrap →
+#    install --yes --ros-underlay /opt/ros/jazzy --ref ${DRIVER_REF}
+#    (its verify stage exercises the node against the SDK simulator)
 ```
 
-Key choices inside this sketch:
+Everything is pinned: base image, SDK version, driver commit, LLVM major.
+Rebuilding the image with the same arguments is the reproducibility story.
 
-- **Pin everything.** Base image by digest or at least distro tag, the driver
-  by git tag/commit, the SDK by version, LLVM by major version. The whole
-  point is that "works on my machine" becomes "works in image `sha256:…`".
-- **`.cti` and `GENICAM_GENTL64_PATH` are installed even though no camera
-  will ever be reachable** — because `env.sh` validates them, and because the
-  driver node can at least start and enumerate zero cameras, which keeps the
-  runtime story honest.
-- **The SDK cannot be redistributed casually.** Allied Vision's download is
-  behind their site/EULA. The Dockerfile should download it at build time
-  (URL or a `--build-arg`/local tarball), and the resulting image should live
-  in a *private* registry if pushed at all. Building locally on each Mac is
-  perfectly fine and avoids the question entirely.
+Distribution: the SDK sits behind Allied Vision's EULA, so the built image
+must not be pushed to a public registry. Either each machine builds locally
+(fine — one-time cost, roughly 10–20 minutes, dominated by the driver build)
+or the image goes to a private registry (GHCR private on this account) and
+"Reopen in Container" becomes a pull.
 
-### 4.3 The underlay decision: apt Jazzy vs source-built Jazzy
-
-Two ways to satisfy `~/workspace/upstream/ros2-jazzy/install/setup.bash`:
-
-| Option | How | Pros | Cons |
-|---|---|---|---|
-| **A. Binary (recommended)** | `ros:jazzy` apt packages at `/opt/ros/jazzy`; symlink `~/workspace/upstream/ros2-jazzy/install → /opt/ros/jazzy` | Image builds in minutes; official multi-arch images; trivially updatable | Not bit-identical to your source-built underlay; if your source build carries patches or non-default flags, behavior could differ |
-| **B. Source build in image** | Replicate your `ros2-jazzy` colcon build inside the Dockerfile | Maximum fidelity to the current machine | 1–2 h image build, large image, you must encode the exact checkout/flags of your current underlay, arm64 build is on you |
-
-`env.sh` only requires that `setup.bash` exists and sources cleanly, so
-Option A satisfies the contract as written. I recommend **A**, unless the
-source build exists for a specific reason (patched packages, a subset build,
-non-default CMake flags) — flagged as open question Q1 in §8. Even then, a
-middle path exists: keep A for daily macOS development and accept the small
-fidelity gap, since the Ubuntu machine remains the integration truth.
-
-The same logic applies to the driver overlay, except there Option B (source
-build, pinned tag) is the *only* option and is cheap — it's one small
-workspace.
-
-### 4.4 The `devcontainer.json` (sketch)
+### 4.4 `devcontainer.json` shape
 
 ```jsonc
 {
   "name": "venimapping",
-  "build": { "dockerfile": "Dockerfile", "context": ".." },
+  "build": { "dockerfile": "Dockerfile" },
   "remoteUser": "dev",
-  "updateRemoteUserUID": true,               // files you create belong to you
+  "updateRemoteUserUID": true,
   "workspaceFolder": "/home/dev/venimapping",
   "workspaceMount": "source=${localWorkspaceFolder},target=/home/dev/venimapping,type=bind",
   "mounts": [
-    // build artifacts stay inside the Linux VM's filesystem: much faster than
-    // writing them back through the macOS bind mount, and they're Linux
-    // binaries a macOS host has no use for anyway
     "source=venimapping-build,target=/home/dev/venimapping/build,type=volume",
     "source=venimapping-install,target=/home/dev/venimapping/install,type=volume",
     "source=venimapping-log,target=/home/dev/venimapping/log,type=volume"
   ],
-  "customizations": {
-    "vscode": {
-      "extensions": ["ms-vscode.cpptools", "ms-python.python"]
-      // settings.json / c_cpp_properties.json still come from scripts/ide.sh
-    }
-  },
-  "postCreateCommand": "bash -lc 'source scripts/env.sh && colcon build ... && ./scripts/ide.sh'"
+  "customizations": { "vscode": { "extensions": [
+    "ms-vscode.cpptools", "ms-python.python"
+  ]}},
+  "postCreateCommand": "bash -lc 'source scripts/env.sh && colcon build --symlink-install && ./scripts/ide.sh'"
 }
 ```
 
-Notes:
+The named volumes are the one macOS-specific decision that matters. Bind
+mounts cross the macOS↔VM boundary (VirtioFS) and are markedly slower than
+the VM's native filesystem; source files are read once per compile and are
+fine, but `build/` churn is not. Keeping `build/`, `install/`, and `log/` on
+volumes keeps compile and link speed native while the sources stay
+live-editable from the Mac side. They are Linux artifacts with no value on
+the host anyway. This mirrors what `.gitignore` already says about them.
 
-- **Bind-mount I/O is the one real performance trap on macOS.** File I/O
-  across the macOS↔VM boundary (gRPC-FUSE/VirtioFS) is markedly slower than
-  native. Source trees are fine; `build/` churn is not. Putting `build/`,
-  `install/`, `log/` on named volumes keeps compiles at near-native speed
-  while the sources stay live-editable from the Mac side. (OrbStack's
-  VirtioFS is fast enough that this matters less, but the volumes cost
-  nothing and make Docker Desktop tolerable too.)
-- **`ide.sh` works unmodified** and its output gains a nice property: paths
-  like `/usr/bin/c++`, `/usr/bin/clang-tidy-20`, and
-  `${HOME}/workspace/upstream/...` are now *guaranteed* correct because the
-  image defines them. The generated `.vscode/` stays untracked (already in
-  `.gitignore`), and since cpptools runs inside the container, IntelliSense
-  resolves against the container's headers — the whole reason this
-  architecture works.
-- One wrinkle to verify at implementation time: `ide.sh` hardcodes
-  `${HOME}/workspace/upstream/...` in `VENIMAPPING_UPSTREAM_PREFIXES`, and
-  `env.sh` hardcodes the same root. As long as the container user's `$HOME`
-  is `/home/dev` and the layout lives there, nothing needs changing. If you
-  ever want host-side flexibility, a tiny follow-up would be to let an env
-  var (e.g. `VENIMAPPING_UPSTREAM`) override the root — optional, not
-  required for this design.
+`ide.sh` runs in `postCreateCommand`, so `.vscode/` (untracked, as now) is
+regenerated inside the container where its pinned paths are correct, and
+cpptools — running in the container — resolves headers against the real
+underlay and overlay trees.
 
 ### 4.5 Container runtime on the Mac
 
-Any OCI runtime works; the Dev Containers extension just needs a `docker`
-(or compatible) CLI:
+The Dev Containers extension needs a Docker-compatible CLI; the repo should
+not care which provides it.
 
 | Runtime | Notes |
 |---|---|
-| **OrbStack** (recommended) | Fastest VM + file sharing on macOS today, tiny resource footprint, drop-in `docker` CLI. Free for personal use; paid for commercial. |
-| **Docker Desktop** | The default everyone knows; fine. License required for larger companies; free for small orgs/personal. Enable VirtioFS + Rosetta options. |
-| **Colima** | Free/OSS (Lima-based). Works well with Dev Containers; a bit more hands-on. |
-| **Rancher Desktop / Podman Desktop** | Workable; Dev Containers support is more finicky (Podman needs extra settings). |
+| OrbStack | Fastest VM and file sharing on macOS; drop-in `docker` CLI. Commercial use is paid. |
+| Docker Desktop | The default choice; enable VirtioFS. Free for personal use and small orgs. |
+| Colima | Free/OSS, Lima-based; works with Dev Containers with minor setup. |
 
-The repo shouldn't care which one a developer picks — that's the point of
-standardizing on the devcontainer spec.
-
-### 4.6 Apple Silicon vs Intel, and the architecture question
-
-- **Apple Silicon (M-series)** runs `linux/arm64` containers *natively* (no
-  emulation). ROS 2 Jazzy is Tier-1 on Ubuntu 24.04 arm64, the official
-  `ros:jazzy` image is multi-arch, LLVM 20 ships arm64 debs, and Allied
-  Vision ships `VimbaX_Setup-…-Linux_ARM64.tar.gz`. So the entire stack
-  builds natively on arm64. The Dockerfile should select the SDK tarball via
-  `TARGETARCH`.
-- **Intel Macs** run `linux/amd64` natively; same Dockerfile, other branch of
-  `TARGETARCH`.
-- **Fidelity caveat:** an arm64 build is not the same binary artifact as the
-  amd64 build on your Ubuntu box. For day-to-day development (does it
-  compile, do tests pass, does clang-tidy agree) this is irrelevant and the
-  native speed is worth it. If you ever want bit-for-bit platform parity
-  from a Mac, Docker Desktop/OrbStack can run `--platform linux/amd64`
-  images under Rosetta 2 — it works but is several times slower, and I would
-  *not* make it the default. The better answer for parity is CI (§6).
-
-### 4.7 What deliberately does not work on the Mac
-
-Named explicitly so nobody is surprised:
-
-- **Camera hardware.** USB3 Vision passthrough into the container VM is
-  somewhere between painful and impossible; GigE Vision could theoretically
-  reach a camera on the LAN via bridged networking, but per your framing this
-  is a non-goal. The environment still contains the SDK/driver, so the
-  driver node starts and the full stack *builds*; it just enumerates zero
-  cameras.
-- **GUI tools** (RViz, rqt) need extra plumbing (X11/VNC/`xvfb`). Out of
-  scope; can be added later if wanted.
-- **Multi-host DDS discovery** from inside the VM to robots on the LAN is
-  its own adventure. Out of scope for a build environment.
+Any of the three works for this design. For a single personal machine, pick
+whichever you prefer; the quickstart doc can name one to reduce decisions.
 
 ---
 
-## 5. Alternatives considered (and why not)
+## 5. Intel vs Apple Silicon
 
-1. **RoboStack (conda-forge ROS 2 native on macOS).** Real project, genuinely
-   runs ROS 2 on macOS without VMs. Rejected: different compiler (Apple
-   Clang), different sysroot, no Ubuntu fidelity, and the Vimba X ROS driver
-   + GenTL stack is Linux-targeted here. You'd be debugging a *third*
-   platform, not reproducing your first one.
-2. **Full Linux VM (UTM/Parallels/Multipass) with Ubuntu 24.04.** Faithful
-   but heavy: manual provisioning drift, no repo-committed definition, worse
-   editor integration than dev containers, and every developer's VM rots
-   differently. The devcontainer *is* a VM under the hood, minus all of
-   those downsides.
-3. **Remote-SSH to a shared Linux build server.** Great complement (it's
-   likely what your old workplace layered on top), and the same
-   `.devcontainer/` works there too. But as the *primary* answer it requires
-   maintaining a server and being online; the local container needs neither.
-4. **Nix / nix-ros-overlay.** Reproducibility gold standard, but a steep
-   adoption cost and an awkward fit with a proprietary SDK and a
-   colcon-centric workflow. Overkill for a two-package workspace.
-5. **Cross-compiling from macOS with an Ubuntu sysroot.** Fragile bespoke
-   toolchain work with none of the "identical environment" guarantees.
-   Nobody should do this in 2026.
+Your instinct — that the Mac's architecture shouldn't matter — is achievable,
+with one asterisk.
 
----
+The same Dockerfile builds for both: `TARGETARCH` selects the SDK tarball
+(Allied Vision ships Linux64 and Linux_ARM64), apt Jazzy and the LLVM 20
+packages are multi-arch, and the driver bootstrap explicitly supports
+aarch64. An Apple Silicon Mac builds and runs the arm64 image natively at
+full speed; an Intel Mac does the same with the amd64 image. Nothing in the
+developer experience differs.
 
-## 6. Bonus: the same image is your CI
+The asterisk: the produced binaries differ by architecture. For everything
+this environment is for — compiling, unit tests, clang-tidy, the simulator
+smoke test — that is irrelevant. The place where amd64 parity with the
+Ubuntu machine is actually enforced should be CI (§7), which runs the same
+image on amd64 runners. Running the amd64 image on Apple Silicon via
+Rosetta emulation works but is several times slower; treat it as an escape
+hatch for reproducing an amd64-only bug locally, not as a mode anyone
+develops in.
 
-Once the Dockerfile exists, a GitHub Actions workflow can build the image (or
-pull it from a private registry / GHCR with the SDK caveat from §4.2) and run
-`colcon build && colcon test && scripts/tidy.sh check` on every PR — on
-`linux/amd64`, which also closes the Apple-Silicon parity gap from §4.6
-without any Mac ever emulating x86. This falls out of the design for free and
-is, frankly, half the reason to do it even if the Mac feature didn't exist.
+The only component that is genuinely amd64-only is the Jazzy *source-build*
+bootstrap, and it is out of the container path by design. If you ever want
+it inside a container too (e.g. to reproduce the metal machine exactly for
+an amd64 CI job), its host check is the only obstacle on amd64 — it already
+runs fine under Docker's non-root + sudo pattern.
 
 ---
 
-## 7. Implementation plan (when you green-light it)
+## 6. What the container can and cannot do
 
-**Phase 1 — Containerize the environment (the core, ~a day of iteration):**
-1. `.devcontainer/Dockerfile` — base `ros:jazzy`, apt deps, LLVM 20 repo,
-   Vimba X SDK per `TARGETARCH`, source-build `vimbax_ros2_driver` at a
-   pinned tag, assemble `/home/dev/workspace/upstream/…` layout, profile.d
-   for `GENICAM_GENTL64_PATH`, non-root `dev` user, ccache.
-2. Validate *on Linux first* (this container is Ubuntu-agnostic): clean
-   `source scripts/env.sh` → green summary line, `colcon build`, `colcon
-   test`, `scripts/tidy.sh check`, `scripts/ide.sh` — all unmodified.
+Can, with no hardware attached:
 
-**Phase 2 — Dev container UX:**
-3. `.devcontainer/devcontainer.json` per §4.4 (mounts, remoteUser, UID
-   remap, extensions, postCreate).
-4. Test on an actual Mac: OrbStack or Docker Desktop + Dev Containers
-   extension → "Reopen in Container" → build + IntelliSense + clang-tidy all
-   green. Measure build times with and without the named build volumes to
-   confirm the mount strategy.
-5. A short `docs/macos-quickstart.md`: install runtime, install extension,
-   reopen in container, `source scripts/env.sh`, build. Five steps, no
-   Ubuntu machine required.
+- Build both packages, run `colcon test`, `scripts/tidy.sh check|fix`,
+  `scripts/ide.sh` — the full development loop.
+- Run `vimbax_camera_node` against the SDK's camera simulator, which is how
+  the driver bootstrap's own smoke test passes. `ros2 launch
+  venimapping_bringup camera.launch.py` has a real, testable target.
+- Run the gateway probe against that simulated driver node.
 
-**Phase 3 — Optional hardening:**
-6. CI workflow reusing the image (§6).
-7. Pre-built image in a private registry so "Reopen in Container" pulls
-   instead of building (minutes → seconds for new machines); needs the SDK
-   licensing decision.
-8. Optional `VENIMAPPING_UPSTREAM` override in `env.sh`/`ide.sh` if you ever
-   want the same scripts to serve differently-laid-out hosts.
+Cannot, and out of scope by your framing:
 
-Nothing in Phases 1–2 modifies any existing file: the entire feature is
-additive (`.devcontainer/`, docs). That also means zero risk to the current
-Ubuntu workflow — the native machine keeps working exactly as it does today,
-and the container is an alternative front door to the same scripts.
+- Reach a physical camera. USB3 Vision passthrough into the runtime VM is
+  effectively unavailable; GigE Vision across the VM NAT boundary is
+  theoretically bridgeable but not worth the complexity here.
+- GUI tools (RViz, rqt) without extra display plumbing.
+- Cross-host DDS discovery to machines on the LAN, without deliberate
+  network configuration.
 
 ---
 
-## 8. Open questions for you
+## 7. CI for free
 
-1. **Why is the Jazzy underlay source-built** (`~/workspace/upstream/
-   ros2-jazzy/install`) rather than apt's `/opt/ros/jazzy`? Patches? Habit?
-   A subset build? This decides §4.3 Option A vs B. If it's "no strong
-   reason," Option A makes the image dramatically cheaper.
-2. **Which Vimba X SDK version and `vimbax_ros2_driver` ref** are on the
-   Ubuntu machine right now? The image should pin the same ones
-   (`vimbaxviewer --version` / SDK dir name, and the driver checkout's
-   `git describe`).
-3. **Your Mac's chip** — Apple Silicon or Intel? Both are covered, but it
-   decides which image arch gets tested first and whether the Rosetta
-   discussion in §4.6 is ever relevant to you.
-4. **Docker runtime preference/licensing** — is Docker Desktop acceptable
-   for your situation, or should the quickstart standardize on OrbStack or
-   Colima?
-5. **Private registry availability** (GHCR on this repo would do) — only
-   matters for Phase 3 pre-built images, and interacts with the SDK
-   redistribution question.
+The image is exactly what a GitHub Actions job needs: build it (or pull from
+a private registry) on an amd64 runner, then run `colcon build`, `colcon
+test`, and `scripts/tidy.sh check` on every push. This closes the
+architecture-parity gap from §5 without any Mac emulating anything, and it
+turns the environment definition into something continuously verified rather
+than trusted. The SDK licensing constraint from §4.3 applies to where the
+image is stored, not to whether CI can use it.
+
+---
+
+## 8. Implementation plan
+
+Additive only — no existing file changes, no risk to the Ubuntu workflow.
+
+**Phase 1 — image.**
+`.devcontainer/Dockerfile` per §4.3. Acceptance: inside the built container,
+`scripts/env.sh` prints its green summary (`jazzy=active driver=active
+gentl=active rmw=rmw_cyclonedds_cpp`), `colcon build` and `colcon test`
+succeed, `scripts/tidy.sh check` runs clang-tidy 20, and the driver
+bootstrap's verify stage has passed against the simulator. This phase is
+testable on any Docker host, no Mac required.
+
+**Phase 2 — dev container UX.**
+`devcontainer.json` per §4.4, then validation on the Silicon Mac: runtime
+installed, "Reopen in Container", build, IntelliSense resolving `rclcpp` and
+`vimbax_camera_msgs` headers, format-on-save and clang-tidy behaving per the
+generated settings. Measure a full build with and without the named volumes
+to confirm the mount strategy. Write `docs/macos-quickstart.md` (install
+runtime → install extension → reopen in container → build).
+
+**Phase 3 — optional hardening.**
+CI workflow (§7); private-registry prebuilt image so container startup is a
+pull; a decision on the driver ref pin cadence.
+
+Open items to settle at implementation time, none blocking the design:
+
+1. The exact SDK version and driver `dev` commit currently on the Ubuntu
+   machine, so the image pins match reality (`ls ~/workspace/upstream/
+   vimbax-sdk`, `git rev-parse HEAD` in the driver checkout).
+2. Whether `--ref` accepts a bare commit SHA or needs a tag/branch —
+   trivially verifiable against the bootstrap; worst case the Dockerfile
+   checks out the SHA before invoking it.
+3. Runtime choice for the quickstart (OrbStack vs Docker Desktop — §4.5).
+4. Whether to bother with a private registry now or leave local builds as
+   the only path until a second machine or CI needs the image.
 
 ---
 
 ## 9. References
 
 - VS Code Dev Containers: <https://code.visualstudio.com/docs/devcontainers/containers>
-- Dev Container spec (editor-agnostic, also used by CI/Codespaces): <https://containers.dev>
-- Official ROS docker images (`ros:jazzy`, multi-arch): <https://hub.docker.com/_/ros>
-- ROS 2 Jazzy platforms (Ubuntu 24.04 amd64/arm64 Tier 1): <https://docs.ros.org/en/jazzy/Installation.html>
-- Allied Vision Vimba X SDK downloads (Linux64 and Linux ARM64 tarballs): <https://www.alliedvision.com/en/support/software-downloads/vimba-x-sdk/vimba-x>
-- `alliedvision/vimbax_ros2_driver` (colcon-buildable source): <https://github.com/alliedvision/vimbax_ros2_driver>
-- LLVM apt packages for Ubuntu Noble (clang-tidy-20): <https://apt.llvm.org>
+- Dev Container spec (editor-agnostic; same files drive Codespaces/CI): <https://containers.dev>
+- Official `ros:jazzy` images (multi-arch): <https://hub.docker.com/_/ros>
+- ROS 2 Jazzy platforms (Ubuntu 24.04 amd64/arm64, Tier 1): <https://docs.ros.org/en/jazzy/Installation.html>
+- Vimba X SDK downloads (Linux64 / Linux_ARM64): <https://www.alliedvision.com/en/support/software-downloads/vimba-x-sdk/vimba-x>
+- `alliedvision/vimbax_ros2_driver`: <https://github.com/alliedvision/vimbax_ros2_driver>
+- LLVM apt packages for Noble (clang-tidy-20): <https://apt.llvm.org>
+- Provisioning tools this design builds on:
+  <https://github.com/lkaising/ros2-jazzy-bootstrap>,
+  <https://github.com/lkaising/vimbax-ros2-driver-bootstrap>,
+  <https://github.com/lkaising/vimbax-sdk-bootstrap>
