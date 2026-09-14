@@ -1,0 +1,44 @@
+name: Container CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build container
+        run: |
+          docker build \
+            --platform ${{ matrix.platform }} \
+            -f .devcontainer/Dockerfile \
+            -t venimapping:test .
+
+      - name: Test container
+        run: |
+          docker run --rm venimapping:test bash -lc '
+            set -e
+            test "$(id -u)" = "1000"
+            test "$(whoami)" = "dev"
+            test "$ROS_DISTRO" = "jazzy"
+            ros2 pkg list | grep "^rclcpp$"
+            command -v clang-tidy-20
+            command -v clang-apply-replacements-20
+            command -v run-clang-tidy
+            test -L /home/dev/workspace/upstream/ros2-jazzy/install
+            test "$(readlink /home/dev/workspace/upstream/ros2-jazzy/install)" = "/opt/ros/jazzy"
+            test -f /home/dev/workspace/upstream/ros2-jazzy/install/setup.bash
+          '
