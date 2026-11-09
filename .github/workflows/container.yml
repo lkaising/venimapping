@@ -1,0 +1,208 @@
+name: Container CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build container
+        run: |
+          docker build \
+            --platform ${{ matrix.platform }} \
+            -f .devcontainer/Dockerfile \
+            -t venimapping:test .
+
+      - name: Test container
+        run: |
+          docker run --rm venimapping:test bash -lc '
+            set -eo pipefail
+            test "$(id -u)" = "1000"
+            test "$(whoami)" = "dev"
+            test "$ROS_DISTRO" = "jazzy"
+            ros2 pkg list | grep "^rclcpp$"
+            command -v clang-tidy-20
+            command -v clang-apply-replacements-20
+            command -v run-clang-tidy
+            test -L /home/dev/workspace/upstream/ros2-jazzy/install
+            test "$(readlink /home/dev/workspace/upstream/ros2-jazzy/install)" = "/opt/ros/jazzy"
+            test -f /home/dev/workspace/upstream/ros2-jazzy/install/setup.bash
+            test -f /home/dev/workspace/upstream/vimbax-ros2-driver/install/setup.bash
+            test -d /home/dev/workspace/upstream/vimbax-sdk/cti
+            test -n "$GENICAM_GENTL64_PATH"
+            printf "%s\n" "$GENICAM_GENTL64_PATH" | tr ":" "\n" | while IFS= read -r path; do
+              test -n "$path"
+              test -d "$path"
+            done
+          '
+
+      - name: Verify SDK and driver
+        run: |
+          docker run --rm venimapping:test bash -lc '
+            set -eo pipefail
+            id
+            /tmp/vimbax-sdk-bootstrap/bootstrap-vimbax-sdk verify \
+              --sdk-dir /home/dev/workspace/upstream/vimbax-sdk
+            log="$(mktemp)"
+            env -u ROS_DISTRO \
+              -u ROS_VERSION \
+              -u AMENT_PREFIX_PATH \
+              -u COLCON_PREFIX_PATH \
+              /tmp/vimbax-ros2-driver-bootstrap/bootstrap-vimbax-ros2-driver \
+              verify \
+              --ros-underlay /opt/ros/jazzy \
+              --sdk-dir /home/dev/workspace/upstream/vimbax-sdk \
+              2>&1 | tee "${log}"
+            if ! grep -Fq "smoke test passed" "${log}"; then
+              echo "driver smoke test did not pass" >&2
+              exit 1
+            fi
+          '
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install Dev Containers CLI
+        run: |
+          set -euo pipefail
+          npm install --global @devcontainers/cli@0.89.0
+          test "$(devcontainer --version)" = "0.89.0"
+
+      # Start the container from .devcontainer/devcontainer.json. `up` runs
+      # every lifecycle command, waits for postCreateCommand (workspace.sh setup)
+      # and exits non-zero if one fails. On Linux the CLI also maps dev's
+      # UID/GID to the runner user, so dev can write to the checkout.
+      - name: Start dev container
+        run: |
+          set -euo pipefail
+          # The setup output checked below must come from this run's postCreateCommand.
+          for path in .vscode build install log; do
+            if [ -e "${path}" ]; then
+              echo "unexpected ${path} in the fresh checkout" >&2
+              exit 1
+            fi
+          done
+          devcontainer up --workspace-folder . | tee "${RUNNER_TEMP}/devcontainer-up.json"
+          result="$(tail -n 1 "${RUNNER_TEMP}/devcontainer-up.json")"
+          test "$(jq -r .outcome <<<"${result}")" = "success"
+          test "$(jq -r .remoteUser <<<"${result}")" = "dev"
+          test "$(jq -r .remoteWorkspaceFolder <<<"${result}")" = "/home/dev/workspace/project/venimapping"
+          container_id="$(jq -er .containerId <<<"${result}")"
+          echo "DEVCONTAINER_ID=${container_id}" >> "${GITHUB_ENV}"
+          # Layer-reuse check (informational): when the CLI's build reuses the
+          # layers of venimapping:test, the image checks above cover the dev
+          # container image too. See the up log for actual cache use.
+          base_layers="$(docker image inspect --format '{{json .RootFS.Layers}}' venimapping:test)"
+          dc_image="$(docker inspect --format '{{.Image}}' "${container_id}")"
+          dc_layers="$(docker image inspect --format '{{json .RootFS.Layers}}' "${dc_image}")"
+          if jq -en --argjson b "${base_layers}" --argjson d "${dc_layers}" '$d[0:($b | length)] == $b' >/dev/null; then
+            echo "layer reuse: the dev container image extends all venimapping:test layers"
+          else
+            echo "::warning::layer reuse: the dev container image does not extend all venimapping:test layers; see the up log for cache use"
+          fi
+
+      - name: Check dev container configuration and setup output
+        run: |
+          set -euo pipefail
+          workspace=/home/dev/workspace/project/venimapping
+
+          # Mount metadata of the running container (type|name|source|destination|rw).
+          mounts="$(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}|{{.Destination}}|{{.RW}}{{println}}{{end}}' "${DEVCONTAINER_ID}")"
+          printf '%s\n' "${mounts}"
+          awk -F'|' -v src="${GITHUB_WORKSPACE}" -v dst="${workspace}" \
+            '$1 == "bind" && $3 == src && $4 == dst && $5 == "true" { found = 1 } END { exit !found }' <<<"${mounts}" \
+            || { echo "checkout is not bind-mounted read-write at ${workspace}" >&2; exit 1; }
+          for dir in build install log; do
+            awk -F'|' -v dst="${workspace}/${dir}" \
+              '$1 == "volume" && $2 != "" && $4 == dst && $5 == "true" { found = 1 } END { exit !found }' <<<"${mounts}" \
+              || { echo "no read-write named volume at ${workspace}/${dir}" >&2; exit 1; }
+          done
+
+          checks="$(cat <<'EOF'
+          set -euo pipefail
+          workspace=/home/dev/workspace/project/venimapping
+          id
+          test "$(id -un)" = dev
+          test "${PWD}" = "${workspace}"
+          test "${VENIMAPPING_ROOT}" = "${workspace}"
+          test -f scripts/workspace.sh
+          for dir in "${workspace}" "${workspace}/build" "${workspace}/install" "${workspace}/log"; do
+            mountpoint -q "${dir}" || { echo "not a mount point: ${dir}" >&2; exit 1; }
+            probe="$(mktemp -p "${dir}" .ci-write-probe.XXXXXX)"
+            rm -f -- "${probe}"
+          done
+          # Output of the automatic setup (postCreateCommand), checked before
+          # workspace.sh check can regenerate it.
+          for file in install/setup.bash .vscode/ros.env .vscode/c_cpp_properties.json .vscode/settings.json; do
+            test -s "${file}" || { echo "missing or empty setup output: ${file}" >&2; exit 1; }
+          done
+          echo "dev container configuration and setup output ok"
+          EOF
+          )"
+          devcontainer exec --workspace-folder . bash -c "${checks}"
+
+      # A new interactive shell must load the project overlay through the
+      # /etc/bash.bashrc hook alone. The baseline is the container's startup
+      # environment (/proc/1/environ): it keeps the image ENV (VENIMAPPING_ROOT,
+      # GENICAM_GENTL64_PATH, ...) but not what postCreateCommand or the CLI's
+      # userEnvProbe (an interactive login shell) loaded.
+      - name: Check interactive shell environment
+        run: |
+          set -euo pipefail
+          hook_check="$(cat <<'EOF'
+          set -euo pipefail
+          mapfile -d '' -t baseline < /proc/1/environ
+          # Control: without the hook (non-interactive shell) the baseline has no ROS.
+          env -i "${baseline[@]}" bash --noprofile --norc -c '
+            set -e
+            test -n "${VENIMAPPING_ROOT:-}"
+            test -n "${GENICAM_GENTL64_PATH:-}"
+            test -z "${AMENT_PREFIX_PATH:-}"
+            if command -v ros2 >/dev/null; then
+              echo "baseline environment already provides ros2" >&2
+              exit 1
+            fi
+          '
+          # ROS setup scripts read unset variables, so no nounset here.
+          env -i "${baseline[@]}" bash -ic '
+            set -eo pipefail
+            test "$(id -un)" = dev
+            command -v ros2
+            prefix="$(ros2 pkg prefix venimapping_camera)"
+            test "${prefix}" = "${VENIMAPPING_ROOT}/install/venimapping_camera"
+            ros2 pkg list | grep -Fx venimapping_bringup
+          '
+          echo "interactive shell loads the project overlay"
+          EOF
+          )"
+          devcontainer exec --workspace-folder . bash -c "${hook_check}"
+
+      # Same clean startup environment as the old docker run step: the script
+      # loads ROS itself. exec keeps its exit status.
+      - name: Build and check the workspace
+        run: |
+          set -euo pipefail
+          check="$(cat <<'EOF'
+          set -euo pipefail
+          mapfile -d '' -t baseline < /proc/1/environ
+          exec env -i "${baseline[@]}" ./scripts/workspace.sh check
+          EOF
+          )"
+          devcontainer exec --workspace-folder . bash -c "${check}"

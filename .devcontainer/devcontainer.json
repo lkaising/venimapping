@@ -1,0 +1,26 @@
+{
+    "name": "venimapping",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "remoteUser": "dev",
+    "workspaceFolder": "/home/dev/workspace/project/venimapping",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/dev/workspace/project/venimapping,type=bind",
+    "mounts": [
+        "source=venimapping-build-${devcontainerId},target=${containerWorkspaceFolder}/build,type=volume",
+        "source=venimapping-install-${devcontainerId},target=${containerWorkspaceFolder}/install,type=volume",
+        "source=venimapping-log-${devcontainerId},target=${containerWorkspaceFolder}/log,type=volume"
+    ],
+    "otherPortsAttributes": {
+        "onAutoForward": "ignore"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-python.python"
+            ]
+        }
+    },
+    "postCreateCommand": "sudo chown -R dev:dev ${containerWorkspaceFolder}/build ${containerWorkspaceFolder}/install ${containerWorkspaceFolder}/log && bash ${containerWorkspaceFolder}/scripts/workspace.sh setup"
+}
