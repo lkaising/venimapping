@@ -21,7 +21,7 @@ find_package(rclcpp REQUIRED)
 find_package(vimbax_camera_msgs REQUIRED)
 
 # --- venimapping_camera_gateway_api -------------------------------------------
-# Header-only target for the ROS-free contract (expected.hpp,
+# Header-only target for the ROS-free contract (types/error.hpp, expected.hpp,
 # camera_gateway.hpp); vimbax_camera_gateway.hpp needs the gateway library.
 
 add_library(venimapping_camera_gateway_api INTERFACE)
