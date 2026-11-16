@@ -40,7 +40,11 @@ template <typename Service>
                                              StringView camera_namespace,
                                              StringView leaf)
 {
-  return node.create_client<Service>(detail::service_name(camera_namespace, leaf));
+  while (camera_namespace.ends_with('/')) {
+    camera_namespace.remove_suffix(1);
+  }
+
+  return node.create_client<Service>(std::format("{}/{}", camera_namespace, leaf));
 }
 
 template <typename Service>
