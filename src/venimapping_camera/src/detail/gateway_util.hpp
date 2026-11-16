@@ -1,9 +1,7 @@
 // -----------------------------------------------------------------------------
 //  Filename: gateway_util.hpp
 //
-//  Purpose:  Declares the internal, ROS-independent gateway mechanics: service
-//            name construction, driver-error conversion, and the gateway
-//            diagnostic vocabulary.
+//  Purpose:  Declares internal, ROS-independent gateway diagnostics and error helpers.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
@@ -25,8 +23,6 @@ enum class GatewayDiagnostic : std::int32_t {  // NOLINT(performance-enum-size):
 };
 
 Error gateway_error(GatewayDiagnostic diagnostic, std::string text);
-
-std::string service_name(std::string_view camera_namespace, std::string_view leaf);
 
 Expected<void> check_driver_error(std::int32_t code, const std::string& text);
 

@@ -1,7 +1,7 @@
 # ------------------------------------------------------------------------------
 #  Filename: CMakeLists.txt
 #
-#  Purpose:  Installs the VeniMapping bringup launch files.
+#  Purpose:  Installs the VeniMapping bringup launch and config files.
 #
 #  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 # ------------------------------------------------------------------------------
@@ -11,6 +11,6 @@ project(venimapping_bringup LANGUAGES NONE)
 
 find_package(ament_cmake REQUIRED)
 
-install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 
 ament_package()

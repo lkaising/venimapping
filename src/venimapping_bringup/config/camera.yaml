@@ -1,0 +1,12 @@
+# ------------------------------------------------------------------------------
+#  Filename: camera.yaml
+#
+#  Purpose:  Default vimbax_camera driver parameters for the lab rig.
+#
+#  Copyright (C) 2026 Logan Kaising.  All rights reserved.
+# ------------------------------------------------------------------------------
+
+/**/vimbax_camera:
+  ros__parameters:
+    camera_id: "0GPF3"
+    autostream: 0
