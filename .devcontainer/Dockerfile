@@ -28,10 +28,12 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-ament-cmake-gtest \
     clang-tidy-20 \
     clang-tools-20 \
+    clangd-20 \
     && rm -rf /var/lib/apt/lists/*
 
 # Make LLVM 20's run-clang-tidy available under the command name expected by the project.
-RUN ln -s /usr/bin/run-clang-tidy-20 /usr/local/bin/run-clang-tidy
+RUN ln -s /usr/bin/run-clang-tidy-20 /usr/local/bin/run-clang-tidy \
+    && ln -s /usr/bin/clangd-20 /usr/local/bin/clangd
 
 # Create the development user
 RUN usermod -l dev -d /home/dev -m ubuntu \
