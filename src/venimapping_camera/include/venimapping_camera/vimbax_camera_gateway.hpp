@@ -54,6 +54,10 @@ namespace venimapping::camera {
 // A setter that fails with a timeout does not establish whether the camera
 // applied the requested value; a caller that needs to know shall read the
 // feature back.
+//
+// The feature module is sent to the driver as given. The driver answers a
+// module it does not know with driver error -7, and every call except
+// connection_status_get() made while it holds no camera with driver error -3.
 class VimbaXCameraGateway final : public CameraGateway {
  public:
   // The only supported construction path: ROS client creation can throw, and
@@ -87,24 +91,42 @@ class VimbaXCameraGateway final : public CameraGateway {
   // binding or from another thread fail without touching ROS.
   [[nodiscard]] Expected<void> bind_to_current_thread();
 
-  [[nodiscard]] Expected<double> feature_float_get(const std::string& name) override;
-  [[nodiscard]] Expected<void> feature_float_set(const std::string& name, double value) override;
-  [[nodiscard]] Expected<FeatureFloatInfo> feature_float_info_get(const std::string& name) override;
+  // True means only that the driver currently holds a camera object.
+  [[nodiscard]] Expected<bool> connection_status_get() override;
 
-  [[nodiscard]] Expected<std::string> feature_enum_get(const std::string& name) override;
-  [[nodiscard]] Expected<void> feature_enum_set(const std::string& name,
-                                                const std::string& value) override;
-  [[nodiscard]] Expected<FeatureEnumInfo> feature_enum_info_get(const std::string& name) override;
-
-  [[nodiscard]] Expected<FeatureAccessMode> feature_access_mode_get(const std::string& name) override;
+  [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
 
   // The Vimba X driver serves this list from a per-module cache built when it
   // opens the camera, so the result is a snapshot refreshed on reopen after a
   // reconnect rather than a live query.
-  [[nodiscard]] Expected<std::vector<std::string>> features_list_get() override;
+  [[nodiscard]] Expected<std::vector<std::string>> features_list_get(
+      FeatureModule feature_module) override;
 
-  [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
-  [[nodiscard]] Expected<bool> connection_status_get() override;
+  [[nodiscard]] Expected<FeatureAccessMode> feature_access_mode_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<double> feature_float_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_float_set(
+      const std::string& feature_name,
+      double value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<FeatureFloatInfo> feature_float_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<std::string> feature_enum_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_enum_set(
+      const std::string& feature_name,
+      const std::string& value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<FeatureEnumInfo> feature_enum_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
 
  private:
   template <typename Service>

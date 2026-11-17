@@ -33,6 +33,7 @@ using venimapping::camera::CameraGateway;
 using venimapping::camera::Error;
 using venimapping::camera::ErrorDomain;
 using venimapping::camera::FeatureFloatInfo;
+using venimapping::camera::FeatureModule;
 using venimapping::camera::VimbaXCameraGateway;
 
 std::string describe(const Error& error)
@@ -111,7 +112,7 @@ ProbeOptions declare_options(rclcpp::Node& node)
 
 void check_features_list(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  const auto features = camera.features_list_get();
+  const auto features = camera.features_list_get(FeatureModule::kRemoteDevice);
   if (!features) {
     report.fail("FeaturesListGet", describe(features.error()));
     return;
@@ -181,7 +182,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   if (!rclcpp::ok()) {
     return;
   }
-  if (auto access = camera.feature_access_mode_get(options.float_feature); access) {
+  if (auto access = camera.feature_access_mode_get(options.float_feature, FeatureModule::kRemoteDevice); access) {
     report.pass("FeatureAccessModeGet(" + options.float_feature + ")",
                 std::string{"readable="} + (access->readable ? "true" : "false") +
                     " writable=" + (access->writable ? "true" : "false"));
@@ -193,7 +194,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   if (!rclcpp::ok()) {
     return;
   }
-  if (auto value = camera.feature_float_get(options.float_feature); value) {
+  if (auto value = camera.feature_float_get(options.float_feature, FeatureModule::kRemoteDevice); value) {
     report.pass("FeatureFloatGet(" + options.float_feature + ")",
                 std::to_string(*value));
   } else {
@@ -204,7 +205,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   if (!rclcpp::ok()) {
     return;
   }
-  if (auto info = camera.feature_float_info_get(options.float_feature); info) {
+  if (auto info = camera.feature_float_info_get(options.float_feature, FeatureModule::kRemoteDevice); info) {
     report.pass("FeatureFloatInfoGet(" + options.float_feature + ")",
                 "min=" + std::to_string(info->min) +
                     " max=" + std::to_string(info->max) +
@@ -219,7 +220,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   if (!rclcpp::ok()) {
     return;
   }
-  if (auto value = camera.feature_enum_get(options.enum_feature); value) {
+  if (auto value = camera.feature_enum_get(options.enum_feature, FeatureModule::kRemoteDevice); value) {
     report.pass("FeatureEnumGet(" + options.enum_feature + ")", *value);
   } else {
     report.fail("FeatureEnumGet(" + options.enum_feature + ")",
@@ -229,7 +230,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   if (!rclcpp::ok()) {
     return;
   }
-  if (auto info = camera.feature_enum_info_get(options.enum_feature); info) {
+  if (auto info = camera.feature_enum_info_get(options.enum_feature, FeatureModule::kRemoteDevice); info) {
     report.pass("FeatureEnumInfoGet(" + options.enum_feature + ")",
                 std::to_string(info->possible_values.size()) + " possible, " +
                     std::to_string(info->available_values.size()) +
@@ -277,7 +278,7 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
   const std::string& feature = options.float_feature;
   const std::string check = "FloatWrite(" + feature + ")";
 
-  const auto access = camera.feature_access_mode_get(feature);
+  const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
   if (!access) {
     report.fail(check, "access mode: " + describe(access.error()));
     return;
@@ -287,13 +288,13 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
     return;
   }
 
-  const auto info = camera.feature_float_info_get(feature);
+  const auto info = camera.feature_float_info_get(feature, FeatureModule::kRemoteDevice);
   if (!info) {
     report.fail(check, "metadata: " + describe(info.error()));
     return;
   }
 
-  const auto original = camera.feature_float_get(feature);
+  const auto original = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
   if (!original) {
     report.fail(check, "original read: " + describe(original.error()));
     return;
@@ -315,12 +316,12 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
     return;
   }
 
-  if (auto set = camera.feature_float_set(feature, target); !set) {
+  if (auto set = camera.feature_float_set(feature, target, FeatureModule::kRemoteDevice); !set) {
     report.fail(check, "set to " + std::to_string(target) + ": " + describe(set.error()));
     return;
   }
 
-  if (auto readback = camera.feature_float_get(feature);
+  if (auto readback = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
       readback && float_values_match(target, *readback, *info)) {
     report.pass(check, "wrote " + std::to_string(target) + ", read back " + std::to_string(*readback));
   } else if (readback) {
@@ -331,11 +332,11 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
 
   // Restoration runs regardless of the verification outcome above; leaving
   // the camera modified is the one result the write path must not produce.
-  if (auto restore = camera.feature_float_set(feature, *original); !restore) {
+  if (auto restore = camera.feature_float_set(feature, *original, FeatureModule::kRemoteDevice); !restore) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + std::to_string(target) + ": " + describe(restore.error()));
     return;
   }
-  if (auto verify = camera.feature_float_get(feature);
+  if (auto verify = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
       verify && float_values_match(*original, *verify, *info)) {
     report.pass(check + "/restore", "restored to " + std::to_string(*verify));
   } else if (verify) {
@@ -351,7 +352,7 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
   const std::string& feature = options.write_enum_feature;
   const std::string check = "EnumWrite(" + feature + ")";
 
-  const auto access = camera.feature_access_mode_get(feature);
+  const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
   if (!access) {
     report.fail(check, "access mode: " + describe(access.error()));
     return;
@@ -361,13 +362,13 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
     return;
   }
 
-  const auto info = camera.feature_enum_info_get(feature);
+  const auto info = camera.feature_enum_info_get(feature, FeatureModule::kRemoteDevice);
   if (!info) {
     report.fail(check, "metadata: " + describe(info.error()));
     return;
   }
 
-  const auto original = camera.feature_enum_get(feature);
+  const auto original = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
   if (!original) {
     report.fail(check, "original read: " + describe(original.error()));
     return;
@@ -380,12 +381,12 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
     return;
   }
 
-  if (auto set = camera.feature_enum_set(feature, *target); !set) {
+  if (auto set = camera.feature_enum_set(feature, *target, FeatureModule::kRemoteDevice); !set) {
     report.fail(check, "set to " + *target + ": " + describe(set.error()));
     return;
   }
 
-  if (auto readback = camera.feature_enum_get(feature);
+  if (auto readback = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
       readback && *readback == *target) {
     report.pass(check, "wrote " + *target + ", read back " + *readback);
   } else if (readback) {
@@ -397,11 +398,11 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
 
   // Restoration runs regardless of the verification outcome above; leaving
   // the camera modified is the one result the write path must not produce.
-  if (auto restore = camera.feature_enum_set(feature, *original); !restore) {
+  if (auto restore = camera.feature_enum_set(feature, *original, FeatureModule::kRemoteDevice); !restore) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + *target + ": " + describe(restore.error()));
     return;
   }
-  if (auto verify = camera.feature_enum_get(feature);
+  if (auto verify = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
       verify && *verify == *original) {
     report.pass(check + "/restore", "restored to " + *verify);
   } else if (verify) {
