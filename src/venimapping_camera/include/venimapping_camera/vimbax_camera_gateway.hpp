@@ -24,6 +24,10 @@
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_bool_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_bool_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_command_is_done.hpp"
+#include "vimbax_camera_msgs/srv/feature_command_run.hpp"
+#include "vimbax_camera_msgs/srv/feature_enum_as_int_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_enum_as_string_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_set.hpp"
@@ -33,6 +37,9 @@
 #include "vimbax_camera_msgs/srv/feature_int_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_int_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_int_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_set.hpp"
 #include "vimbax_camera_msgs/srv/feature_string_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_string_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_string_set.hpp"
@@ -182,6 +189,37 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<FeatureEnumInfo> feature_enum_info_get(
       const std::string& feature_name,
       FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::int64_t> feature_enum_as_int_get(
+      const std::string& feature_name,
+      const std::string& option,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::string> feature_enum_as_string_get(
+      const std::string& feature_name,
+      std::int64_t value,
+      FeatureModule feature_module) override;
+
+  // The driver runs the command and then polls it every 100 ms until it is
+  // done, so even an immediate command takes about 100 ms. It gives up with
+  // driver error -12 after its command_feature_timeout parameter, or after
+  // 1 second when that parameter is unset. A gateway timeout shorter than that
+  // can expire first, which leaves the outcome of the command unknown.
+  [[nodiscard]] Expected<void> feature_command_run(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<bool> feature_command_is_done(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<std::vector<std::uint8_t>> feature_raw_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_raw_set(
+      const std::string& feature_name,
+      const std::vector<std::uint8_t>& buffer,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::int64_t> feature_raw_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
 
  private:
   template <typename Service>
@@ -240,6 +278,13 @@ class VimbaXCameraGateway final : public CameraGateway {
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumGet> feature_enum_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumSet> feature_enum_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumInfoGet> feature_enum_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumAsIntGet> feature_enum_as_int_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumAsStringGet> feature_enum_as_string_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureCommandRun> feature_command_run_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureCommandIsDone> feature_command_is_done_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureRawGet> feature_raw_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureRawSet> feature_raw_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureRawInfoGet> feature_raw_info_get_client_;
 };
 
 }  // namespace venimapping::camera

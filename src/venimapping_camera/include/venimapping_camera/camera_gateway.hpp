@@ -130,6 +130,39 @@ class CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
 
+  // Convert between an option's name and its integer value. Neither call
+  // changes the feature.
+  [[nodiscard]] virtual Expected<std::int64_t> feature_enum_as_int_get(
+      const std::string& feature_name,
+      const std::string& option,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<std::string> feature_enum_as_string_get(
+      const std::string& feature_name,
+      std::int64_t value,
+      FeatureModule feature_module) = 0;
+
+  // Runs a command feature. An implementation may wait for the command to
+  // finish before it answers, so this call can take far longer than a getter.
+  [[nodiscard]] virtual Expected<void> feature_command_run(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<bool> feature_command_is_done(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+
+  // A raw feature's value is an opaque block of bytes.
+  [[nodiscard]] virtual Expected<std::vector<std::uint8_t>> feature_raw_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<void> feature_raw_set(
+      const std::string& feature_name,
+      const std::vector<std::uint8_t>& buffer,
+      FeatureModule feature_module) = 0;
+  // Returns the maximum length of the feature's value in bytes.
+  [[nodiscard]] virtual Expected<std::int64_t> feature_raw_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+
  protected:
   CameraGateway() = default;
 };
