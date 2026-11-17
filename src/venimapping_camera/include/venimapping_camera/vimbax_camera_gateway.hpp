@@ -24,7 +24,6 @@
 #include "vimbax_camera_msgs/srv/status.hpp"
 
 #include "venimapping_camera/camera_gateway.hpp"
-#include "venimapping_camera/expected.hpp"
 
 namespace venimapping::camera {
 

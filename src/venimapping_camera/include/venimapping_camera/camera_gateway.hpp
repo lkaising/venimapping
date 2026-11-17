@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "venimapping_camera/expected.hpp"
+#include "venimapping_camera/types/expected.hpp"
 
 namespace venimapping::camera {
 

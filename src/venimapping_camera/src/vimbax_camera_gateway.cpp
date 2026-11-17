@@ -12,7 +12,6 @@
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 
 #include "detail/gateway_util.hpp"
-#include "venimapping_camera/expected.hpp"
 
 namespace venimapping::camera {
 

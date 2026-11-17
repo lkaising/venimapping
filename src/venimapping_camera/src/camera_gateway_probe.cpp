@@ -23,7 +23,7 @@
 #include "rclcpp/rclcpp.hpp"
 
 #include "venimapping_camera/camera_gateway.hpp"
-#include "venimapping_camera/expected.hpp"
+#include "venimapping_camera/types/expected.hpp"
 #include "venimapping_camera/vimbax_camera_gateway.hpp"
 
 namespace {

@@ -5,13 +5,13 @@ Ideas parked for later. None of these are blocking.
 ## Camera gateway
 
 - [ ] **Explore introducing an `Unexpected` type.**
-  Add `using Unexpected = std::unexpected<Error>;` to `expected.hpp` and have
+  Add `using Unexpected = std::unexpected<Error>;` to `types/expected.hpp` and have
   `detail::gateway_error` and `detail::driver_error` return it, so call sites can
   write `return detail::gateway_error(...);` without wrapping it in `std::unexpected(...)`.
   - Mark both helpers `[[nodiscard]]`. `std::unexpected<Error>` does not
     inherit `Error`'s `[[nodiscard]]`.
   - Delete the commented-out `make_driver_error` / `make_gateway_error` block in
-    `expected.hpp` instead of moving it. It takes raw `int32_t` codes, which would
+    `types/expected.hpp` instead of moving it. It takes raw `int32_t` codes, which would
     lose the typed `GatewayDiagnostic`.
   - Watch out for lambda return types in `and_then` / `or_else` / `transform_error`.
 
