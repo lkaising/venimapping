@@ -1,47 +1,20 @@
 // -----------------------------------------------------------------------------
 //  Filename: camera_gateway.hpp
 //
-//  Purpose:  Declares the ROS-independent camera gateway contract and the
-//            result types it returns.
+//  Purpose:  Declares the ROS-independent camera gateway contract.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
 
 #pragma once
 
+#include "venimapping_camera/types/camera_status.hpp"
 #include "venimapping_camera/types/expected.hpp"
+#include "venimapping_camera/types/feature_access_mode.hpp"
+#include "venimapping_camera/types/feature_enum_info.hpp"
+#include "venimapping_camera/types/feature_float_info.hpp"
 
 namespace venimapping::camera {
-
-struct FloatInfo {
-  double min;
-  double max;
-  double inc;  // meaningful only when inc_available is true
-  bool inc_available;
-};
-
-// Current access state of a feature. It changes with streaming and with other
-// feature values, so a result describes the moment it was queried.
-struct AccessMode {
-  bool readable;
-  bool writable;
-};
-
-struct EnumInfo {
-  std::vector<std::string> possible_values;   // every option the feature defines
-  std::vector<std::string> available_values;  // the subset selectable right now
-};
-
-// The consumed subset of the driver's camera status.
-struct CameraStatus {
-  std::string model_name;
-  std::string device_serial_number;
-  std::string pixel_format;
-  double frame_rate;
-  std::uint32_t width;
-  std::uint32_t height;
-  bool streaming;
-};
 
 // The primitive camera operations available to VeniMapping layers.
 //
@@ -66,14 +39,14 @@ class CameraGateway {
   // readback, and no local validation against feature metadata.
   [[nodiscard]] virtual Expected<void> feature_float_set(const std::string& name, double value) = 0;
 
-  [[nodiscard]] virtual Expected<FloatInfo> feature_float_info_get(const std::string& name) = 0;
+  [[nodiscard]] virtual Expected<FeatureFloatInfo> feature_float_info_get(const std::string& name) = 0;
 
   [[nodiscard]] virtual Expected<std::string> feature_enum_get(const std::string& name) = 0;
   [[nodiscard]] virtual Expected<void> feature_enum_set(const std::string& name,
                                                         const std::string& value) = 0;
-  [[nodiscard]] virtual Expected<EnumInfo> feature_enum_info_get(const std::string& name) = 0;
+  [[nodiscard]] virtual Expected<FeatureEnumInfo> feature_enum_info_get(const std::string& name) = 0;
 
-  [[nodiscard]] virtual Expected<AccessMode> feature_access_mode_get(const std::string& name) = 0;
+  [[nodiscard]] virtual Expected<FeatureAccessMode> feature_access_mode_get(const std::string& name) = 0;
 
   // Returns the names of the features the camera defines. This is not an
   // availability check: a listed name may be currently unreadable or

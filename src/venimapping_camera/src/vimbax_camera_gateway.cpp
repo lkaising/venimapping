@@ -274,14 +274,14 @@ Expected<void> VimbaXCameraGateway::feature_float_set(const std::string& name, d
       .transform([](const auto&) {});
 }
 
-Expected<FloatInfo> VimbaXCameraGateway::feature_float_info_get(const std::string& name)
+Expected<FeatureFloatInfo> VimbaXCameraGateway::feature_float_info_get(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
   return call_checked<ServiceT>(
              *feature_float_info_get_client_,
              make_remote_feature_request<ServiceT>(name))
       .transform([](const auto& response) {
-        return FloatInfo{
+        return FeatureFloatInfo{
             .min = response->min,
             .max = response->max,
             .inc = response->inc,
@@ -309,28 +309,28 @@ Expected<void> VimbaXCameraGateway::feature_enum_set(const std::string& name,
       .transform([](const auto&) {});
 }
 
-Expected<EnumInfo> VimbaXCameraGateway::feature_enum_info_get(const std::string& name)
+Expected<FeatureEnumInfo> VimbaXCameraGateway::feature_enum_info_get(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
   return call_checked<ServiceT>(
              *feature_enum_info_get_client_,
              make_remote_feature_request<ServiceT>(name))
       .transform([](const auto& response) {
-        return EnumInfo{
+        return FeatureEnumInfo{
             .possible_values = std::move(response->possible_values),
             .available_values = std::move(response->available_values),
         };
       });
 }
 
-Expected<AccessMode> VimbaXCameraGateway::feature_access_mode_get(const std::string& name)
+Expected<FeatureAccessMode> VimbaXCameraGateway::feature_access_mode_get(const std::string& name)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
   return call_checked<ServiceT>(
              *feature_access_mode_get_client_,
              make_remote_feature_request<ServiceT>(name))
       .transform([](const auto& response) {
-        return AccessMode{
+        return FeatureAccessMode{
             .readable = response->is_readable,
             .writable = response->is_writeable,
         };

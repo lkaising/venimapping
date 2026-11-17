@@ -31,7 +31,7 @@ namespace {
 using venimapping::camera::CameraGateway;
 using venimapping::camera::Error;
 using venimapping::camera::ErrorDomain;
-using venimapping::camera::FloatInfo;
+using venimapping::camera::FeatureFloatInfo;
 using venimapping::camera::VimbaXCameraGateway;
 
 std::string describe(const Error& error)
@@ -242,7 +242,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
 // Picks a write target inside [min, max], aligned to the increment when one is
 // available, and different from the current value. Probe-local test logic, not
 // gateway policy.
-double choose_float_target(const FloatInfo& info, double original)
+double choose_float_target(const FeatureFloatInfo& info, double original)
 {
   double target = info.min + ((info.max - info.min) / 2.0);
   if (info.inc_available && info.inc > 0.0) {
@@ -260,7 +260,7 @@ double choose_float_target(const FloatInfo& info, double original)
   return target;
 }
 
-bool float_values_match(double expected, double actual, const FloatInfo& info)
+bool float_values_match(double expected, double actual, const FeatureFloatInfo& info)
 {
   // The camera may quantize the written value, so readback is compared within
   // half an increment when one exists, and a small relative tolerance

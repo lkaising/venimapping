@@ -82,14 +82,14 @@ class VimbaXCameraGateway final : public CameraGateway {
 
   [[nodiscard]] Expected<double> feature_float_get(const std::string& name) override;
   [[nodiscard]] Expected<void> feature_float_set(const std::string& name, double value) override;
-  [[nodiscard]] Expected<FloatInfo> feature_float_info_get(const std::string& name) override;
+  [[nodiscard]] Expected<FeatureFloatInfo> feature_float_info_get(const std::string& name) override;
 
   [[nodiscard]] Expected<std::string> feature_enum_get(const std::string& name) override;
   [[nodiscard]] Expected<void> feature_enum_set(const std::string& name,
                                                 const std::string& value) override;
-  [[nodiscard]] Expected<EnumInfo> feature_enum_info_get(const std::string& name) override;
+  [[nodiscard]] Expected<FeatureEnumInfo> feature_enum_info_get(const std::string& name) override;
 
-  [[nodiscard]] Expected<AccessMode> feature_access_mode_get(const std::string& name) override;
+  [[nodiscard]] Expected<FeatureAccessMode> feature_access_mode_get(const std::string& name) override;
 
   // The Vimba X driver serves this list from a per-module cache built when it
   // opens the camera, so the result is a snapshot refreshed on reopen after a
