@@ -17,6 +17,7 @@
 #include "venimapping_camera/types/feature_access_mode.hpp"
 #include "venimapping_camera/types/feature_enum_info.hpp"
 #include "venimapping_camera/types/feature_float_info.hpp"
+#include "venimapping_camera/types/feature_info.hpp"
 #include "venimapping_camera/types/feature_int_info.hpp"
 #include "venimapping_camera/types/feature_module.hpp"
 
@@ -70,6 +71,13 @@ class CameraGateway {
   // unwritable, and current access state comes from feature_access_mode_get().
   // An empty list on success is a valid answer, not an error.
   [[nodiscard]] virtual Expected<std::vector<std::string>> features_list_get(
+      FeatureModule feature_module) = 0;
+
+  // Returns the static description of each named feature, in request order. An
+  // empty feature_names asks for every feature of the module. One unknown name
+  // fails the whole call.
+  [[nodiscard]] virtual Expected<std::vector<FeatureInfo>> feature_info_query(
+      const std::vector<std::string>& feature_names,
       FeatureModule feature_module) = 0;
 
   [[nodiscard]] virtual Expected<FeatureAccessMode> feature_access_mode_get(

@@ -34,6 +34,7 @@
 #include "vimbax_camera_msgs/srv/feature_float_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_info_query.hpp"
 #include "vimbax_camera_msgs/srv/feature_int_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_int_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_int_set.hpp"
@@ -132,6 +133,12 @@ class VimbaXCameraGateway final : public CameraGateway {
   // opens the camera, so the result is a snapshot refreshed on reopen after a
   // reconnect rather than a live query.
   [[nodiscard]] Expected<std::vector<std::string>> features_list_get(
+      FeatureModule feature_module) override;
+
+  // With an empty feature_names the driver takes the names from the same cache
+  // as features_list_get().
+  [[nodiscard]] Expected<std::vector<FeatureInfo>> feature_info_query(
+      const std::vector<std::string>& feature_names,
       FeatureModule feature_module) override;
 
   [[nodiscard]] Expected<FeatureAccessMode> feature_access_mode_get(
@@ -263,6 +270,7 @@ class VimbaXCameraGateway final : public CameraGateway {
   ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_save_client_;
   ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_load_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeaturesListGet> features_list_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureInfoQuery> feature_info_query_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureAccessModeGet> feature_access_mode_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureIntGet> feature_int_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureIntSet> feature_int_set_client_;

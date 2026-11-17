@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "rclcpp/utilities.hpp"
+#include "vimbax_camera_msgs/msg/feature_info.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 #include "vimbax_camera_msgs/msg/trigger_info.hpp"
 
@@ -37,6 +38,7 @@ using Clock = std::chrono::steady_clock;
 using ContextPtr = rclcpp::Context::SharedPtr;
 using Deadline = Clock::time_point;
 using StringView = std::string_view;
+using WireFeatureInfo = vimbax_camera_msgs::msg::FeatureInfo;
 using WireFeatureModule = vimbax_camera_msgs::msg::FeatureModule;
 using WireTriggerInfo = vimbax_camera_msgs::msg::TriggerInfo;
 
@@ -113,6 +115,35 @@ template <typename Service>
     return std::nullopt;
   }
   return std::move(wire);
+}
+
+// The wire field carries the SDK's VmbFeatureDataType, whose codes are the
+// enumerator values. A code past the last enumerator is reported as kUnknown,
+// the SDK's own name for a type it cannot identify.
+[[nodiscard]] constexpr FeatureDataType to_feature_data_type(std::uint32_t wire) noexcept
+{
+  if (wire > std::to_underlying(FeatureDataType::kNone)) {
+    return FeatureDataType::kUnknown;
+  }
+  return static_cast<FeatureDataType>(wire);
+}
+
+[[nodiscard]] std::vector<FeatureInfo> to_feature_info(std::vector<WireFeatureInfo>& wire)
+{
+  std::vector<FeatureInfo> feature_info;
+  feature_info.reserve(wire.size());
+  for (auto& entry : wire) {
+    feature_info.push_back(FeatureInfo{
+        .name = std::move(entry.name),
+        .category = std::move(entry.category),
+        .display_name = std::move(entry.display_name),
+        .sfnc_namespace = std::move(entry.sfnc_namespace),
+        .unit = std::move(entry.unit),
+        .data_type = to_feature_data_type(entry.data_type),
+        .polling_time = entry.polling_time,
+    });
+  }
+  return feature_info;
 }
 
 template <typename Service>
@@ -215,6 +246,9 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
       features_list_get_client_{
           make_client<vimbax_camera_msgs::srv::FeaturesListGet>(
               node, camera_namespace, "features/list_get")},
+      feature_info_query_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureInfoQuery>(
+              node, camera_namespace, "feature_info_query")},
       feature_access_mode_get_client_{
           make_client<vimbax_camera_msgs::srv::FeatureAccessModeGet>(
               node, camera_namespace, "features/access_mode_get")},
@@ -447,6 +481,17 @@ Expected<std::vector<std::string>> VimbaXCameraGateway::features_list_get(
              *features_list_get_client_,
              make_module_request<ServiceT>(feature_module))
       .transform([](const auto& response) { return std::move(response->feature_list); });
+}
+
+Expected<std::vector<FeatureInfo>> VimbaXCameraGateway::feature_info_query(
+    const std::vector<std::string>& feature_names,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureInfoQuery;
+  auto request = make_module_request<ServiceT>(feature_module);
+  request->feature_names = feature_names;
+  return call_checked<ServiceT>(*feature_info_query_client_, std::move(request))
+      .transform([](const auto& response) { return to_feature_info(response->feature_info); });
 }
 
 Expected<FeatureAccessMode> VimbaXCameraGateway::feature_access_mode_get(
