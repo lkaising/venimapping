@@ -8,6 +8,19 @@
 
 #include "venimapping_camera/vimbax_camera_gateway.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <exception>
+#include <expected>
+#include <format>
+#include <future>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
+#include <vector>
+
 #include "rclcpp/utilities.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
 
