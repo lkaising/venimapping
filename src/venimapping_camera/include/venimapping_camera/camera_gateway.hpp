@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "venimapping_camera/types/feature_access_mode.hpp"
 #include "venimapping_camera/types/feature_enum_info.hpp"
 #include "venimapping_camera/types/feature_float_info.hpp"
+#include "venimapping_camera/types/feature_int_info.hpp"
 #include "venimapping_camera/types/feature_module.hpp"
 
 namespace venimapping::camera {
@@ -74,6 +76,17 @@ class CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
 
+  [[nodiscard]] virtual Expected<std::int64_t> feature_int_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<void> feature_int_set(
+      const std::string& feature_name,
+      std::int64_t value,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<FeatureIntInfo> feature_int_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+
   [[nodiscard]] virtual Expected<double> feature_float_get(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
@@ -83,6 +96,26 @@ class CameraGateway {
       FeatureModule feature_module) = 0;
   [[nodiscard]] virtual Expected<FeatureFloatInfo> feature_float_info_get(
       const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+
+  [[nodiscard]] virtual Expected<std::string> feature_string_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<void> feature_string_set(
+      const std::string& feature_name,
+      const std::string& value,
+      FeatureModule feature_module) = 0;
+  // Returns the maximum length of the feature's value.
+  [[nodiscard]] virtual Expected<std::int64_t> feature_string_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+
+  [[nodiscard]] virtual Expected<bool> feature_bool_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) = 0;
+  [[nodiscard]] virtual Expected<void> feature_bool_set(
+      const std::string& feature_name,
+      bool value,
       FeatureModule feature_module) = 0;
 
   // An enum feature's value is the name of the selected option.

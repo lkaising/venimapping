@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
@@ -21,12 +22,20 @@
 #include "rclcpp/node.hpp"
 #include "vimbax_camera_msgs/srv/connection_status.hpp"
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_bool_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_bool_set.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_set.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_int_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_int_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_int_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_string_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_string_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_string_set.hpp"
 #include "vimbax_camera_msgs/srv/features_list_get.hpp"
 #include "vimbax_camera_msgs/srv/settings_load_save.hpp"
 #include "vimbax_camera_msgs/srv/status.hpp"
@@ -122,6 +131,17 @@ class VimbaXCameraGateway final : public CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) override;
 
+  [[nodiscard]] Expected<std::int64_t> feature_int_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_int_set(
+      const std::string& feature_name,
+      std::int64_t value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<FeatureIntInfo> feature_int_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
   [[nodiscard]] Expected<double> feature_float_get(
       const std::string& feature_name,
       FeatureModule feature_module) override;
@@ -131,6 +151,25 @@ class VimbaXCameraGateway final : public CameraGateway {
       FeatureModule feature_module) override;
   [[nodiscard]] Expected<FeatureFloatInfo> feature_float_info_get(
       const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<std::string> feature_string_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_string_set(
+      const std::string& feature_name,
+      const std::string& value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::int64_t> feature_string_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<bool> feature_bool_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_bool_set(
+      const std::string& feature_name,
+      bool value,
       FeatureModule feature_module) override;
 
   [[nodiscard]] Expected<std::string> feature_enum_get(
@@ -187,9 +226,17 @@ class VimbaXCameraGateway final : public CameraGateway {
   ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_load_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeaturesListGet> features_list_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureAccessModeGet> feature_access_mode_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureIntGet> feature_int_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureIntSet> feature_int_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureIntInfoGet> feature_int_info_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatGet> feature_float_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatSet> feature_float_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatInfoGet> feature_float_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureStringGet> feature_string_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureStringSet> feature_string_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureStringInfoGet> feature_string_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureBoolGet> feature_bool_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureBoolSet> feature_bool_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumGet> feature_enum_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumSet> feature_enum_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumInfoGet> feature_enum_info_get_client_;
