@@ -11,6 +11,7 @@
 #include <cassert>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 namespace venimapping::camera {
 

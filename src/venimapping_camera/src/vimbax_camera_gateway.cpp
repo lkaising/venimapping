@@ -8,8 +8,25 @@
 
 #include "venimapping_camera/vimbax_camera_gateway.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <exception>
+#include <expected>
+#include <format>
+#include <future>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
+#include <vector>
+
 #include "rclcpp/utilities.hpp"
+#include "vimbax_camera_msgs/msg/feature_info.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
+#include "vimbax_camera_msgs/msg/trigger_info.hpp"
 
 #include "detail/gateway_util.hpp"
 
@@ -21,6 +38,9 @@ using Clock = std::chrono::steady_clock;
 using ContextPtr = rclcpp::Context::SharedPtr;
 using Deadline = Clock::time_point;
 using StringView = std::string_view;
+using WireFeatureInfo = vimbax_camera_msgs::msg::FeatureInfo;
+using WireFeatureModule = vimbax_camera_msgs::msg::FeatureModule;
+using WireTriggerInfo = vimbax_camera_msgs::msg::TriggerInfo;
 
 template <typename Service>
 using Client = rclcpp::Client<Service>;
@@ -46,20 +66,94 @@ template <typename Service>
   return node.create_client<Service>(std::format("{}/{}", camera_namespace, leaf));
 }
 
+// FeatureModule's enumerators are the wire constants, so a request carries the
+// value unchanged. A value outside the enumerators is not filtered here; the
+// driver rejects it.
+static_assert(std::to_underlying(FeatureModule::kRemoteDevice) == WireFeatureModule::MODULE_REMOTE_DEVICE);
+static_assert(std::to_underlying(FeatureModule::kSystem) == WireFeatureModule::MODULE_SYSTEM);
+static_assert(std::to_underlying(FeatureModule::kInterface) == WireFeatureModule::MODULE_INTERFACE);
+static_assert(std::to_underlying(FeatureModule::kLocalDevice) == WireFeatureModule::MODULE_LOCAL_DEVICE);
+static_assert(std::to_underlying(FeatureModule::kStream) == WireFeatureModule::MODULE_STREAM);
+
 template <typename Service>
-[[nodiscard]] RequestPtr<Service> make_remote_device_request()
+[[nodiscard]] RequestPtr<Service> make_module_request(FeatureModule feature_module)
 {
   auto request = std::make_shared<typename Service::Request>();
-  request->feature_module.id = vimbax_camera_msgs::msg::FeatureModule::MODULE_REMOTE_DEVICE;
+  request->feature_module.id = std::to_underlying(feature_module);
   return request;
 }
 
 template <typename Service>
-[[nodiscard]] RequestPtr<Service> make_remote_feature_request(StringView name)
+[[nodiscard]] RequestPtr<Service> make_feature_request(StringView feature_name,
+                                                       FeatureModule feature_module)
 {
-  auto request = make_remote_device_request<Service>();
-  request->feature_name = name;
+  auto request = make_module_request<Service>(feature_module);
+  request->feature_name = feature_name;
   return request;
+}
+
+// The converters below move the strings out of the response they are given.
+
+// The driver copies a string feature's value with its C terminator included,
+// so the value arrives with a trailing NUL that is not part of it.
+[[nodiscard]] std::string without_terminator(std::string& wire)
+{
+  while (wire.ends_with('\0')) {
+    wire.pop_back();
+  }
+  return std::move(wire);
+}
+
+[[nodiscard]] std::vector<TriggerInfo> to_trigger_info(std::vector<WireTriggerInfo>& wire)
+{
+  std::vector<TriggerInfo> trigger_info;
+  trigger_info.reserve(wire.size());
+  for (auto& entry : wire) {
+    trigger_info.push_back(TriggerInfo{
+        .selector = std::move(entry.selector),
+        .mode = std::move(entry.mode),
+        .source = std::move(entry.source),
+    });
+  }
+  return trigger_info;
+}
+
+// The driver leaves an address empty when the camera has none.
+[[nodiscard]] std::optional<std::string> to_optional_address(std::string& wire)
+{
+  if (wire.empty()) {
+    return std::nullopt;
+  }
+  return std::move(wire);
+}
+
+// The wire field carries the SDK's VmbFeatureDataType, whose codes are the
+// enumerator values. A code past the last enumerator is reported as kUnknown,
+// the SDK's own name for a type it cannot identify.
+[[nodiscard]] constexpr FeatureDataType to_feature_data_type(std::uint32_t wire) noexcept
+{
+  if (wire > std::to_underlying(FeatureDataType::kNone)) {
+    return FeatureDataType::kUnknown;
+  }
+  return static_cast<FeatureDataType>(wire);
+}
+
+[[nodiscard]] std::vector<FeatureInfo> to_feature_info(std::vector<WireFeatureInfo>& wire)
+{
+  std::vector<FeatureInfo> feature_info;
+  feature_info.reserve(wire.size());
+  for (auto& entry : wire) {
+    feature_info.push_back(FeatureInfo{
+        .name = std::move(entry.name),
+        .category = std::move(entry.category),
+        .display_name = std::move(entry.display_name),
+        .sfnc_namespace = std::move(entry.sfnc_namespace),
+        .unit = std::move(entry.unit),
+        .data_type = to_feature_data_type(entry.data_type),
+        .polling_time = entry.polling_time,
+    });
+  }
+  return feature_info;
 }
 
 template <typename Service>
@@ -147,12 +241,36 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
       status_client_{
           make_client<vimbax_camera_msgs::srv::Status>(
               node, camera_namespace, "status")},
+      stream_start_client_{
+          make_client<vimbax_camera_msgs::srv::StreamStartStop>(
+              node, camera_namespace, "stream_start")},
+      stream_stop_client_{
+          make_client<vimbax_camera_msgs::srv::StreamStartStop>(
+              node, camera_namespace, "stream_stop")},
+      settings_save_client_{
+          make_client<vimbax_camera_msgs::srv::SettingsLoadSave>(
+              node, camera_namespace, "settings/save")},
+      settings_load_client_{
+          make_client<vimbax_camera_msgs::srv::SettingsLoadSave>(
+              node, camera_namespace, "settings/load")},
       features_list_get_client_{
           make_client<vimbax_camera_msgs::srv::FeaturesListGet>(
               node, camera_namespace, "features/list_get")},
+      feature_info_query_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureInfoQuery>(
+              node, camera_namespace, "feature_info_query")},
       feature_access_mode_get_client_{
           make_client<vimbax_camera_msgs::srv::FeatureAccessModeGet>(
               node, camera_namespace, "features/access_mode_get")},
+      feature_int_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureIntGet>(
+              node, camera_namespace, "features/int_get")},
+      feature_int_set_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureIntSet>(
+              node, camera_namespace, "features/int_set")},
+      feature_int_info_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureIntInfoGet>(
+              node, camera_namespace, "features/int_info_get")},
       feature_float_get_client_{
           make_client<vimbax_camera_msgs::srv::FeatureFloatGet>(
               node, camera_namespace, "features/float_get")},
@@ -162,6 +280,21 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
       feature_float_info_get_client_{
           make_client<vimbax_camera_msgs::srv::FeatureFloatInfoGet>(
               node, camera_namespace, "features/float_info_get")},
+      feature_string_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureStringGet>(
+              node, camera_namespace, "features/string_get")},
+      feature_string_set_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureStringSet>(
+              node, camera_namespace, "features/string_set")},
+      feature_string_info_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureStringInfoGet>(
+              node, camera_namespace, "features/string_info_get")},
+      feature_bool_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureBoolGet>(
+              node, camera_namespace, "features/bool_get")},
+      feature_bool_set_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureBoolSet>(
+              node, camera_namespace, "features/bool_set")},
       feature_enum_get_client_{
           make_client<vimbax_camera_msgs::srv::FeatureEnumGet>(
               node, camera_namespace, "features/enum_get")},
@@ -170,7 +303,28 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
               node, camera_namespace, "features/enum_set")},
       feature_enum_info_get_client_{
           make_client<vimbax_camera_msgs::srv::FeatureEnumInfoGet>(
-              node, camera_namespace, "features/enum_info_get")}
+              node, camera_namespace, "features/enum_info_get")},
+      feature_enum_as_int_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureEnumAsIntGet>(
+              node, camera_namespace, "features/enum_as_int_get")},
+      feature_enum_as_string_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureEnumAsStringGet>(
+              node, camera_namespace, "features/enum_as_string_get")},
+      feature_command_run_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureCommandRun>(
+              node, camera_namespace, "features/command_run")},
+      feature_command_is_done_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureCommandIsDone>(
+              node, camera_namespace, "features/command_is_done")},
+      feature_raw_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureRawGet>(
+              node, camera_namespace, "features/raw_get")},
+      feature_raw_set_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureRawSet>(
+              node, camera_namespace, "features/raw_set")},
+      feature_raw_info_get_client_{
+          make_client<vimbax_camera_msgs::srv::FeatureRawInfoGet>(
+              node, camera_namespace, "features/raw_info_get")}
 {
 }
 
@@ -256,94 +410,13 @@ auto VimbaXCameraGateway::call_checked(Client<Service>& client, RequestPtr<Servi
   return response;
 }
 
-Expected<double> VimbaXCameraGateway::feature_float_get(const std::string& name)
+Expected<bool> VimbaXCameraGateway::connection_status_get()
 {
-  using ServiceT = vimbax_camera_msgs::srv::FeatureFloatGet;
-  return call_checked<ServiceT>(
-             *feature_float_get_client_,
-             make_remote_feature_request<ServiceT>(name))
-      .transform([](const auto& response) { return response->value; });
-}
-
-Expected<void> VimbaXCameraGateway::feature_float_set(const std::string& name, double value)
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeatureFloatSet;
-  auto request = make_remote_feature_request<ServiceT>(name);
-  request->value = value;
-  return call_checked<ServiceT>(*feature_float_set_client_, std::move(request))
-      .transform([](const auto&) {});
-}
-
-Expected<FloatInfo> VimbaXCameraGateway::feature_float_info_get(const std::string& name)
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
-  return call_checked<ServiceT>(
-             *feature_float_info_get_client_,
-             make_remote_feature_request<ServiceT>(name))
-      .transform([](const auto& response) {
-        return FloatInfo{
-            .min = response->min,
-            .max = response->max,
-            .inc = response->inc,
-            .inc_available = response->inc_available,
-        };
-      });
-}
-
-Expected<std::string> VimbaXCameraGateway::feature_enum_get(const std::string& name)
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumGet;
-  return call_checked<ServiceT>(
-             *feature_enum_get_client_,
-             make_remote_feature_request<ServiceT>(name))
-      .transform([](const auto& response) { return std::move(response->value); });
-}
-
-Expected<void> VimbaXCameraGateway::feature_enum_set(const std::string& name,
-                                                     const std::string& value)
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumSet;
-  auto request = make_remote_feature_request<ServiceT>(name);
-  request->value = value;
-  return call_checked<ServiceT>(*feature_enum_set_client_, std::move(request))
-      .transform([](const auto&) {});
-}
-
-Expected<EnumInfo> VimbaXCameraGateway::feature_enum_info_get(const std::string& name)
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
-  return call_checked<ServiceT>(
-             *feature_enum_info_get_client_,
-             make_remote_feature_request<ServiceT>(name))
-      .transform([](const auto& response) {
-        return EnumInfo{
-            .possible_values = std::move(response->possible_values),
-            .available_values = std::move(response->available_values),
-        };
-      });
-}
-
-Expected<AccessMode> VimbaXCameraGateway::feature_access_mode_get(const std::string& name)
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
-  return call_checked<ServiceT>(
-             *feature_access_mode_get_client_,
-             make_remote_feature_request<ServiceT>(name))
-      .transform([](const auto& response) {
-        return AccessMode{
-            .readable = response->is_readable,
-            .writable = response->is_writeable,
-        };
-      });
-}
-
-Expected<std::vector<std::string>> VimbaXCameraGateway::features_list_get()
-{
-  using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
-  return call_checked<ServiceT>(
-             *features_list_get_client_,
-             make_remote_device_request<ServiceT>())
-      .transform([](const auto& response) { return std::move(response->feature_list); });
+  using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
+  return call<ServiceT>(
+             *connection_status_client_,
+             std::make_shared<ServiceT::Request>())
+      .transform([](const auto& response) { return response->connected; });
 }
 
 Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
@@ -354,24 +427,355 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
              std::make_shared<ServiceT::Request>())
       .transform([](const auto& response) {
         return CameraStatus{
+            .display_name = std::move(response->display_name),
             .model_name = std::move(response->model_name),
+            .device_firmware_version = without_terminator(response->device_firmware_version),
+            .device_id = std::move(response->device_id),
+            .device_user_id = without_terminator(response->device_user_id),
             .device_serial_number = std::move(response->device_serial_number),
-            .pixel_format = std::move(response->pixel_format),
-            .frame_rate = response->frame_rate,
+            .interface_id = without_terminator(response->interface_id),
+            .transport_layer_id = without_terminator(response->transport_layer_id),
+            .streaming = response->streaming,
             .width = response->width,
             .height = response->height,
-            .streaming = response->streaming,
+            .frame_rate = response->frame_rate,
+            .pixel_format = std::move(response->pixel_format),
+            .trigger_info = to_trigger_info(response->trigger_info),
+            .ip_address = to_optional_address(response->ip_address),
+            .mac_address = to_optional_address(response->mac_address),
         };
       });
 }
 
-Expected<bool> VimbaXCameraGateway::connection_status_get()
+Expected<void> VimbaXCameraGateway::stream_start()
 {
-  using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
-  return call<ServiceT>(
-             *connection_status_client_,
+  using ServiceT = vimbax_camera_msgs::srv::StreamStartStop;
+  return call_checked<ServiceT>(
+             *stream_start_client_,
              std::make_shared<ServiceT::Request>())
-      .transform([](const auto& response) { return response->connected; });
+      .transform([](const auto&) {});
+}
+
+Expected<void> VimbaXCameraGateway::stream_stop()
+{
+  using ServiceT = vimbax_camera_msgs::srv::StreamStartStop;
+  return call_checked<ServiceT>(
+             *stream_stop_client_,
+             std::make_shared<ServiceT::Request>())
+      .transform([](const auto&) {});
+}
+
+Expected<void> VimbaXCameraGateway::settings_save(const std::string& filename)
+{
+  using ServiceT = vimbax_camera_msgs::srv::SettingsLoadSave;
+  auto request = std::make_shared<ServiceT::Request>();
+  request->filename = filename;
+  return call_checked<ServiceT>(*settings_save_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<void> VimbaXCameraGateway::settings_load(const std::string& filename)
+{
+  using ServiceT = vimbax_camera_msgs::srv::SettingsLoadSave;
+  auto request = std::make_shared<ServiceT::Request>();
+  request->filename = filename;
+  return call_checked<ServiceT>(*settings_load_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<std::vector<std::string>> VimbaXCameraGateway::features_list_get(
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
+  return call_checked<ServiceT>(
+             *features_list_get_client_,
+             make_module_request<ServiceT>(feature_module))
+      .transform([](const auto& response) { return std::move(response->feature_list); });
+}
+
+Expected<std::vector<FeatureInfo>> VimbaXCameraGateway::feature_info_query(
+    const std::vector<std::string>& feature_names,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureInfoQuery;
+  auto request = make_module_request<ServiceT>(feature_module);
+  request->feature_names = feature_names;
+  return call_checked<ServiceT>(*feature_info_query_client_, std::move(request))
+      .transform([](const auto& response) { return to_feature_info(response->feature_info); });
+}
+
+Expected<FeatureAccessMode> VimbaXCameraGateway::feature_access_mode_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
+  return call_checked<ServiceT>(
+             *feature_access_mode_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) {
+        return FeatureAccessMode{
+            .readable = response->is_readable,
+            .writable = response->is_writeable,
+        };
+      });
+}
+
+Expected<std::int64_t> VimbaXCameraGateway::feature_int_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureIntGet;
+  return call_checked<ServiceT>(
+             *feature_int_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return response->value; });
+}
+
+Expected<void> VimbaXCameraGateway::feature_int_set(
+    const std::string& feature_name,
+    std::int64_t value,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureIntSet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->value = value;
+  return call_checked<ServiceT>(*feature_int_set_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<FeatureIntInfo> VimbaXCameraGateway::feature_int_info_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureIntInfoGet;
+  return call_checked<ServiceT>(
+             *feature_int_info_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) {
+        return FeatureIntInfo{
+            .min = response->min,
+            .max = response->max,
+            .inc = response->inc,
+        };
+      });
+}
+
+Expected<double> VimbaXCameraGateway::feature_float_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureFloatGet;
+  return call_checked<ServiceT>(
+             *feature_float_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return response->value; });
+}
+
+Expected<void> VimbaXCameraGateway::feature_float_set(
+    const std::string& feature_name,
+    double value,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureFloatSet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->value = value;
+  return call_checked<ServiceT>(*feature_float_set_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<FeatureFloatInfo> VimbaXCameraGateway::feature_float_info_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
+  return call_checked<ServiceT>(
+             *feature_float_info_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) {
+        return FeatureFloatInfo{
+            .min = response->min,
+            .max = response->max,
+            .inc = response->inc,
+            .inc_available = response->inc_available,
+        };
+      });
+}
+
+Expected<std::string> VimbaXCameraGateway::feature_string_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureStringGet;
+  return call_checked<ServiceT>(
+             *feature_string_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return without_terminator(response->value); });
+}
+
+Expected<void> VimbaXCameraGateway::feature_string_set(
+    const std::string& feature_name,
+    const std::string& value,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureStringSet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->value = value;
+  return call_checked<ServiceT>(*feature_string_set_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<std::int64_t> VimbaXCameraGateway::feature_string_info_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureStringInfoGet;
+  return call_checked<ServiceT>(
+             *feature_string_info_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return response->max_length; });
+}
+
+Expected<bool> VimbaXCameraGateway::feature_bool_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureBoolGet;
+  return call_checked<ServiceT>(
+             *feature_bool_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return response->value; });
+}
+
+Expected<void> VimbaXCameraGateway::feature_bool_set(
+    const std::string& feature_name,
+    bool value,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureBoolSet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->value = value;
+  return call_checked<ServiceT>(*feature_bool_set_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<std::string> VimbaXCameraGateway::feature_enum_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumGet;
+  return call_checked<ServiceT>(
+             *feature_enum_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return std::move(response->value); });
+}
+
+Expected<void> VimbaXCameraGateway::feature_enum_set(
+    const std::string& feature_name,
+    const std::string& value,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumSet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->value = value;
+  return call_checked<ServiceT>(*feature_enum_set_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<FeatureEnumInfo> VimbaXCameraGateway::feature_enum_info_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
+  return call_checked<ServiceT>(
+             *feature_enum_info_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) {
+        return FeatureEnumInfo{
+            .possible_values = std::move(response->possible_values),
+            .available_values = std::move(response->available_values),
+        };
+      });
+}
+
+Expected<std::int64_t> VimbaXCameraGateway::feature_enum_as_int_get(
+    const std::string& feature_name,
+    const std::string& option,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumAsIntGet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->option = option;
+  return call_checked<ServiceT>(*feature_enum_as_int_get_client_, std::move(request))
+      .transform([](const auto& response) { return response->value; });
+}
+
+Expected<std::string> VimbaXCameraGateway::feature_enum_as_string_get(
+    const std::string& feature_name,
+    std::int64_t value,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureEnumAsStringGet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->value = value;
+  return call_checked<ServiceT>(*feature_enum_as_string_get_client_, std::move(request))
+      .transform([](const auto& response) { return std::move(response->option); });
+}
+
+Expected<void> VimbaXCameraGateway::feature_command_run(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureCommandRun;
+  return call_checked<ServiceT>(
+             *feature_command_run_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto&) {});
+}
+
+Expected<bool> VimbaXCameraGateway::feature_command_is_done(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureCommandIsDone;
+  return call_checked<ServiceT>(
+             *feature_command_is_done_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return response->is_done; });
+}
+
+Expected<std::vector<std::uint8_t>> VimbaXCameraGateway::feature_raw_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureRawGet;
+  // buffer_size is not read: the driver sets it to buffer.size().
+  return call_checked<ServiceT>(
+             *feature_raw_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return std::move(response->buffer); });
+}
+
+Expected<void> VimbaXCameraGateway::feature_raw_set(
+    const std::string& feature_name,
+    const std::vector<std::uint8_t>& buffer,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureRawSet;
+  auto request = make_feature_request<ServiceT>(feature_name, feature_module);
+  request->buffer = buffer;
+  return call_checked<ServiceT>(*feature_raw_set_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<std::int64_t> VimbaXCameraGateway::feature_raw_info_get(
+    const std::string& feature_name,
+    FeatureModule feature_module)
+{
+  using ServiceT = vimbax_camera_msgs::srv::FeatureRawInfoGet;
+  return call_checked<ServiceT>(
+             *feature_raw_info_get_client_,
+             make_feature_request<ServiceT>(feature_name, feature_module))
+      .transform([](const auto& response) { return response->max_length; });
 }
 
 }  // namespace venimapping::camera

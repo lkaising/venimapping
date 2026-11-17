@@ -11,14 +11,19 @@
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -31,7 +36,11 @@ namespace {
 using venimapping::camera::CameraGateway;
 using venimapping::camera::Error;
 using venimapping::camera::ErrorDomain;
-using venimapping::camera::FloatInfo;
+using venimapping::camera::Expected;
+using venimapping::camera::FeatureDataType;
+using venimapping::camera::FeatureFloatInfo;
+using venimapping::camera::FeatureInfo;
+using venimapping::camera::FeatureModule;
 using venimapping::camera::VimbaXCameraGateway;
 
 std::string describe(const Error& error)
@@ -40,6 +49,36 @@ std::string describe(const Error& error)
       error.domain() == ErrorDomain::kDriver ? "driver" : "gateway";
   return std::string{"["} + domain + " error " + std::to_string(error.code()) +
          "] " + error.text();
+}
+
+std::string describe(bool value)
+{
+  return value ? "true" : "false";
+}
+
+std::string describe(FeatureDataType data_type)
+{
+  switch (data_type) {
+    case FeatureDataType::kUnknown:
+      return "unknown";
+    case FeatureDataType::kInt:
+      return "int";
+    case FeatureDataType::kFloat:
+      return "float";
+    case FeatureDataType::kEnum:
+      return "enum";
+    case FeatureDataType::kString:
+      return "string";
+    case FeatureDataType::kBool:
+      return "bool";
+    case FeatureDataType::kCommand:
+      return "command";
+    case FeatureDataType::kRaw:
+      return "raw";
+    case FeatureDataType::kNone:
+      return "none";
+  }
+  return "out of range";
 }
 
 class ProbeReport {
@@ -79,14 +118,36 @@ class ProbeReport {
 // Parameters the probe reads at startup. The camera namespace is a parameter
 // because the driver's default namespace is pid-dependent; bring-up should
 // prefer a stable namespace remap on the driver side.
+//
+// bool_feature, command_feature and raw_feature may be empty, in which case the
+// probe picks the first remote-device feature of that type.
+//
+// Everything that changes camera or driver state needs enable_writes. The
+// float and enum write sequences then run as they always have; each later
+// option below names one further thing to change and is off while it is
+// empty (or false).
 struct ProbeOptions {
   std::string camera_namespace;
   std::chrono::milliseconds timeout{};
+  std::string int_feature;
   std::string float_feature;
+  std::string string_feature;
+  std::string bool_feature;
   std::string enum_feature;
+  std::string command_feature;
+  std::string raw_feature;
   std::string absent_feature;
   bool enable_writes{};
   std::string write_enum_feature;
+  std::string write_int_feature;
+  std::string write_string_feature;
+  std::string write_string_value;
+  std::string write_bool_feature;
+  std::string write_raw_feature;
+  std::string run_command_feature;
+  std::string settings_save_file;
+  std::string settings_load_file;
+  bool exercise_stream{};
 };
 
 ProbeOptions declare_options(rclcpp::Node& node)
@@ -96,23 +157,92 @@ ProbeOptions declare_options(rclcpp::Node& node)
       node.declare_parameter<std::string>("camera_namespace", "/vimbax_camera");
   options.timeout =
       std::chrono::milliseconds{node.declare_parameter<int>("timeout_ms", 2000)};
+  options.int_feature =
+      node.declare_parameter<std::string>("int_feature", "Width");
   options.float_feature =
       node.declare_parameter<std::string>("float_feature", "ExposureTime");
+  options.string_feature =
+      node.declare_parameter<std::string>("string_feature", "DeviceModelName");
+  options.bool_feature = node.declare_parameter<std::string>("bool_feature", "");
   options.enum_feature =
       node.declare_parameter<std::string>("enum_feature", "PixelFormat");
+  options.command_feature = node.declare_parameter<std::string>("command_feature", "");
+  options.raw_feature = node.declare_parameter<std::string>("raw_feature", "");
   options.absent_feature = node.declare_parameter<std::string>(
       "absent_feature", "VeniMappingDeliberatelyAbsentFeature");
   options.enable_writes = node.declare_parameter<bool>("enable_writes", false);
   options.write_enum_feature =
       node.declare_parameter<std::string>("write_enum_feature", "LineSelector");
+  options.write_int_feature = node.declare_parameter<std::string>("write_int_feature", "");
+  options.write_string_feature =
+      node.declare_parameter<std::string>("write_string_feature", "");
+  options.write_string_value =
+      node.declare_parameter<std::string>("write_string_value", "venimapping-probe");
+  options.write_bool_feature = node.declare_parameter<std::string>("write_bool_feature", "");
+  options.write_raw_feature = node.declare_parameter<std::string>("write_raw_feature", "");
+  options.run_command_feature =
+      node.declare_parameter<std::string>("run_command_feature", "");
+  options.settings_save_file = node.declare_parameter<std::string>("settings_save_file", "");
+  options.settings_load_file = node.declare_parameter<std::string>("settings_load_file", "");
+  options.exercise_stream = node.declare_parameter<bool>("exercise_stream", false);
   return options;
+}
+
+// Reports a failed gateway call. Returns true when the call succeeded.
+template <typename T>
+bool succeeded(const Expected<T>& result, const std::string& check, ProbeReport& report)
+{
+  if (!result) {
+    report.fail(check, describe(result.error()));
+  }
+  return result.has_value();
+}
+
+void check_connection_status(CameraGateway& camera, ProbeReport& report)
+{
+  const auto connected = camera.connection_status_get();
+  if (succeeded(connected, "ConnectionStatusGet", report)) {
+    // false is a successful negative answer; it is reported, not failed on.
+    report.pass("ConnectionStatusGet", *connected ? "connected" : "not connected");
+  }
+}
+
+void check_camera_status(CameraGateway& camera, ProbeReport& report)
+{
+  const auto status = camera.camera_status_get();
+  if (!succeeded(status, "CameraStatusGet", report)) {
+    return;
+  }
+  report.pass("CameraStatusGet",
+              "model=" + status->model_name +
+                  " serial=" + status->device_serial_number +
+                  " pixel_format=" + status->pixel_format +
+                  " frame_rate=" + std::to_string(status->frame_rate) +
+                  " size=" + std::to_string(status->width) + "x" +
+                  std::to_string(status->height) +
+                  " streaming=" + describe(status->streaming));
+  report.pass("CameraStatusGet/identity",
+              "display_name=" + status->display_name +
+                  " firmware=" + status->device_firmware_version +
+                  " device_id=" + status->device_id +
+                  " user_id=" + status->device_user_id +
+                  " interface=" + status->interface_id +
+                  " transport_layer=" + status->transport_layer_id +
+                  " ip=" + status->ip_address.value_or("(none)") +
+                  " mac=" + status->mac_address.value_or("(none)"));
+
+  std::string triggers;
+  for (const auto& trigger : status->trigger_info) {
+    triggers += " [" + trigger.selector + ": mode=" + trigger.mode + " source=" + trigger.source + "]";
+  }
+  report.pass("CameraStatusGet/trigger_info",
+              std::to_string(status->trigger_info.size()) + " selector(s)" + triggers);
 }
 
 void check_features_list(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  const auto features = camera.features_list_get();
-  if (!features) {
-    report.fail("FeaturesListGet", describe(features.error()));
+  const auto features = camera.features_list_get(FeatureModule::kRemoteDevice);
+  if (!succeeded(features, "FeaturesListGet", report)) {
     return;
   }
   report.pass("FeaturesListGet", std::to_string(features->size()) + " features");
@@ -140,109 +270,314 @@ void check_features_list(CameraGateway& camera, const ProbeOptions& options, Pro
   }
 }
 
-void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+// The modules other than the remote device have no feature the probe knows by
+// name, so listing them is what shows that the module reaches the driver.
+void check_other_modules(CameraGateway& camera, ProbeReport& report)
 {
-  // Each block re-checks rclcpp::ok() so the sequence stops starting new
-  // requests once shutdown begins; a call already in flight completes with a
-  // bounded failure instead.
-  if (!rclcpp::ok()) {
-    return;
+  struct NamedModule {
+    FeatureModule feature_module;
+    const char* name;
+  };
+  const std::array<NamedModule, 4> modules{{
+      {.feature_module = FeatureModule::kSystem, .name = "system"},
+      {.feature_module = FeatureModule::kInterface, .name = "interface"},
+      {.feature_module = FeatureModule::kLocalDevice, .name = "local-device"},
+      {.feature_module = FeatureModule::kStream, .name = "stream"},
+  }};
+
+  for (const auto& entry : modules) {
+    const std::string check = std::string{"FeaturesListGet/"} + entry.name;
+    const auto features = camera.features_list_get(entry.feature_module);
+    if (succeeded(features, check, report)) {
+      report.pass(check, std::to_string(features->size()) + " features");
+    }
   }
-  if (auto connected = camera.connection_status_get(); connected) {
-    // false is a successful negative answer; it is reported, not failed on.
-    report.pass("ConnectionStatusGet",
-                *connected ? "connected" : "not connected");
+}
+
+// Driver failures must arrive as driver errors with the driver's own code.
+void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const auto absent = camera.feature_float_get(options.absent_feature, FeatureModule::kRemoteDevice);
+  if (absent) {
+    report.fail("DriverError/absent-feature", "reading " + options.absent_feature + " unexpectedly succeeded");
+  } else if (absent.error().domain() != ErrorDomain::kDriver) {
+    report.fail("DriverError/absent-feature", describe(absent.error()));
   } else {
-    report.fail("ConnectionStatusGet", describe(connected.error()));
+    report.pass("DriverError/absent-feature", describe(absent.error()));
   }
 
-  if (!rclcpp::ok()) {
-    return;
-  }
-  if (auto status = camera.camera_status_get(); status) {
-    report.pass("CameraStatusGet",
-                "model=" + status->model_name +
-                    " serial=" + status->device_serial_number +
-                    " pixel_format=" + status->pixel_format +
-                    " frame_rate=" + std::to_string(status->frame_rate) +
-                    " size=" + std::to_string(status->width) + "x" +
-                    std::to_string(status->height) +
-                    " streaming=" + (status->streaming ? "true" : "false"));
+  // Deliberately outside the enumerators: the gateway sends the module as
+  // given and the driver is the one to reject it.
+  const auto unknown_module = camera.features_list_get(static_cast<FeatureModule>(200));
+  if (unknown_module) {
+    report.fail("DriverError/unknown-module", "listing module 200 unexpectedly succeeded");
+  } else if (unknown_module.error().domain() != ErrorDomain::kDriver) {
+    report.fail("DriverError/unknown-module", describe(unknown_module.error()));
   } else {
-    report.fail("CameraStatusGet", describe(status.error()));
+    report.pass("DriverError/unknown-module", describe(unknown_module.error()));
+  }
+}
+
+// Returns the description of every remote-device feature, or an empty list
+// when the query fails.
+std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const auto named = camera.feature_info_query({options.float_feature, options.enum_feature}, FeatureModule::kRemoteDevice);
+  if (succeeded(named, "FeatureInfoQuery/named", report)) {
+    const bool as_requested =
+        named->size() == 2 &&
+        (*named)[0].name == options.float_feature && (*named)[0].data_type == FeatureDataType::kFloat &&
+        (*named)[1].name == options.enum_feature && (*named)[1].data_type == FeatureDataType::kEnum;
+    std::string detail;
+    for (const auto& info : *named) {
+      detail += " [" + info.name + ": type=" + describe(info.data_type) +
+                " category=" + info.category +
+                " display_name=" + info.display_name +
+                " sfnc_namespace=" + info.sfnc_namespace +
+                " unit=" + info.unit +
+                " polling_time=" + std::to_string(info.polling_time) + "]";
+    }
+    if (as_requested) {
+      report.pass("FeatureInfoQuery/named", std::to_string(named->size()) + " entries" + detail);
+    } else {
+      report.fail("FeatureInfoQuery/named", "expected a float and an enum entry in request order, got" + detail);
+    }
   }
 
-  if (!rclcpp::ok()) {
-    return;
+  auto all = camera.feature_info_query({}, FeatureModule::kRemoteDevice);
+  if (!succeeded(all, "FeatureInfoQuery/all", report)) {
+    return {};
   }
-  check_features_list(camera, options, report);
+  std::array<int, 9> count_by_type{};
+  for (const auto& info : *all) {
+    count_by_type.at(std::to_underlying(info.data_type)) += 1;
+  }
+  std::string detail;
+  for (std::size_t type = 0; type < count_by_type.size(); ++type) {
+    detail += " " + describe(static_cast<FeatureDataType>(type)) + "=" + std::to_string(count_by_type.at(type));
+  }
+  report.pass("FeatureInfoQuery/all", std::to_string(all->size()) + " features:" + detail);
+  return std::move(*all);
+}
 
-  if (!rclcpp::ok()) {
-    return;
+// Returns configured_name when it is set, and otherwise the first feature of
+// data_type in features. Empty when there is none.
+std::string resolve_feature(const std::string& configured_name,
+                            FeatureDataType data_type,
+                            const std::vector<FeatureInfo>& features)
+{
+  if (!configured_name.empty()) {
+    return configured_name;
   }
-  if (auto access = camera.feature_access_mode_get(options.float_feature); access) {
-    report.pass("FeatureAccessModeGet(" + options.float_feature + ")",
-                std::string{"readable="} + (access->readable ? "true" : "false") +
-                    " writable=" + (access->writable ? "true" : "false"));
-  } else {
-    report.fail("FeatureAccessModeGet(" + options.float_feature + ")",
-                describe(access.error()));
+  const auto match = std::ranges::find(features, data_type, &FeatureInfo::data_type);
+  return match == features.end() ? std::string{} : match->name;
+}
+
+// Returns whether feature is currently readable, reporting a failed query or
+// a skip otherwise. For the features the probe picks by itself, which may be
+// ones the camera does not let it read right now.
+bool readable_now(CameraGateway& camera, const std::string& feature, const std::string& check, ProbeReport& report)
+{
+  const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
+  if (!access) {
+    report.fail(check, "access mode: " + describe(access.error()));
+    return false;
+  }
+  if (!access->readable) {
+    report.skip(check, "feature is not currently readable");
+    return false;
+  }
+  return true;
+}
+
+void check_access_mode(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string check = "FeatureAccessModeGet(" + options.float_feature + ")";
+  const auto access = camera.feature_access_mode_get(options.float_feature, FeatureModule::kRemoteDevice);
+  if (succeeded(access, check, report)) {
+    report.pass(check, "readable=" + describe(access->readable) + " writable=" + describe(access->writable));
+  }
+}
+
+void check_int_feature(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.int_feature;
+
+  const auto value = camera.feature_int_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(value, "FeatureIntGet(" + feature + ")", report)) {
+    report.pass("FeatureIntGet(" + feature + ")", std::to_string(*value));
   }
 
-  if (!rclcpp::ok()) {
-    return;
+  const auto info = camera.feature_int_info_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(info, "FeatureIntInfoGet(" + feature + ")", report)) {
+    report.pass("FeatureIntInfoGet(" + feature + ")",
+                "min=" + std::to_string(info->min) +
+                    " max=" + std::to_string(info->max) +
+                    " inc=" + std::to_string(info->inc));
   }
-  if (auto value = camera.feature_float_get(options.float_feature); value) {
-    report.pass("FeatureFloatGet(" + options.float_feature + ")",
-                std::to_string(*value));
-  } else {
-    report.fail("FeatureFloatGet(" + options.float_feature + ")",
-                describe(value.error()));
+}
+
+void check_float_feature(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.float_feature;
+
+  const auto value = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(value, "FeatureFloatGet(" + feature + ")", report)) {
+    report.pass("FeatureFloatGet(" + feature + ")", std::to_string(*value));
   }
 
-  if (!rclcpp::ok()) {
-    return;
-  }
-  if (auto info = camera.feature_float_info_get(options.float_feature); info) {
-    report.pass("FeatureFloatInfoGet(" + options.float_feature + ")",
+  const auto info = camera.feature_float_info_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(info, "FeatureFloatInfoGet(" + feature + ")", report)) {
+    report.pass("FeatureFloatInfoGet(" + feature + ")",
                 "min=" + std::to_string(info->min) +
                     " max=" + std::to_string(info->max) +
                     " inc=" +
                     (info->inc_available ? std::to_string(info->inc)
                                          : std::string{"(unavailable)"}));
-  } else {
-    report.fail("FeatureFloatInfoGet(" + options.float_feature + ")",
-                describe(info.error()));
+  }
+}
+
+void check_string_feature(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.string_feature;
+
+  const auto value = camera.feature_string_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(value, "FeatureStringGet(" + feature + ")", report)) {
+    report.pass("FeatureStringGet(" + feature + ")", "\"" + *value + "\"");
   }
 
-  if (!rclcpp::ok()) {
-    return;
+  const auto max_length = camera.feature_string_info_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(max_length, "FeatureStringInfoGet(" + feature + ")", report)) {
+    report.pass("FeatureStringInfoGet(" + feature + ")", "max_length=" + std::to_string(*max_length));
   }
-  if (auto value = camera.feature_enum_get(options.enum_feature); value) {
-    report.pass("FeatureEnumGet(" + options.enum_feature + ")", *value);
-  } else {
-    report.fail("FeatureEnumGet(" + options.enum_feature + ")",
-                describe(value.error()));
-  }
+}
 
-  if (!rclcpp::ok()) {
+void check_bool_feature(CameraGateway& camera, const std::string& feature, ProbeReport& report)
+{
+  if (feature.empty()) {
+    report.skip("FeatureBoolGet", "the camera reports no bool feature");
     return;
   }
-  if (auto info = camera.feature_enum_info_get(options.enum_feature); info) {
-    report.pass("FeatureEnumInfoGet(" + options.enum_feature + ")",
+  if (!readable_now(camera, feature, "FeatureBoolGet(" + feature + ")", report)) {
+    return;
+  }
+  const auto value = camera.feature_bool_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(value, "FeatureBoolGet(" + feature + ")", report)) {
+    report.pass("FeatureBoolGet(" + feature + ")", describe(*value));
+  }
+}
+
+void check_enum_feature(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.enum_feature;
+
+  const auto info = camera.feature_enum_info_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(info, "FeatureEnumInfoGet(" + feature + ")", report)) {
+    report.pass("FeatureEnumInfoGet(" + feature + ")",
                 std::to_string(info->possible_values.size()) + " possible, " +
                     std::to_string(info->available_values.size()) +
                     " available");
+  }
+
+  const auto value = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
+  if (!succeeded(value, "FeatureEnumGet(" + feature + ")", report)) {
+    return;
+  }
+  report.pass("FeatureEnumGet(" + feature + ")", *value);
+
+  // The current option is converted to its integer and back; neither call
+  // changes the feature.
+  const auto as_int = camera.feature_enum_as_int_get(feature, *value, FeatureModule::kRemoteDevice);
+  if (!succeeded(as_int, "FeatureEnumAsIntGet(" + feature + ")", report)) {
+    return;
+  }
+  report.pass("FeatureEnumAsIntGet(" + feature + ")", *value + " = " + std::to_string(*as_int));
+
+  const auto as_string = camera.feature_enum_as_string_get(feature, *as_int, FeatureModule::kRemoteDevice);
+  if (!succeeded(as_string, "FeatureEnumAsStringGet(" + feature + ")", report)) {
+    return;
+  }
+  if (*as_string == *value) {
+    report.pass("FeatureEnumAsStringGet(" + feature + ")", std::to_string(*as_int) + " = " + *as_string);
   } else {
-    report.fail("FeatureEnumInfoGet(" + options.enum_feature + ")",
-                describe(info.error()));
+    report.fail("FeatureEnumAsStringGet(" + feature + ")",
+                std::to_string(*as_int) + " came back as " + *as_string + ", expected " + *value);
+  }
+}
+
+// Asks only whether the command is done; the read-only sequence runs nothing.
+void check_command_feature(CameraGateway& camera, const std::string& feature, ProbeReport& report)
+{
+  if (feature.empty()) {
+    report.skip("FeatureCommandIsDone", "the camera reports no command feature");
+    return;
+  }
+  const auto done = camera.feature_command_is_done(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(done, "FeatureCommandIsDone(" + feature + ")", report)) {
+    report.pass("FeatureCommandIsDone(" + feature + ")", "is_done=" + describe(*done));
+  }
+}
+
+void check_raw_feature(CameraGateway& camera, const std::string& feature, ProbeReport& report)
+{
+  if (feature.empty()) {
+    report.skip("FeatureRawGet", "the camera reports no raw feature");
+    return;
+  }
+  if (!readable_now(camera, feature, "FeatureRawGet(" + feature + ")", report)) {
+    return;
+  }
+
+  const auto max_length = camera.feature_raw_info_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(max_length, "FeatureRawInfoGet(" + feature + ")", report)) {
+    report.pass("FeatureRawInfoGet(" + feature + ")", "max_length=" + std::to_string(*max_length));
+  }
+
+  const auto buffer = camera.feature_raw_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(buffer, "FeatureRawGet(" + feature + ")", report)) {
+    report.pass("FeatureRawGet(" + feature + ")", std::to_string(buffer->size()) + " bytes");
+  }
+}
+
+void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  std::vector<FeatureInfo> features;
+  const auto first_of = [&](const std::string& configured_name, FeatureDataType data_type) {
+    return resolve_feature(configured_name, data_type, features);
+  };
+
+  const std::array<std::function<void()>, 14> checks{{
+      [&] { check_connection_status(camera, report); },
+      [&] { check_camera_status(camera, report); },
+      [&] { check_features_list(camera, options, report); },
+      [&] { check_other_modules(camera, report); },
+      [&] { check_driver_error_passthrough(camera, options, report); },
+      [&] { features = check_feature_info(camera, options, report); },
+      [&] { check_access_mode(camera, options, report); },
+      [&] { check_int_feature(camera, options, report); },
+      [&] { check_float_feature(camera, options, report); },
+      [&] { check_string_feature(camera, options, report); },
+      [&] { check_bool_feature(camera, first_of(options.bool_feature, FeatureDataType::kBool), report); },
+      [&] { check_enum_feature(camera, options, report); },
+      [&] { check_command_feature(camera, first_of(options.command_feature, FeatureDataType::kCommand), report); },
+      [&] { check_raw_feature(camera, first_of(options.raw_feature, FeatureDataType::kRaw), report); },
+  }};
+
+  for (const auto& check : checks) {
+    // Each check re-checks rclcpp::ok() so the sequence stops starting new
+    // requests once shutdown begins; a call already in flight completes with a
+    // bounded failure instead.
+    if (!rclcpp::ok()) {
+      return;
+    }
+    check();
   }
 }
 
 // Picks a write target inside [min, max], aligned to the increment when one is
 // available, and different from the current value. Probe-local test logic, not
 // gateway policy.
-double choose_float_target(const FloatInfo& info, double original)
+double choose_float_target(const FeatureFloatInfo& info, double original)
 {
   double target = info.min + ((info.max - info.min) / 2.0);
   if (info.inc_available && info.inc > 0.0) {
@@ -260,7 +595,7 @@ double choose_float_target(const FloatInfo& info, double original)
   return target;
 }
 
-bool float_values_match(double expected, double actual, const FloatInfo& info)
+bool float_values_match(double expected, double actual, const FeatureFloatInfo& info)
 {
   // The camera may quantize the written value, so readback is compared within
   // half an increment when one exists, and a small relative tolerance
@@ -276,7 +611,7 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
   const std::string& feature = options.float_feature;
   const std::string check = "FloatWrite(" + feature + ")";
 
-  const auto access = camera.feature_access_mode_get(feature);
+  const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
   if (!access) {
     report.fail(check, "access mode: " + describe(access.error()));
     return;
@@ -286,13 +621,13 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
     return;
   }
 
-  const auto info = camera.feature_float_info_get(feature);
+  const auto info = camera.feature_float_info_get(feature, FeatureModule::kRemoteDevice);
   if (!info) {
     report.fail(check, "metadata: " + describe(info.error()));
     return;
   }
 
-  const auto original = camera.feature_float_get(feature);
+  const auto original = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
   if (!original) {
     report.fail(check, "original read: " + describe(original.error()));
     return;
@@ -314,12 +649,12 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
     return;
   }
 
-  if (auto set = camera.feature_float_set(feature, target); !set) {
+  if (auto set = camera.feature_float_set(feature, target, FeatureModule::kRemoteDevice); !set) {
     report.fail(check, "set to " + std::to_string(target) + ": " + describe(set.error()));
     return;
   }
 
-  if (auto readback = camera.feature_float_get(feature);
+  if (auto readback = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
       readback && float_values_match(target, *readback, *info)) {
     report.pass(check, "wrote " + std::to_string(target) + ", read back " + std::to_string(*readback));
   } else if (readback) {
@@ -330,11 +665,11 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
 
   // Restoration runs regardless of the verification outcome above; leaving
   // the camera modified is the one result the write path must not produce.
-  if (auto restore = camera.feature_float_set(feature, *original); !restore) {
+  if (auto restore = camera.feature_float_set(feature, *original, FeatureModule::kRemoteDevice); !restore) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + std::to_string(target) + ": " + describe(restore.error()));
     return;
   }
-  if (auto verify = camera.feature_float_get(feature);
+  if (auto verify = camera.feature_float_get(feature, FeatureModule::kRemoteDevice);
       verify && float_values_match(*original, *verify, *info)) {
     report.pass(check + "/restore", "restored to " + std::to_string(*verify));
   } else if (verify) {
@@ -350,7 +685,7 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
   const std::string& feature = options.write_enum_feature;
   const std::string check = "EnumWrite(" + feature + ")";
 
-  const auto access = camera.feature_access_mode_get(feature);
+  const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
   if (!access) {
     report.fail(check, "access mode: " + describe(access.error()));
     return;
@@ -360,13 +695,13 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
     return;
   }
 
-  const auto info = camera.feature_enum_info_get(feature);
+  const auto info = camera.feature_enum_info_get(feature, FeatureModule::kRemoteDevice);
   if (!info) {
     report.fail(check, "metadata: " + describe(info.error()));
     return;
   }
 
-  const auto original = camera.feature_enum_get(feature);
+  const auto original = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
   if (!original) {
     report.fail(check, "original read: " + describe(original.error()));
     return;
@@ -379,12 +714,12 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
     return;
   }
 
-  if (auto set = camera.feature_enum_set(feature, *target); !set) {
+  if (auto set = camera.feature_enum_set(feature, *target, FeatureModule::kRemoteDevice); !set) {
     report.fail(check, "set to " + *target + ": " + describe(set.error()));
     return;
   }
 
-  if (auto readback = camera.feature_enum_get(feature);
+  if (auto readback = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
       readback && *readback == *target) {
     report.pass(check, "wrote " + *target + ", read back " + *readback);
   } else if (readback) {
@@ -396,11 +731,11 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
 
   // Restoration runs regardless of the verification outcome above; leaving
   // the camera modified is the one result the write path must not produce.
-  if (auto restore = camera.feature_enum_set(feature, *original); !restore) {
+  if (auto restore = camera.feature_enum_set(feature, *original, FeatureModule::kRemoteDevice); !restore) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + *target + ": " + describe(restore.error()));
     return;
   }
-  if (auto verify = camera.feature_enum_get(feature);
+  if (auto verify = camera.feature_enum_get(feature, FeatureModule::kRemoteDevice);
       verify && *verify == *original) {
     report.pass(check + "/restore", "restored to " + *verify);
   } else if (verify) {
@@ -408,6 +743,295 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
   } else {
     report.fail(check + "/restore",
                 "restoration readback: " + describe(verify.error()));
+  }
+}
+
+// Returns whether feature is currently both readable and writable, reporting
+// a failed query or a skip otherwise.
+bool writable_now(CameraGateway& camera, const std::string& feature, const std::string& check, ProbeReport& report)
+{
+  const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
+  if (!access) {
+    report.fail(check, "access mode: " + describe(access.error()));
+    return false;
+  }
+  if (!access->readable || !access->writable) {
+    report.skip(check, "feature is not currently both readable and writable");
+    return false;
+  }
+  return true;
+}
+
+// Writes target, verifies it by readback, then restores original and verifies
+// that too. Probe-local test logic, not gateway policy.
+template <typename T, typename Get, typename Set, typename Show>
+void write_and_restore(const std::string& check,
+                       const T& original,
+                       const T& target,
+                       Get get,
+                       Set set,
+                       Show show,
+                       ProbeReport& report)
+{
+  if (auto written = set(target); !written) {
+    report.fail(check, "set to " + show(target) + ": " + describe(written.error()));
+    return;
+  }
+
+  if (auto readback = get(); readback && *readback == target) {
+    report.pass(check, "wrote " + show(target) + ", read back " + show(*readback));
+  } else if (readback) {
+    report.fail(check, "wrote " + show(target) + " but read back " + show(*readback));
+  } else {
+    report.fail(check, "readback: " + describe(readback.error()));
+  }
+
+  // Restoration runs regardless of the verification outcome above; leaving
+  // the camera modified is the one result the write path must not produce.
+  if (auto restored = set(original); !restored) {
+    report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + show(target) + ": " + describe(restored.error()));
+    return;
+  }
+  if (auto verify = get(); verify && *verify == original) {
+    report.pass(check + "/restore", "restored to " + show(*verify));
+  } else if (verify) {
+    report.fail(check + "/restore", "RESTORATION MISMATCH: expected " + show(original) + ", read back " + show(*verify));
+  } else {
+    report.fail(check + "/restore", "restoration readback: " + describe(verify.error()));
+  }
+}
+
+void run_int_write_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.write_int_feature;
+  const std::string check = "IntWrite(" + feature + ")";
+  if (!writable_now(camera, feature, check, report)) {
+    return;
+  }
+
+  const auto info = camera.feature_int_info_get(feature, FeatureModule::kRemoteDevice);
+  if (!info) {
+    report.fail(check, "metadata: " + describe(info.error()));
+    return;
+  }
+  const auto original = camera.feature_int_get(feature, FeatureModule::kRemoteDevice);
+  if (!original) {
+    report.fail(check, "original read: " + describe(original.error()));
+    return;
+  }
+
+  // One increment away from the current value, on whichever side has room.
+  const std::int64_t step = std::max<std::int64_t>(info->inc, 1);
+  const bool room_above = *original <= info->max - step;
+  const bool room_below = *original >= info->min + step;
+  if (!room_above && !room_below) {
+    report.skip(check, "no value one increment away from " + std::to_string(*original) + " within [" + std::to_string(info->min) + ", " + std::to_string(info->max) + "]");
+    return;
+  }
+  const std::int64_t target = room_above ? *original + step : *original - step;
+
+  write_and_restore(
+      check,
+      *original,
+      target,
+      [&] { return camera.feature_int_get(feature, FeatureModule::kRemoteDevice); },
+      [&](std::int64_t value) { return camera.feature_int_set(feature, value, FeatureModule::kRemoteDevice); },
+      [](std::int64_t value) { return std::to_string(value); },
+      report);
+}
+
+void run_string_write_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.write_string_feature;
+  const std::string check = "StringWrite(" + feature + ")";
+  if (!writable_now(camera, feature, check, report)) {
+    return;
+  }
+
+  const auto max_length = camera.feature_string_info_get(feature, FeatureModule::kRemoteDevice);
+  if (!max_length) {
+    report.fail(check, "metadata: " + describe(max_length.error()));
+    return;
+  }
+  const auto original = camera.feature_string_get(feature, FeatureModule::kRemoteDevice);
+  if (!original) {
+    report.fail(check, "original read: " + describe(original.error()));
+    return;
+  }
+
+  const std::string& target = options.write_string_value;
+  if (target == *original || std::cmp_greater(target.size(), *max_length)) {
+    report.skip(check, "write_string_value \"" + target + "\" equals the current value or exceeds max_length " + std::to_string(*max_length));
+    return;
+  }
+
+  write_and_restore(
+      check,
+      *original,
+      target,
+      [&] { return camera.feature_string_get(feature, FeatureModule::kRemoteDevice); },
+      [&](const std::string& value) { return camera.feature_string_set(feature, value, FeatureModule::kRemoteDevice); },
+      [](const std::string& value) { return "\"" + value + "\""; },
+      report);
+}
+
+void run_bool_write_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.write_bool_feature;
+  const std::string check = "BoolWrite(" + feature + ")";
+  if (!writable_now(camera, feature, check, report)) {
+    return;
+  }
+
+  const auto original = camera.feature_bool_get(feature, FeatureModule::kRemoteDevice);
+  if (!original) {
+    report.fail(check, "original read: " + describe(original.error()));
+    return;
+  }
+
+  write_and_restore(
+      check,
+      *original,
+      !*original,
+      [&] { return camera.feature_bool_get(feature, FeatureModule::kRemoteDevice); },
+      [&](bool value) { return camera.feature_bool_set(feature, value, FeatureModule::kRemoteDevice); },
+      [](bool value) { return describe(value); },
+      report);
+}
+
+// Writes back the bytes it has just read, so the set path is exercised without
+// changing what the feature holds.
+void run_raw_write_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.write_raw_feature;
+  const std::string check = "RawWrite(" + feature + ")";
+  if (!writable_now(camera, feature, check, report)) {
+    return;
+  }
+
+  const auto original = camera.feature_raw_get(feature, FeatureModule::kRemoteDevice);
+  if (!original) {
+    report.fail(check, "original read: " + describe(original.error()));
+    return;
+  }
+  if (auto written = camera.feature_raw_set(feature, *original, FeatureModule::kRemoteDevice); !written) {
+    report.fail(check, "set: " + describe(written.error()));
+    return;
+  }
+
+  if (auto readback = camera.feature_raw_get(feature, FeatureModule::kRemoteDevice);
+      readback && *readback == *original) {
+    report.pass(check, "wrote back " + std::to_string(original->size()) + " unchanged bytes");
+  } else if (readback) {
+    report.fail(check, "readback differs from the " + std::to_string(original->size()) + " bytes written");
+  } else {
+    report.fail(check, "readback: " + describe(readback.error()));
+  }
+}
+
+void run_command_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::string& feature = options.run_command_feature;
+  const std::string check = "CommandRun(" + feature + ")";
+
+  if (auto run = camera.feature_command_run(feature, FeatureModule::kRemoteDevice); !run) {
+    report.fail(check, describe(run.error()));
+    return;
+  }
+  const auto done = camera.feature_command_is_done(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(done, check, report)) {
+    report.pass(check, "ran, is_done=" + describe(*done));
+  }
+}
+
+void run_settings_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  // Both paths are resolved by the driver, on the machine it runs on.
+  if (!options.settings_save_file.empty()) {
+    const auto saved = camera.settings_save(options.settings_save_file);
+    if (succeeded(saved, "SettingsSave", report)) {
+      report.pass("SettingsSave", "driver wrote " + options.settings_save_file);
+    }
+  }
+  if (!options.settings_load_file.empty() && rclcpp::ok()) {
+    const auto loaded = camera.settings_load(options.settings_load_file);
+    if (succeeded(loaded, "SettingsLoad", report)) {
+      report.pass("SettingsLoad", "driver loaded " + options.settings_load_file);
+    }
+  }
+}
+
+// Flips the stream to the other state and back, so the camera ends as it began.
+void run_stream_sequence(CameraGateway& camera, ProbeReport& report)
+{
+  const auto before = camera.camera_status_get();
+  if (!before) {
+    report.fail("Stream", "initial status: " + describe(before.error()));
+    return;
+  }
+
+  const auto switch_to = [&](bool streaming, const std::string& check) {
+    if (auto switched = streaming ? camera.stream_start() : camera.stream_stop(); !switched) {
+      report.fail(check, describe(switched.error()));
+      return;
+    }
+    if (auto status = camera.camera_status_get(); status && status->streaming == streaming) {
+      report.pass(check, "status reports streaming=" + describe(status->streaming));
+    } else if (status) {
+      report.fail(check, "status still reports streaming=" + describe(status->streaming));
+    } else {
+      report.fail(check, "status: " + describe(status.error()));
+    }
+  };
+
+  switch_to(!before->streaming, before->streaming ? "StreamStop" : "StreamStart");
+  // The switch back runs regardless of the outcome above.
+  switch_to(before->streaming, before->streaming ? "StreamStart/restore" : "StreamStop/restore");
+}
+
+void run_write_sequences(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+{
+  const std::array<std::function<void()>, 9> sequences{{
+      [&] { run_float_write_sequence(camera, options, report); },
+      [&] { run_enum_write_sequence(camera, options, report); },
+      [&] {
+        if (!options.write_int_feature.empty()) {
+          run_int_write_sequence(camera, options, report);
+        }
+      },
+      [&] {
+        if (!options.write_string_feature.empty()) {
+          run_string_write_sequence(camera, options, report);
+        }
+      },
+      [&] {
+        if (!options.write_bool_feature.empty()) {
+          run_bool_write_sequence(camera, options, report);
+        }
+      },
+      [&] {
+        if (!options.write_raw_feature.empty()) {
+          run_raw_write_sequence(camera, options, report);
+        }
+      },
+      [&] {
+        if (!options.run_command_feature.empty()) {
+          run_command_sequence(camera, options, report);
+        }
+      },
+      [&] { run_settings_sequence(camera, options, report); },
+      [&] {
+        if (options.exercise_stream) {
+          run_stream_sequence(camera, report);
+        }
+      },
+  }};
+
+  for (const auto& sequence : sequences) {
+    if (!rclcpp::ok()) {
+      return;
+    }
+    sequence();
   }
 }
 
@@ -449,12 +1073,7 @@ int run_probe()
         RCLCPP_INFO(node->get_logger(),
                     "write sequences disabled (enable_writes:=true to run)");
       } else {
-        if (rclcpp::ok()) {
-          run_float_write_sequence(camera, options, report);
-        }
-        if (rclcpp::ok()) {
-          run_enum_write_sequence(camera, options, report);
-        }
+        run_write_sequences(camera, options, report);
       }
 
       if (!rclcpp::ok()) {

@@ -8,6 +8,9 @@
 
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 #include "venimapping_camera/types/error.hpp"
 
 namespace venimapping::camera::detail {
