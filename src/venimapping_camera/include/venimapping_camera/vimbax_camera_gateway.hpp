@@ -94,6 +94,14 @@ class VimbaXCameraGateway final : public CameraGateway {
   // True means only that the driver currently holds a camera object.
   [[nodiscard]] Expected<bool> connection_status_get() override;
 
+  // The driver builds the status from a series of feature reads, and the call
+  // is not free of side effects on the camera: to fill trigger_info the driver
+  // selects each available TriggerSelector value in turn and leaves the
+  // selector on the last one.
+  //
+  // Where the camera lacks a feature the driver substitutes a placeholder,
+  // which is passed through as received: "N/A" for device_firmware_version,
+  // device_user_id and a trigger's mode or source, and 0.0 for frame_rate.
   [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
 
   // The Vimba X driver serves this list from a per-module cache built when it

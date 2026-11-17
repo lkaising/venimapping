@@ -15,6 +15,7 @@
 #include <format>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -23,6 +24,7 @@
 
 #include "rclcpp/utilities.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
+#include "vimbax_camera_msgs/msg/trigger_info.hpp"
 
 #include "detail/gateway_util.hpp"
 
@@ -35,6 +37,7 @@ using ContextPtr = rclcpp::Context::SharedPtr;
 using Deadline = Clock::time_point;
 using StringView = std::string_view;
 using WireFeatureModule = vimbax_camera_msgs::msg::FeatureModule;
+using WireTriggerInfo = vimbax_camera_msgs::msg::TriggerInfo;
 
 template <typename Service>
 using Client = rclcpp::Client<Service>;
@@ -84,6 +87,31 @@ template <typename Service>
   auto request = make_module_request<Service>(feature_module);
   request->feature_name = feature_name;
   return request;
+}
+
+// The converters below move the strings out of the response they are given.
+
+[[nodiscard]] std::vector<TriggerInfo> to_trigger_info(std::vector<WireTriggerInfo>& wire)
+{
+  std::vector<TriggerInfo> trigger_info;
+  trigger_info.reserve(wire.size());
+  for (auto& entry : wire) {
+    trigger_info.push_back(TriggerInfo{
+        .selector = std::move(entry.selector),
+        .mode = std::move(entry.mode),
+        .source = std::move(entry.source),
+    });
+  }
+  return trigger_info;
+}
+
+// The driver leaves an address empty when the camera has none.
+[[nodiscard]] std::optional<std::string> to_optional_address(std::string& wire)
+{
+  if (wire.empty()) {
+    return std::nullopt;
+  }
+  return std::move(wire);
 }
 
 template <typename Service>
@@ -297,13 +325,22 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
              std::make_shared<ServiceT::Request>())
       .transform([](const auto& response) {
         return CameraStatus{
+            .display_name = std::move(response->display_name),
             .model_name = std::move(response->model_name),
+            .device_firmware_version = std::move(response->device_firmware_version),
+            .device_id = std::move(response->device_id),
+            .device_user_id = std::move(response->device_user_id),
             .device_serial_number = std::move(response->device_serial_number),
-            .pixel_format = std::move(response->pixel_format),
-            .frame_rate = response->frame_rate,
+            .interface_id = std::move(response->interface_id),
+            .transport_layer_id = std::move(response->transport_layer_id),
+            .streaming = response->streaming,
             .width = response->width,
             .height = response->height,
-            .streaming = response->streaming,
+            .frame_rate = response->frame_rate,
+            .pixel_format = std::move(response->pixel_format),
+            .trigger_info = to_trigger_info(response->trigger_info),
+            .ip_address = to_optional_address(response->ip_address),
+            .mac_address = to_optional_address(response->mac_address),
         };
       });
 }
