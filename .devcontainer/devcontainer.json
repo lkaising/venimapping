@@ -18,8 +18,12 @@
         "vscode": {
             "extensions": [
                 "ms-vscode.cpptools",
-                "ms-python.python"
-            ]
+                "ms-python.python",
+                "ms-vscode.cmake-tools"
+            ],
+            "settings": {
+                "cmake.configureOnOpen": false
+            }
         }
     },
     "postCreateCommand": "sudo chown -R dev:dev ${containerWorkspaceFolder}/build ${containerWorkspaceFolder}/install ${containerWorkspaceFolder}/log && bash ${containerWorkspaceFolder}/scripts/workspace.sh setup"
