@@ -28,7 +28,9 @@
 #include "vimbax_camera_msgs/srv/feature_float_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_set.hpp"
 #include "vimbax_camera_msgs/srv/features_list_get.hpp"
+#include "vimbax_camera_msgs/srv/settings_load_save.hpp"
 #include "vimbax_camera_msgs/srv/status.hpp"
+#include "vimbax_camera_msgs/srv/stream_start_stop.hpp"
 
 #include "venimapping_camera/camera_gateway.hpp"
 
@@ -104,6 +106,12 @@ class VimbaXCameraGateway final : public CameraGateway {
   // device_user_id and a trigger's mode or source, and 0.0 for frame_rate.
   [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
 
+  [[nodiscard]] Expected<void> stream_start() override;
+  [[nodiscard]] Expected<void> stream_stop() override;
+
+  [[nodiscard]] Expected<void> settings_save(const std::string& filename) override;
+  [[nodiscard]] Expected<void> settings_load(const std::string& filename) override;
+
   // The Vimba X driver serves this list from a per-module cache built when it
   // opens the camera, so the result is a snapshot refreshed on reopen after a
   // reconnect rather than a live query.
@@ -173,6 +181,10 @@ class VimbaXCameraGateway final : public CameraGateway {
 
   ClientPtr<vimbax_camera_msgs::srv::ConnectionStatus> connection_status_client_;
   ClientPtr<vimbax_camera_msgs::srv::Status> status_client_;
+  ClientPtr<vimbax_camera_msgs::srv::StreamStartStop> stream_start_client_;
+  ClientPtr<vimbax_camera_msgs::srv::StreamStartStop> stream_stop_client_;
+  ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_save_client_;
+  ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_load_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeaturesListGet> features_list_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureAccessModeGet> feature_access_mode_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatGet> feature_float_get_client_;

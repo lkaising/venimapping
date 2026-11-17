@@ -52,6 +52,17 @@ class CameraGateway {
 
   [[nodiscard]] virtual Expected<CameraStatus> camera_status_get() = 0;
 
+  // Start and stop image acquisition. The images themselves are not part of
+  // this contract.
+  [[nodiscard]] virtual Expected<void> stream_start() = 0;
+  [[nodiscard]] virtual Expected<void> stream_stop() = 0;
+
+  // Save the camera's feature values to a file, or load them from one.
+  // filename is a path on the machine that runs the driver, which need not be
+  // the machine that runs the gateway.
+  [[nodiscard]] virtual Expected<void> settings_save(const std::string& filename) = 0;
+  [[nodiscard]] virtual Expected<void> settings_load(const std::string& filename) = 0;
+
   // Returns the names of the features the module defines. This is not an
   // availability check: a listed name may be currently unreadable or
   // unwritable, and current access state comes from feature_access_mode_get().

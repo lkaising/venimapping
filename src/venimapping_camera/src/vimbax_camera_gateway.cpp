@@ -199,6 +199,18 @@ VimbaXCameraGateway::VimbaXCameraGateway(rclcpp::Node& node,
       status_client_{
           make_client<vimbax_camera_msgs::srv::Status>(
               node, camera_namespace, "status")},
+      stream_start_client_{
+          make_client<vimbax_camera_msgs::srv::StreamStartStop>(
+              node, camera_namespace, "stream_start")},
+      stream_stop_client_{
+          make_client<vimbax_camera_msgs::srv::StreamStartStop>(
+              node, camera_namespace, "stream_stop")},
+      settings_save_client_{
+          make_client<vimbax_camera_msgs::srv::SettingsLoadSave>(
+              node, camera_namespace, "settings/save")},
+      settings_load_client_{
+          make_client<vimbax_camera_msgs::srv::SettingsLoadSave>(
+              node, camera_namespace, "settings/load")},
       features_list_get_client_{
           make_client<vimbax_camera_msgs::srv::FeaturesListGet>(
               node, camera_namespace, "features/list_get")},
@@ -343,6 +355,42 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
             .mac_address = to_optional_address(response->mac_address),
         };
       });
+}
+
+Expected<void> VimbaXCameraGateway::stream_start()
+{
+  using ServiceT = vimbax_camera_msgs::srv::StreamStartStop;
+  return call_checked<ServiceT>(
+             *stream_start_client_,
+             std::make_shared<ServiceT::Request>())
+      .transform([](const auto&) {});
+}
+
+Expected<void> VimbaXCameraGateway::stream_stop()
+{
+  using ServiceT = vimbax_camera_msgs::srv::StreamStartStop;
+  return call_checked<ServiceT>(
+             *stream_stop_client_,
+             std::make_shared<ServiceT::Request>())
+      .transform([](const auto&) {});
+}
+
+Expected<void> VimbaXCameraGateway::settings_save(const std::string& filename)
+{
+  using ServiceT = vimbax_camera_msgs::srv::SettingsLoadSave;
+  auto request = std::make_shared<ServiceT::Request>();
+  request->filename = filename;
+  return call_checked<ServiceT>(*settings_save_client_, std::move(request))
+      .transform([](const auto&) {});
+}
+
+Expected<void> VimbaXCameraGateway::settings_load(const std::string& filename)
+{
+  using ServiceT = vimbax_camera_msgs::srv::SettingsLoadSave;
+  auto request = std::make_shared<ServiceT::Request>();
+  request->filename = filename;
+  return call_checked<ServiceT>(*settings_load_client_, std::move(request))
+      .transform([](const auto&) {});
 }
 
 Expected<std::vector<std::string>> VimbaXCameraGateway::features_list_get(
