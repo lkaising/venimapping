@@ -34,3 +34,12 @@ works around. Revisit each one if upstream fixes it.
   `vmb_info.featureFlags`, so the booleans reflect the data type's bit pattern rather
   than the feature's access flags.
   - Until then, current access state comes from `feature_access_mode_get`.
+
+- [ ] **Remove `without_terminator` once upstream stops sending the C terminator.**
+  `VmbCAPI::feature_string_get` in `vimbax_camera/src/loader/vmbc_api.cpp` (line 323)
+  builds its result from `size_filled` bytes, a count that includes the terminating
+  NUL, so every string feature value reaches a C++ client one character too long. The
+  gateway strips that NUL in `feature_string_get` and in the four `CameraStatus` fields
+  the driver reads the same way (`device_firmware_version`, `device_user_id`,
+  `interface_id`, `transport_layer_id`).
+  - `ros2 service call` does not show the NUL; a C++ client does.

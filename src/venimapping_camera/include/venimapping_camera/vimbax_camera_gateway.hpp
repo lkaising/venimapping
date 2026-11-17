@@ -121,6 +121,9 @@ class VimbaXCameraGateway final : public CameraGateway {
   // Where the camera lacks a feature the driver substitutes a placeholder,
   // which is passed through as received: "N/A" for device_firmware_version,
   // device_user_id and a trigger's mode or source, and 0.0 for frame_rate.
+  //
+  // device_firmware_version, device_user_id, interface_id and
+  // transport_layer_id are string feature values; see feature_string_get().
   [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
 
   [[nodiscard]] Expected<void> stream_start() override;
@@ -167,6 +170,9 @@ class VimbaXCameraGateway final : public CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) override;
 
+  // The driver sends a string feature's value with its C terminator as a
+  // trailing NUL character. That NUL is removed here, so the value compares
+  // equal to the text it holds.
   [[nodiscard]] Expected<std::string> feature_string_get(
       const std::string& feature_name,
       FeatureModule feature_module) override;
