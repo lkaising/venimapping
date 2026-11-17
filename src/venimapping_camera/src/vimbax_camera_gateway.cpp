@@ -249,9 +249,9 @@ auto VimbaXCameraGateway::call_checked(Client<Service>& client, RequestPtr<Servi
     return response;
   }
 
-  auto driver_check = detail::check_driver_error((*response)->error.code, (*response)->error.text);
-  if (!driver_check) {
-    return std::unexpected(std::move(driver_check).error());
+  const auto& driver = (*response)->error;
+  if (driver.code != 0) {
+    return std::unexpected(detail::driver_error(driver.code, driver.text));
   }
 
   return response;

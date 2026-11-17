@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "venimapping_camera/expected.hpp"
+#include "venimapping_camera/types/error.hpp"
 
 namespace venimapping::camera::detail {
 
@@ -24,6 +24,6 @@ enum class GatewayDiagnostic : std::int32_t {  // NOLINT(performance-enum-size):
 
 Error gateway_error(GatewayDiagnostic diagnostic, std::string text);
 
-Expected<void> check_driver_error(std::int32_t code, const std::string& text);
+Error driver_error(std::int32_t code, std::string text);
 
 }  // namespace venimapping::camera::detail
