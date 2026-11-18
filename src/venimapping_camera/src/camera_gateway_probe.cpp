@@ -1,11 +1,7 @@
 // -----------------------------------------------------------------------------
 //  Filename: camera_gateway_probe.cpp
 //
-//  Purpose:  TEMPORARY integration probe exercising VimbaXCameraGateway
-//            against a running vimbax_ros2_driver and camera. Disposable by
-//            design: no other target depends on it, and it accumulates no
-//            configuration policy. It will be replaced by production
-//            camera-node work in a later stage.
+//  Purpose:  Exercises VimbaXCameraGateway against a live driver and camera (temporary probe).
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
@@ -123,17 +119,8 @@ class ProbeReport {
   int skip_count_ = 0;
 };
 
-// Parameters the probe reads at startup. The camera namespace is a parameter
-// because the driver's default namespace is pid-dependent; bring-up should
-// prefer a stable namespace remap on the driver side.
-//
-// bool_feature, command_feature and raw_feature may be empty, in which case the
-// probe picks the first remote-device feature of that type.
-//
-// Everything that changes camera or driver state needs enable_writes. The
-// float and enum write sequences then run as they always have; each later
-// option below names one further thing to change and is off while it is
-// empty (or false).
+// An empty bool_feature, command_feature or raw_feature picks the first
+// remote-device feature of that type. Nothing is written unless enable_writes.
 struct ProbeOptions {
   std::string camera_namespace;
   std::chrono::milliseconds timeout{};
@@ -196,7 +183,6 @@ ProbeOptions declare_options(rclcpp::Node& node)
   return options;
 }
 
-// Reports a failed gateway call. Returns true when the call succeeded.
 template <typename T>
 bool succeeded(const Expected<T>& result, const std::string& check, ProbeReport& report)
 {
@@ -210,7 +196,6 @@ void check_connection_status(CameraGateway& camera, ProbeReport& report)
 {
   const auto connected = camera.connection_status_get();
   if (succeeded(connected, "ConnectionStatusGet", report)) {
-    // false is a successful negative answer; it is reported, not failed on.
     report.pass("ConnectionStatusGet", *connected ? "connected" : "not connected");
   }
 }
@@ -278,8 +263,6 @@ void check_features_list(CameraGateway& camera, const ProbeOptions& options, Pro
   }
 }
 
-// The modules other than the remote device have no feature the probe knows by
-// name, so listing them is what shows that the module reaches the driver.
 void check_other_modules(CameraGateway& camera, ProbeReport& report)
 {
   struct NamedModule {
@@ -302,7 +285,6 @@ void check_other_modules(CameraGateway& camera, ProbeReport& report)
   }
 }
 
-// Driver failures must arrive as driver errors with the driver's own code.
 void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const auto absent = camera.feature_float_get(options.absent_feature, FeatureModule::kRemoteDevice);
@@ -314,8 +296,7 @@ void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& o
     report.pass("DriverError/absent-feature", describe(absent.error()));
   }
 
-  // Deliberately outside the enumerators: the gateway sends the module as
-  // given and the driver is the one to reject it.
+  // Deliberately invalid: the driver, not the gateway, must reject it.
   const auto unknown_module = camera.features_list_get(static_cast<FeatureModule>(200));
   if (unknown_module) {
     report.fail("DriverError/unknown-module", "listing module 200 unexpectedly succeeded");
@@ -326,8 +307,6 @@ void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& o
   }
 }
 
-// Returns the description of every remote-device feature, or an empty list
-// when the query fails.
 std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const auto named = camera.feature_info_query({options.float_feature, options.enum_feature}, FeatureModule::kRemoteDevice);
@@ -369,8 +348,6 @@ std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOp
   return std::move(*all);
 }
 
-// Returns configured_name when it is set, and otherwise the first feature of
-// data_type in features. Empty when there is none.
 std::string resolve_feature(const std::string& configured_name,
                             FeatureDataType data_type,
                             const std::vector<FeatureInfo>& features)
@@ -382,9 +359,6 @@ std::string resolve_feature(const std::string& configured_name,
   return match == features.end() ? std::string{} : match->name;
 }
 
-// Returns whether feature is currently readable, reporting a failed query or
-// a skip otherwise. For the features the probe picks by itself, which may be
-// ones the camera does not let it read right now.
 bool readable_now(CameraGateway& camera, const std::string& feature, const std::string& check, ProbeReport& report)
 {
   const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
@@ -511,8 +485,6 @@ void check_enum_feature(CameraGateway& camera, const ProbeOptions& options, Prob
   }
   report.pass("FeatureEnumGet(" + feature + ")", *value);
 
-  // The current option is converted to its integer and back; neither call
-  // changes the feature.
   const auto as_int = camera.feature_enum_as_int_get(feature, *value, FeatureModule::kRemoteDevice);
   if (!succeeded(as_int, "FeatureEnumAsIntGet(" + feature + ")", report)) {
     return;
@@ -531,7 +503,6 @@ void check_enum_feature(CameraGateway& camera, const ProbeOptions& options, Prob
   }
 }
 
-// Asks only whether the command is done; the read-only sequence runs nothing.
 void check_command_feature(CameraGateway& camera, const std::string& feature, ProbeReport& report)
 {
   if (feature.empty()) {
@@ -590,9 +561,6 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   }};
 
   for (const auto& check : checks) {
-    // Each check re-checks rclcpp::ok() so the sequence stops starting new
-    // requests once shutdown begins; a call already in flight completes with a
-    // bounded failure instead.
     if (!rclcpp::ok()) {
       return;
     }
@@ -600,9 +568,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   }
 }
 
-// Picks a write target inside [min, max], aligned to the increment when one is
-// available, and different from the current value. Probe-local test logic, not
-// gateway policy.
+// A target in [min, max], aligned to inc if available, other than original.
 double choose_float_target(const FeatureFloatInfo& info, double original)
 {
   double target = info.min + ((info.max - info.min) / 2.0);
@@ -623,9 +589,7 @@ double choose_float_target(const FeatureFloatInfo& info, double original)
 
 bool float_values_match(double expected, double actual, const FeatureFloatInfo& info)
 {
-  // The camera may quantize the written value, so readback is compared within
-  // half an increment when one exists, and a small relative tolerance
-  // otherwise.
+  // The camera may quantize writes.
   const double tolerance = (info.inc_available && info.inc > 0.0)
                                ? info.inc / 2.0
                                : (std::abs(expected) * 1e-6) + 1e-9;
@@ -659,8 +623,6 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
     return;
   }
 
-  // Target selection and std::clamp assume ordered, finite metadata; a driver
-  // reporting otherwise makes a safe write impossible, not a gateway failure.
   if (!std::isfinite(info->min) || !std::isfinite(info->max) ||
       info->min > info->max ||
       (info->inc_available && !std::isfinite(info->inc)) ||
@@ -689,8 +651,7 @@ void run_float_write_sequence(CameraGateway& camera, const ProbeOptions& options
     report.fail(check, "readback: " + describe(readback.error()));
   }
 
-  // Restoration runs regardless of the verification outcome above; leaving
-  // the camera modified is the one result the write path must not produce.
+  // Restore even if verification failed.
   if (auto restore = camera.feature_float_set(feature, *original, FeatureModule::kRemoteDevice); !restore) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + std::to_string(target) + ": " + describe(restore.error()));
     return;
@@ -755,8 +716,7 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
     report.fail(check, "readback: " + describe(readback.error()));
   }
 
-  // Restoration runs regardless of the verification outcome above; leaving
-  // the camera modified is the one result the write path must not produce.
+  // Restore even if verification failed.
   if (auto restore = camera.feature_enum_set(feature, *original, FeatureModule::kRemoteDevice); !restore) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + *target + ": " + describe(restore.error()));
     return;
@@ -772,8 +732,6 @@ void run_enum_write_sequence(CameraGateway& camera, const ProbeOptions& options,
   }
 }
 
-// Returns whether feature is currently both readable and writable, reporting
-// a failed query or a skip otherwise.
 bool writable_now(CameraGateway& camera, const std::string& feature, const std::string& check, ProbeReport& report)
 {
   const auto access = camera.feature_access_mode_get(feature, FeatureModule::kRemoteDevice);
@@ -788,8 +746,6 @@ bool writable_now(CameraGateway& camera, const std::string& feature, const std::
   return true;
 }
 
-// Writes target, verifies it by readback, then restores original and verifies
-// that too. Probe-local test logic, not gateway policy.
 template <typename T, typename Get, typename Set, typename Show>
 void write_and_restore(const std::string& check,
                        const T& original,
@@ -812,8 +768,7 @@ void write_and_restore(const std::string& check,
     report.fail(check, "readback: " + describe(readback.error()));
   }
 
-  // Restoration runs regardless of the verification outcome above; leaving
-  // the camera modified is the one result the write path must not produce.
+  // Restore even if verification failed.
   if (auto restored = set(original); !restored) {
     report.fail(check + "/restore", "RESTORATION FAILED, camera left at " + show(target) + ": " + describe(restored.error()));
     return;
@@ -846,7 +801,6 @@ void run_int_write_sequence(CameraGateway& camera, const ProbeOptions& options, 
     return;
   }
 
-  // One increment away from the current value, on whichever side has room.
   const std::int64_t step = std::max<std::int64_t>(info->inc, 1);
   const bool room_above = *original <= info->max - step;
   const bool room_below = *original >= info->min + step;
@@ -925,8 +879,7 @@ void run_bool_write_sequence(CameraGateway& camera, const ProbeOptions& options,
       report);
 }
 
-// Writes back the bytes it has just read, so the set path is exercised without
-// changing what the feature holds.
+// Writes back the bytes just read: exercises set without changing anything.
 void run_raw_write_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const std::string& feature = options.write_raw_feature;
@@ -972,7 +925,6 @@ void run_command_sequence(CameraGateway& camera, const ProbeOptions& options, Pr
 
 void run_settings_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  // Both paths are resolved by the driver, on the machine it runs on.
   if (!options.settings_save_file.empty()) {
     const auto saved = camera.settings_save(options.settings_save_file);
     if (succeeded(saved, "SettingsSave", report)) {
@@ -987,7 +939,6 @@ void run_settings_sequence(CameraGateway& camera, const ProbeOptions& options, P
   }
 }
 
-// Flips the stream to the other state and back, so the camera ends as it began.
 void run_stream_sequence(CameraGateway& camera, ProbeReport& report)
 {
   const auto before = camera.camera_status_get();
@@ -1011,7 +962,6 @@ void run_stream_sequence(CameraGateway& camera, ProbeReport& report)
   };
 
   switch_to(!before->streaming, before->streaming ? "StreamStop" : "StreamStart");
-  // The switch back runs regardless of the outcome above.
   switch_to(before->streaming, before->streaming ? "StreamStart/restore" : "StreamStop/restore");
 }
 
@@ -1071,16 +1021,14 @@ int run_probe()
               options.camera_namespace.c_str(),
               static_cast<long long>(options.timeout.count()));
 
-  // The executor spins on its own thread so service responses complete while
-  // this thread -- the designated gateway worker -- blocks inside calls.
+  // Spin elsewhere: this thread is the gateway worker and blocks in calls.
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
   std::thread executor_thread{[&executor] { executor.spin(); }};
 
   int exit_code = EXIT_FAILURE;
   try {
-    // Scope: the gateway and its service clients are destroyed before the
-    // executor stops and the node is torn down.
+    // Scoped so the gateway is destroyed before the executor stops.
     auto created = VimbaXCameraGateway::create(*node, options.camera_namespace, options.timeout);
     if (!created) {
       RCLCPP_FATAL(node->get_logger(), "%s", describe(created.error()).c_str());
@@ -1089,7 +1037,6 @@ int run_probe()
     } else {
       auto gateway = std::move(*created);
 
-      // Everything past construction and binding needs only the contract.
       CameraGateway& camera = *gateway;
 
       ProbeReport report{node->get_logger()};
@@ -1103,8 +1050,7 @@ int run_probe()
       }
 
       if (!rclcpp::ok()) {
-        // An interrupted run proves nothing; zero executed checks must not
-        // read as success.
+        // An interrupted run proves nothing and must not read as success.
         RCLCPP_WARN(node->get_logger(),
                     "probe interrupted by shutdown before completing");
       } else if (report.all_passed()) {
@@ -1120,16 +1066,14 @@ int run_probe()
       }
     }
   } catch (const std::exception& e) {
-    // Catching here keeps the stack from unwinding past the joinable
-    // executor thread below, which would call std::terminate.
+    // Unwinding past the joinable executor_thread would call std::terminate.
     RCLCPP_FATAL(node->get_logger(), "probe aborted by exception: %s", e.what());
   } catch (...) {
     RCLCPP_FATAL(node->get_logger(), "probe aborted by unknown exception");
   }
 
-  // Shutting the context down, rather than executor.cancel(), closes the
-  // startup race in which a cancel issued before spin() begins is lost and
-  // join() blocks forever; spin() also exits once the context is down.
+  // Not executor.cancel(): a cancel issued before spin() starts is lost and
+  // join() hangs. spin() always exits once the context is shut down.
   rclcpp::shutdown();
   executor_thread.join();
   return exit_code;
@@ -1144,9 +1088,6 @@ int main(int argc, char** argv)
   try {
     exit_code = run_probe();
   } catch (const std::exception& e) {
-    // A throw before run_probe()'s own handling exists -- e.g. a mistyped
-    // parameter in declare_options() -- still gets a message and an orderly
-    // shutdown.
     std::fprintf(stderr, "camera_gateway_probe: unhandled exception: %s\n", e.what());
   } catch (...) {
     std::fprintf(stderr, "camera_gateway_probe: unhandled unknown exception\n");

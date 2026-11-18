@@ -12,8 +12,6 @@
 
 namespace venimapping::camera {
 
-// Upstream: the response of vimbax_camera_msgs/srv/FeatureIntInfoGet. Unlike
-// the float counterpart it has no inc_available.
 struct FeatureIntInfo {
   std::int64_t min;
   std::int64_t max;

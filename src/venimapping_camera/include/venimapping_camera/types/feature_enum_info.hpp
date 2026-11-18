@@ -13,9 +13,8 @@
 
 namespace venimapping::camera {
 
-// Upstream: the response of vimbax_camera_msgs/srv/FeatureEnumInfoGet.
 struct FeatureEnumInfo {
-  std::vector<std::string> possible_values;   // every option the feature defines
+  std::vector<std::string> possible_values;
   std::vector<std::string> available_values;  // the subset selectable right now
 };
 

@@ -17,16 +17,4 @@ namespace venimapping::camera {
 template <typename T>
 using Expected = std::expected<T, Error>;
 
-// using Unexpected = std::unexpected<Error>;
-
-// [[nodiscard]] constexpr Unexpected make_driver_error(std::int32_t code, std::string text) noexcept
-// {
-//   return Unexpected{Error::from_driver(code, std::move(text))};
-// }
-
-// [[nodiscard]] constexpr Unexpected make_gateway_error(std::int32_t code, std::string text) noexcept
-// {
-//   return Unexpected{Error::from_gateway(code, std::move(text))};
-// }
-
 }  // namespace venimapping::camera

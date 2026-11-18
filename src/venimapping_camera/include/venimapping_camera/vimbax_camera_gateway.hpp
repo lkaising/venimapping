@@ -1,8 +1,7 @@
 // -----------------------------------------------------------------------------
 //  Filename: vimbax_camera_gateway.hpp
 //
-//  Purpose:  Declares the concrete ROS 2 implementation of CameraGateway over
-//            the vimbax_ros2_driver services.
+//  Purpose:  Declares the concrete ROS 2 camera gateway backed by Vimba X driver services.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
@@ -53,77 +52,32 @@
 
 namespace venimapping::camera {
 
-// Implements CameraGateway through vimbax_ros2_driver services. Service names,
-// request assembly, timeout handling, rclcpp exceptions, and driver-error
-// passthrough are hidden here; no ROS request or response type escapes through
-// the public API.
+// Calls block and must come from the thread given to bind_to_current_thread(),
+// which must not spin the node (under a single-threaded executor every call
+// would time out). The thread check catches misuse; it is not synchronization.
 //
-// The methods are synchronous and block on service futures. They are designed
-// to run on a dedicated worker thread that is not an executor thread, while a
-// ROS executor spins the node independently. If the bound thread is a
-// single-threaded executor's callback thread, a call from it prevents that
-// executor from processing the response and fails with a timeout error rather
-// than blocking indefinitely; use from executor callbacks under any other
-// executor configuration is unsupported. Calls are serialized on the bound
-// thread, and a call from any other thread -- or before binding -- fails with
-// a gateway error before any ROS interaction. That checking is misuse
-// detection, not thread synchronization; concurrent use from multiple threads
-// is unsupported.
+// A setter that times out may still have been applied; read back to be sure.
 //
-// A setter that fails with a timeout does not establish whether the camera
-// applied the requested value; a caller that needs to know shall read the
-// feature back.
-//
-// The feature module is sent to the driver as given. The driver answers a
-// module it does not know with driver error -7, and every call except
-// connection_status_get() made while it holds no camera with driver error -3.
+// The driver answers an unknown module with error -7, and any call but
+// connection_status_get() with -3 while it holds no camera.
 class VimbaXCameraGateway final : public CameraGateway {
  public:
-  // The only supported construction path: ROS client creation can throw, and
-  // the factory converts that into an Error rather than an exception.
-  //
-  // node is a non-owning, mandatory reference. The gateway does not own the
-  // node, the ROS executor, or the worker thread; the caller shall ensure the
-  // node and ROS context outlive the gateway's use of its clients.
-  //
-  // timeout bounds each call as a whole: one deadline, started when the call
-  // begins, is shared by the service-availability wait and the response wait.
-  // Thread-scheduling overhead can stretch it slightly, so it is not a hard
-  // limit.
-  //
-  // Fails with domain() == ErrorDomain::kGateway when camera_namespace is empty,
-  // when timeout is not positive, or when client construction throws (exception
-  // text preserved).
-  //
-  // Success means every service client object was constructed. It does not mean
-  // the services are currently available or that a camera is connected;
-  // availability is checked per call.
+  // node must outlive the gateway. timeout bounds each whole call, including
+  // the wait for the service. Success does not mean the services are up or a
+  // camera is connected.
   [[nodiscard]] static Expected<std::unique_ptr<VimbaXCameraGateway>> create(
       rclcpp::Node& node,
       const std::string& camera_namespace,
       std::chrono::milliseconds timeout);
 
-  // Records the calling thread as the designated worker thread. It shall be
-  // called exactly once, from that thread, before the first gateway call, and
-  // every later call shall come from that same thread. Violations are reported
-  // as a gateway error: a second bind fails, and gateway calls made before
-  // binding or from another thread fail without touching ROS.
+  // Call once, from the worker thread, before any other call.
   [[nodiscard]] Expected<void> bind_to_current_thread();
 
   // True means only that the driver currently holds a camera object.
   [[nodiscard]] Expected<bool> connection_status_get() override;
 
-  // The driver builds the status from a series of feature reads, and the call
-  // is not free of side effects on the camera: to fill trigger_info the driver
-  // selects each available TriggerSelector value in turn and leaves the
-  // selector on the last one.
-  //
-  // Where the camera lacks a feature the driver substitutes a placeholder,
-  // which is passed through as received: "N/A" for device_firmware_version,
-  // device_user_id and a trigger's mode or source, and 0.0 for frame_rate.
-  //
-  // device_firmware_version, device_user_id, interface_id and
-  // transport_layer_id are string feature values; see feature_string_get().
+  // Leaves TriggerSelector on its last value. Fields the camera lacks hold the
+  // driver's placeholders: "N/A", or 0.0 for frame_rate.
   [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
 
   [[nodiscard]] Expected<void> stream_start() override;
@@ -132,14 +86,9 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<void> settings_save(const std::string& filename) override;
   [[nodiscard]] Expected<void> settings_load(const std::string& filename) override;
 
-  // The Vimba X driver serves this list from a per-module cache built when it
-  // opens the camera, so the result is a snapshot refreshed on reopen after a
-  // reconnect rather than a live query.
   [[nodiscard]] Expected<std::vector<std::string>> features_list_get(
       FeatureModule feature_module) override;
 
-  // With an empty feature_names the driver takes the names from the same cache
-  // as features_list_get().
   [[nodiscard]] Expected<std::vector<FeatureInfo>> feature_info_query(
       const std::vector<std::string>& feature_names,
       FeatureModule feature_module) override;
@@ -170,9 +119,6 @@ class VimbaXCameraGateway final : public CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) override;
 
-  // The driver sends a string feature's value with its C terminator as a
-  // trailing NUL character. That NUL is removed here, so the value compares
-  // equal to the text it holds.
   [[nodiscard]] Expected<std::string> feature_string_get(
       const std::string& feature_name,
       FeatureModule feature_module) override;
@@ -211,11 +157,8 @@ class VimbaXCameraGateway final : public CameraGateway {
       std::int64_t value,
       FeatureModule feature_module) override;
 
-  // The driver runs the command and then polls it every 100 ms until it is
-  // done, so even an immediate command takes about 100 ms. It gives up with
-  // driver error -12 after its command_feature_timeout parameter, or after
-  // 1 second when that parameter is unset. A gateway timeout shorter than that
-  // can expire first, which leaves the outcome of the command unknown.
+  // Takes at least ~100 ms. A gateway timeout below the driver's
+  // command_feature_timeout (default 1 s) can leave the outcome unknown.
   [[nodiscard]] Expected<void> feature_command_run(
       const std::string& feature_name,
       FeatureModule feature_module) override;
@@ -255,8 +198,6 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<ResponsePtr<Service>> call(Client<Service>& client,
                                                     RequestPtr<Service> request);
 
-  // connection_status_get() alone stays on call(), because its response has no
-  // error member.
   template <typename Service>
   [[nodiscard]] Expected<ResponsePtr<Service>> call_checked(Client<Service>& client,
                                                             RequestPtr<Service> request);
@@ -264,8 +205,6 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<void> check_callable_from_this_thread() const;
 
   std::chrono::milliseconds timeout_;
-  // Default-constructed thread::id is the unbound sentinel: the standard
-  // guarantees it never equals the id of a running thread.
   std::atomic<std::thread::id> bound_thread_{std::thread::id{}};
   rclcpp::Context::SharedPtr context_;
 

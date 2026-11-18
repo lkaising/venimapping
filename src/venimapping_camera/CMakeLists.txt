@@ -1,8 +1,7 @@
 # ------------------------------------------------------------------------------
 #  Filename: CMakeLists.txt
 #
-#  Purpose:  Builds the ROS-free gateway API, the concrete Vimba X gateway
-#            library, and the temporary integration probe.
+#  Purpose:  Builds the ROS-free gateway API, the Vimba X gateway, and the temporary probe.
 #
 #  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 # ------------------------------------------------------------------------------

@@ -13,12 +13,7 @@
 
 namespace venimapping::camera {
 
-// The value type of a feature, which tells a caller which typed gateway calls
-// apply to it.
-//
-// Upstream: the uint32 data_type of vimbax_camera_msgs/msg/FeatureInfo, which
-// carries the Vimba X SDK's VmbFeatureDataType. The enumerator values are the
-// SDK's codes.
+// Enumerator values are the Vimba X SDK's VmbFeatureDataType codes.
 enum class FeatureDataType : std::uint8_t {
   kUnknown = 0,
   kInt = 1,
@@ -31,13 +26,8 @@ enum class FeatureDataType : std::uint8_t {
   kNone = 8,  // a feature that holds no data
 };
 
-// The static access flags of a feature. read and write say whether the
-// feature can ever be read or written; whether it can be right now comes from
-// CameraGateway::feature_access_mode_get().
-//
-// Upstream: vimbax_camera_msgs/msg/FeatureFlags, which prefixes every field
-// with flag_. The driver reports correct values only from the fork tag
-// v1.0.1-beta1-flags-fix on; v1.0.1-beta1 fills them from the data type.
+// Static flags; for current access use CameraGateway::feature_access_mode_get().
+// Correct only from driver fork tag v1.0.1-beta1-flags-fix on.
 struct FeatureFlags {
   bool none;
   bool read;
@@ -46,9 +36,6 @@ struct FeatureFlags {
   bool modify_write;  // a write can store a different value than the one sent
 };
 
-// What a feature is, as opposed to its current value or access state.
-//
-// Upstream: vimbax_camera_msgs/msg/FeatureInfo.
 struct FeatureInfo {
   std::string name;
   std::string category;
@@ -57,7 +44,7 @@ struct FeatureInfo {
   std::string unit;
   FeatureDataType data_type;
   FeatureFlags flags;
-  std::uint32_t polling_time;  // the SDK's predefined polling time for a volatile feature
+  std::uint32_t polling_time;
 };
 
 }  // namespace venimapping::camera

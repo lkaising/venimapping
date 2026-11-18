@@ -10,11 +10,10 @@
 
 namespace venimapping::camera {
 
-// Upstream: the response of vimbax_camera_msgs/srv/FeatureFloatInfoGet.
 struct FeatureFloatInfo {
   double min;
   double max;
-  double inc;  // meaningful only when inc_available is true
+  double inc;
   bool inc_available;
 };
 

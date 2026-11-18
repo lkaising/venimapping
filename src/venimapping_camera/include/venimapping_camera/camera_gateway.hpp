@@ -23,23 +23,9 @@
 
 namespace venimapping::camera {
 
-// The primitive camera operations available to VeniMapping layers.
-//
-// Implementations report metadata and current state; they do not decide how the
-// application responds. Clamping, fallback selection, retry, and configuration
-// ordering belong to future layers. A failure the driver reports is returned
-// verbatim, neither translated nor classified.
-//
-// Every feature call names the module it addresses, and there is no default
-// module: a feature of one module is unknown to the others. The typed calls do
-// not check that the feature has that type; a mismatch is the driver's to
-// report.
-//
-// Setters request a value and report only success or failure: no automatic
-// readback, and no local validation against feature metadata.
-//
-// Methods are intentionally non-const: they perform I/O against external
-// mutable state, and concrete implementations mutate internal client state.
+// Primitive camera operations with no policy: no clamping, fallback, retry,
+// readback, or validation (not even of a feature's type). Driver failures are
+// returned verbatim.
 class CameraGateway {
  public:
   CameraGateway(const CameraGateway&) = delete;
@@ -48,34 +34,22 @@ class CameraGateway {
   CameraGateway& operator=(CameraGateway&&) = delete;
   virtual ~CameraGateway() = default;
 
-  // Answers connectivity as a value: false is a successful negative answer. It
-  // reports the driver's connection state and is not a precondition for any
-  // other call.
   [[nodiscard]] virtual Expected<bool> connection_status_get() = 0;
 
   [[nodiscard]] virtual Expected<CameraStatus> camera_status_get() = 0;
 
-  // Start and stop image acquisition. The images themselves are not part of
-  // this contract.
   [[nodiscard]] virtual Expected<void> stream_start() = 0;
   [[nodiscard]] virtual Expected<void> stream_stop() = 0;
 
-  // Save the camera's feature values to a file, or load them from one.
-  // filename is a path on the machine that runs the driver, which need not be
-  // the machine that runs the gateway.
+  // filename is a path on the driver's machine, which may not be this one.
   [[nodiscard]] virtual Expected<void> settings_save(const std::string& filename) = 0;
   [[nodiscard]] virtual Expected<void> settings_load(const std::string& filename) = 0;
 
-  // Returns the names of the features the module defines. This is not an
-  // availability check: a listed name may be currently unreadable or
-  // unwritable, and current access state comes from feature_access_mode_get().
-  // An empty list on success is a valid answer, not an error.
+  // Lists features whether or not they are accessible right now.
   [[nodiscard]] virtual Expected<std::vector<std::string>> features_list_get(
       FeatureModule feature_module) = 0;
 
-  // Returns the static description of each named feature, in request order. An
-  // empty feature_names asks for every feature of the module. One unknown name
-  // fails the whole call.
+  // An empty feature_names means every feature; one unknown name fails the call.
   [[nodiscard]] virtual Expected<std::vector<FeatureInfo>> feature_info_query(
       const std::vector<std::string>& feature_names,
       FeatureModule feature_module) = 0;
@@ -113,7 +87,7 @@ class CameraGateway {
       const std::string& feature_name,
       const std::string& value,
       FeatureModule feature_module) = 0;
-  // Returns the maximum length of the feature's value.
+  // Maximum length of the value.
   [[nodiscard]] virtual Expected<std::int64_t> feature_string_info_get(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
@@ -126,7 +100,6 @@ class CameraGateway {
       bool value,
       FeatureModule feature_module) = 0;
 
-  // An enum feature's value is the name of the selected option.
   [[nodiscard]] virtual Expected<std::string> feature_enum_get(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
@@ -138,8 +111,6 @@ class CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
 
-  // Convert between an option's name and its integer value. Neither call
-  // changes the feature.
   [[nodiscard]] virtual Expected<std::int64_t> feature_enum_as_int_get(
       const std::string& feature_name,
       const std::string& option,
@@ -149,8 +120,6 @@ class CameraGateway {
       std::int64_t value,
       FeatureModule feature_module) = 0;
 
-  // Runs a command feature. An implementation may wait for the command to
-  // finish before it answers, so this call can take far longer than a getter.
   [[nodiscard]] virtual Expected<void> feature_command_run(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
@@ -158,7 +127,6 @@ class CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
 
-  // A raw feature's value is an opaque block of bytes.
   [[nodiscard]] virtual Expected<std::vector<std::uint8_t>> feature_raw_get(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
@@ -166,7 +134,7 @@ class CameraGateway {
       const std::string& feature_name,
       const std::vector<std::uint8_t>& buffer,
       FeatureModule feature_module) = 0;
-  // Returns the maximum length of the feature's value in bytes.
+  // Maximum length of the value, in bytes.
   [[nodiscard]] virtual Expected<std::int64_t> feature_raw_info_get(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;

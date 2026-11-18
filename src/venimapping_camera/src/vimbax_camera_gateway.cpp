@@ -66,9 +66,6 @@ template <typename Service>
   return node.create_client<Service>(std::format("{}/{}", camera_namespace, leaf));
 }
 
-// FeatureModule's enumerators are the wire constants, so a request carries the
-// value unchanged. A value outside the enumerators is not filtered here; the
-// driver rejects it.
 static_assert(std::to_underlying(FeatureModule::kRemoteDevice) == WireFeatureModule::MODULE_REMOTE_DEVICE);
 static_assert(std::to_underlying(FeatureModule::kSystem) == WireFeatureModule::MODULE_SYSTEM);
 static_assert(std::to_underlying(FeatureModule::kInterface) == WireFeatureModule::MODULE_INTERFACE);
@@ -92,10 +89,7 @@ template <typename Service>
   return request;
 }
 
-// The converters below move the strings out of the response they are given.
-
-// The driver copies a string feature's value with its C terminator included,
-// so the value arrives with a trailing NUL that is not part of it.
+// Upstream defect (docs/todo.md): string values arrive with their C terminator.
 [[nodiscard]] std::string without_terminator(std::string& wire)
 {
   while (wire.ends_with('\0')) {
@@ -118,7 +112,6 @@ template <typename Service>
   return trigger_info;
 }
 
-// The driver leaves an address empty when the camera has none.
 [[nodiscard]] std::optional<std::string> to_optional_address(std::string& wire)
 {
   if (wire.empty()) {
@@ -127,9 +120,6 @@ template <typename Service>
   return std::move(wire);
 }
 
-// The wire field carries the SDK's VmbFeatureDataType, whose codes are the
-// enumerator values. A code past the last enumerator is reported as kUnknown,
-// the SDK's own name for a type it cannot identify.
 [[nodiscard]] constexpr FeatureDataType to_feature_data_type(std::uint32_t wire) noexcept
 {
   if (wire > std::to_underlying(FeatureDataType::kNone)) {
@@ -755,7 +745,6 @@ Expected<std::vector<std::uint8_t>> VimbaXCameraGateway::feature_raw_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureRawGet;
-  // buffer_size is not read: the driver sets it to buffer.size().
   return call_checked<ServiceT>(
              *feature_raw_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))

@@ -15,8 +15,7 @@
 
 namespace venimapping::camera::detail {
 
-// Identifies which gateway code path produced a failure, for logs and tests.
-// Not a taxonomy and not API: classification is Error::domain() only.
+// For logs and tests only; callers classify errors by Error::domain().
 enum class GatewayDiagnostic : std::int32_t {  // NOLINT(performance-enum-size): int32_t base matches the Error::code() contract
   kServiceUnavailable = 1,
   kResponseTimeout = 2,

@@ -10,8 +10,8 @@ Ideas parked for later. None of these are blocking.
   write `return detail::gateway_error(...);` without wrapping it in `std::unexpected(...)`.
   - Mark both helpers `[[nodiscard]]`. `std::unexpected<Error>` does not
     inherit `Error`'s `[[nodiscard]]`.
-  - Delete the commented-out `make_driver_error` / `make_gateway_error` block in
-    `types/expected.hpp` instead of moving it. It takes raw `int32_t` codes, which would
+  - Don't revive the old `make_driver_error` / `make_gateway_error` helpers (removed from
+    `types/expected.hpp`; see git history). They took raw `int32_t` codes, which would
     lose the typed `GatewayDiagnostic`.
   - Watch out for lambda return types in `and_then` / `or_else` / `transform_error`.
 
