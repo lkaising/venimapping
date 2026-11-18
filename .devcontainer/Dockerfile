@@ -100,7 +100,7 @@ USER dev
 
 ARG DRIVER_BOOTSTRAP_COMMIT=c1c1ab2e90681cbe1da1bae221a2140aec41a9e5
 ARG VIMBAX_DRIVER_REPO_URL=https://github.com/lkaising/vimbax_ros2_driver.git
-ARG VIMBAX_DRIVER_REF=v1.0.1-beta1-flags-fix
+ARG VIMBAX_DRIVER_REF=v1.0.1-beta1-venimapping.1
 
 RUN git clone \
         https://github.com/lkaising/vimbax-ros2-driver-bootstrap.git \
