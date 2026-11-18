@@ -89,15 +89,6 @@ template <typename Service>
   return request;
 }
 
-// Upstream defect (docs/todo.md): string values arrive with their C terminator.
-[[nodiscard]] std::string without_terminator(std::string& wire)
-{
-  while (wire.ends_with('\0')) {
-    wire.pop_back();
-  }
-  return std::move(wire);
-}
-
 [[nodiscard]] std::vector<TriggerInfo> to_trigger_info(std::vector<WireTriggerInfo>& wire)
 {
   std::vector<TriggerInfo> trigger_info;
@@ -426,12 +417,12 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
         return CameraStatus{
             .display_name = std::move(response->display_name),
             .model_name = std::move(response->model_name),
-            .device_firmware_version = without_terminator(response->device_firmware_version),
+            .device_firmware_version = std::move(response->device_firmware_version),
             .device_id = std::move(response->device_id),
-            .device_user_id = without_terminator(response->device_user_id),
+            .device_user_id = std::move(response->device_user_id),
             .device_serial_number = std::move(response->device_serial_number),
-            .interface_id = without_terminator(response->interface_id),
-            .transport_layer_id = without_terminator(response->transport_layer_id),
+            .interface_id = std::move(response->interface_id),
+            .transport_layer_id = std::move(response->transport_layer_id),
             .streaming = response->streaming,
             .width = response->width,
             .height = response->height,
@@ -606,7 +597,7 @@ Expected<std::string> VimbaXCameraGateway::feature_string_get(
   return call_checked<ServiceT>(
              *feature_string_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
-      .transform([](const auto& response) { return without_terminator(response->value); });
+      .transform([](const auto& response) { return std::move(response->value); });
 }
 
 Expected<void> VimbaXCameraGateway::feature_string_set(

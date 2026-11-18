@@ -36,7 +36,7 @@ builds, fixes both. Revisit each one if upstream fixes it.
   than the feature's access flags.
   - Until then, current access state comes from `feature_access_mode_get`.
 
-- [ ] **Remove `without_terminator` once upstream stops sending the C terminator.**
+- [x] **Remove `without_terminator` once upstream stops sending the C terminator.**
   `VmbCAPI::feature_string_get` in `vimbax_camera/src/loader/vmbc_api.cpp` (line 323)
   builds its result from `size_filled` bytes, a count that includes the terminating
   NUL, so every string feature value reaches a C++ client one character too long. The
