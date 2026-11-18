@@ -31,11 +31,24 @@ enum class FeatureDataType : std::uint8_t {
   kNone = 8,  // a feature that holds no data
 };
 
+// The static access flags of a feature. read and write say whether the
+// feature can ever be read or written; whether it can be right now comes from
+// CameraGateway::feature_access_mode_get().
+//
+// Upstream: vimbax_camera_msgs/msg/FeatureFlags, which prefixes every field
+// with flag_. The driver reports correct values only from the fork tag
+// v1.0.1-beta1-flags-fix on; v1.0.1-beta1 fills them from the data type.
+struct FeatureFlags {
+  bool none;
+  bool read;
+  bool write;
+  bool is_volatile;   // the value can change without a write
+  bool modify_write;  // a write can store a different value than the one sent
+};
+
 // What a feature is, as opposed to its current value or access state.
 //
-// Upstream: vimbax_camera_msgs/msg/FeatureInfo, without its flags field.
-// The driver fills those flags from the wrong SDK field, so they are left
-// out; current access state comes from CameraGateway::feature_access_mode_get().
+// Upstream: vimbax_camera_msgs/msg/FeatureInfo.
 struct FeatureInfo {
   std::string name;
   std::string category;
@@ -43,6 +56,7 @@ struct FeatureInfo {
   std::string sfnc_namespace;
   std::string unit;
   FeatureDataType data_type;
+  FeatureFlags flags;
   std::uint32_t polling_time;  // the SDK's predefined polling time for a volatile feature
 };
 

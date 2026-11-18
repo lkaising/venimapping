@@ -26,7 +26,7 @@ Ideas parked for later. None of these are blocking.
 Defects in `vimbax_ros2_driver` at `v1.0.1-beta1` (`296bdf6`) that the camera gateway
 works around. Revisit each one if upstream fixes it.
 
-- [ ] **Add `FeatureFlags` to `FeatureInfo` once upstream reports them correctly.**
+- [x] **Add `FeatureFlags` to `FeatureInfo` once upstream reports them correctly.**
   `types/feature_info.hpp` leaves out the `flags` field of
   `vimbax_camera_msgs/msg/FeatureInfo` because its values are wrong.
   `VimbaXCamera::feature_info_query_list` in `vimbax_camera/src/vimbax_camera.cpp`

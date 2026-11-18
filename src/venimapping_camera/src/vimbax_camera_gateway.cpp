@@ -150,6 +150,13 @@ template <typename Service>
         .sfnc_namespace = std::move(entry.sfnc_namespace),
         .unit = std::move(entry.unit),
         .data_type = to_feature_data_type(entry.data_type),
+        .flags = FeatureFlags{
+            .none = entry.flags.flag_none,
+            .read = entry.flags.flag_read,
+            .write = entry.flags.flag_write,
+            .is_volatile = entry.flags.flag_volatile,
+            .modify_write = entry.flags.flag_modify_write,
+        },
         .polling_time = entry.polling_time,
     });
   }

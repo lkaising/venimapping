@@ -38,6 +38,7 @@ using venimapping::camera::Error;
 using venimapping::camera::ErrorDomain;
 using venimapping::camera::Expected;
 using venimapping::camera::FeatureDataType;
+using venimapping::camera::FeatureFlags;
 using venimapping::camera::FeatureFloatInfo;
 using venimapping::camera::FeatureInfo;
 using venimapping::camera::FeatureModule;
@@ -54,6 +55,13 @@ std::string describe(const Error& error)
 std::string describe(bool value)
 {
   return value ? "true" : "false";
+}
+
+std::string describe(const FeatureFlags& flags)
+{
+  return "none=" + describe(flags.none) + " read=" + describe(flags.read) +
+         " write=" + describe(flags.write) + " volatile=" + describe(flags.is_volatile) +
+         " modify_write=" + describe(flags.modify_write);
 }
 
 std::string describe(FeatureDataType data_type)
@@ -335,6 +343,7 @@ std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOp
                 " display_name=" + info.display_name +
                 " sfnc_namespace=" + info.sfnc_namespace +
                 " unit=" + info.unit +
+                " flags={" + describe(info.flags) + "}" +
                 " polling_time=" + std::to_string(info.polling_time) + "]";
     }
     if (as_requested) {
@@ -390,12 +399,29 @@ bool readable_now(CameraGateway& camera, const std::string& feature, const std::
   return true;
 }
 
-void check_access_mode(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+// Also checks that the feature's static flags allow what its live access
+// mode allows, which the driver gets wrong before v1.0.1-beta1-flags-fix.
+void check_access_mode(CameraGateway& camera, const ProbeOptions& options,
+                       const std::vector<FeatureInfo>& features, ProbeReport& report)
 {
   const std::string check = "FeatureAccessModeGet(" + options.float_feature + ")";
   const auto access = camera.feature_access_mode_get(options.float_feature, FeatureModule::kRemoteDevice);
-  if (succeeded(access, check, report)) {
-    report.pass(check, "readable=" + describe(access->readable) + " writable=" + describe(access->writable));
+  if (!succeeded(access, check, report)) {
+    return;
+  }
+  report.pass(check, "readable=" + describe(access->readable) + " writable=" + describe(access->writable));
+
+  const std::string flags_check = check + "/flags";
+  const auto info = std::ranges::find(features, options.float_feature, &FeatureInfo::name);
+  if (info == features.end()) {
+    report.skip(flags_check, "feature is not in the FeatureInfoQuery/all result");
+    return;
+  }
+  const std::string detail = "static " + describe(info->flags);
+  if ((access->readable && !info->flags.read) || (access->writable && !info->flags.write)) {
+    report.fail(flags_check, "live access mode is not allowed by the " + detail);
+  } else {
+    report.pass(flags_check, detail);
   }
 }
 
@@ -553,7 +579,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
       [&] { check_other_modules(camera, report); },
       [&] { check_driver_error_passthrough(camera, options, report); },
       [&] { features = check_feature_info(camera, options, report); },
-      [&] { check_access_mode(camera, options, report); },
+      [&] { check_access_mode(camera, options, features, report); },
       [&] { check_int_feature(camera, options, report); },
       [&] { check_float_feature(camera, options, report); },
       [&] { check_string_feature(camera, options, report); },

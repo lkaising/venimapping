@@ -99,6 +99,8 @@ RUN /tmp/vimbax-sdk-bootstrap/bootstrap-vimbax-sdk verify \
 USER dev
 
 ARG DRIVER_BOOTSTRAP_COMMIT=c1c1ab2e90681cbe1da1bae221a2140aec41a9e5
+ARG VIMBAX_DRIVER_REPO_URL=https://github.com/lkaising/vimbax_ros2_driver.git
+ARG VIMBAX_DRIVER_REF=v1.0.1-beta1-flags-fix
 
 RUN git clone \
         https://github.com/lkaising/vimbax-ros2-driver-bootstrap.git \
@@ -111,11 +113,12 @@ RUN git clone \
        -u ROS_VERSION \
        -u AMENT_PREFIX_PATH \
        -u COLCON_PREFIX_PATH \
+       REPO_URL="$VIMBAX_DRIVER_REPO_URL" \
        /tmp/vimbax-ros2-driver-bootstrap/bootstrap-vimbax-ros2-driver \
         install \
         --yes \
         --ros-underlay /opt/ros/jazzy \
-        --ref v1.0.1-beta1
+        --ref "$VIMBAX_DRIVER_REF"
 
 # Load ROS 2, the Vimba X driver and the project overlay (scripts/env.sh) in
 # every interactive Bash shell of the dev user. /etc/bash.bashrc returns early
