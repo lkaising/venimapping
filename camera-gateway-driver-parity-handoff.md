@@ -70,7 +70,7 @@ Follow these; they are deliberate.
 ## 4. Upstream reference
 
 - Repository: `https://github.com/alliedvision/vimbax_ros2_driver`
-- Commit: `296bdf68ca180c033e2a8d4a1f08d312cfdb2acd`. This is also tag `v1.0.1-beta1`, which is the exact ref the project's dev container installs, so the interface below is the one the code builds against.
+- Commit: `296bdf68ca180c033e2a8d4a1f08d312cfdb2acd`. This is also tag `v1.0.1-beta1`. The project's dev container installs tag `v1.0.1-beta1-venimapping.1` from the fork `https://github.com/lkaising/vimbax_ros2_driver`. That tag adds two fixes on top of this commit and leaves the message and service definitions unchanged, so the interface below is the one the code builds against.
 - Clone it somewhere outside the project and read it. The files that matter:
   - `vimbax_camera_msgs/msg/*.msg` and `vimbax_camera_msgs/srv/*.srv`: the wire definitions.
   - `vimbax_camera/src/vimbax_camera_node.cpp`: where each service is registered and how each response is filled.

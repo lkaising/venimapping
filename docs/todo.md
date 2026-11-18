@@ -24,7 +24,8 @@ Ideas parked for later. None of these are blocking.
 ## Upstream driver
 
 Defects in `vimbax_ros2_driver` at `v1.0.1-beta1` (`296bdf6`) that the camera gateway
-works around. Revisit each one if upstream fixes it.
+works around. Driver fork tag `v1.0.1-beta1-venimapping.1`, which the project now
+builds, fixes both. Revisit each one if upstream fixes it.
 
 - [x] **Add `FeatureFlags` to `FeatureInfo` once upstream reports them correctly.**
   `types/feature_info.hpp` leaves out the `flags` field of

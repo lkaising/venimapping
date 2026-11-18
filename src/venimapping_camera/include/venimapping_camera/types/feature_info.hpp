@@ -27,7 +27,7 @@ enum class FeatureDataType : std::uint8_t {
 };
 
 // Static flags; for current access use CameraGateway::feature_access_mode_get().
-// Correct only from driver fork tag v1.0.1-beta1-flags-fix on.
+// Correct only from driver fork tag v1.0.1-beta1-venimapping.1 on.
 struct FeatureFlags {
   bool none;
   bool read;

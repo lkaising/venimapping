@@ -374,7 +374,7 @@ bool readable_now(CameraGateway& camera, const std::string& feature, const std::
 }
 
 // Also checks that the feature's static flags allow what its live access
-// mode allows, which the driver gets wrong before v1.0.1-beta1-flags-fix.
+// mode allows, which the driver gets wrong before v1.0.1-beta1-venimapping.1.
 void check_access_mode(CameraGateway& camera, const ProbeOptions& options,
                        const std::vector<FeatureInfo>& features, ProbeReport& report)
 {
