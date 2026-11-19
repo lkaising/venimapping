@@ -4,6 +4,38 @@ Ideas parked for later. None of these are blocking.
 
 ## Camera gateway
 
+- [ ] **Add dedicated types for collection results.**
+  Give each collection its own type and header. Decide the names and
+  representations when revisiting the API.
+  - `features_list_get()` returns feature names (`std::vector<std::string>`).
+  - `feature_info_query()` returns feature metadata (`std::vector<FeatureInfo>`).
+  - `feature_raw_get()` returns raw feature bytes (`std::vector<std::uint8_t>`).
+
+- [ ] **Review gateway method names.**
+  Use shorter names for the status queries and make the feature-info list result
+  explicit. Consider these renames.
+  - `connection_status_get()` → `connection_status()`
+  - `camera_status_get()` → `camera_status()`
+  - `feature_info_query()` → `feature_info_list_get()`
+  - Also consider `features_list_get()` → `feature_list_get()` to match the
+    naming pattern for list results.
+
+- [ ] **Shorten the response converter signatures.**
+  Reduce the repeated `vimbax_camera_msgs::srv::` qualification in
+  `vimbax_response_conversion.hpp` and `.cpp`. Compare a namespace alias with
+  aliases for individual response types, and keep any alias narrowly scoped.
+
+- [ ] **Consider moving the file-local gateway helpers.**
+  Explore moving the client creation, request construction, and wait helpers
+  from the unnamed namespace in `vimbax_camera_gateway.cpp` into one new private
+  `.hpp`/`.cpp` pair under `src/gateway_support/`.
+
+- [ ] **Trim standard-library includes bottom-up.**
+  Work from the deepest headers in the include graph toward the files that use
+  them. Remove direct standard-library includes wherever existing dependencies,
+  including ROS 2 headers, already supply them. Use a full-project build to
+  verify the removals. Consider scripting the process so it can be repeated.
+
 - [ ] **Explore introducing an `Unexpected` type.**
   Add `using Unexpected = std::unexpected<Error>;` to `types/expected.hpp` and have
   `detail::gateway_error` and `detail::driver_error` return it, so call sites can
@@ -20,6 +52,26 @@ Ideas parked for later. None of these are blocking.
   internal callers already guarantee this, but the factories are public, so test
   fakes and future layers could still pass 0. If they are removed, also drop
   `#include <cassert>`.
+
+### Stretch goals
+
+- [ ] **Revisit the names of `call_checked()` and `call()`.**
+  Find a name that makes it clear that `call_checked()` also inspects the
+  driver's error field. Revisit `call()` if naming the pair together helps
+  clarify their roles.
+
+- [ ] **Explore gateway helper objects.**
+  Consider a shared `ServiceCalls` helper for `call()` and `call_checked()`,
+  with separate helpers for groups of camera operations. The concrete gateway
+  would construct the helpers and forward its public methods to them. The
+  operation groups and where threading belongs are open questions.
+
+- [ ] **Explore simpler gateway startup and thread ownership.**
+  The probe starts the ROS executor on a separate thread, creates the gateway,
+  and calls `bind_to_current_thread()` before using it through `CameraGateway&`.
+  Explore reducing that setup by having one owner per camera manage threading
+  and coordinate access. Shared handles and a queue to serialize requests from
+  multiple threads are possibilities. This is the largest stretch goal.
 
 ## Upstream driver
 
@@ -44,50 +96,3 @@ builds, fixes both. Revisit each one if upstream fixes it.
   the driver reads the same way (`device_firmware_version`, `device_user_id`,
   `interface_id`, `transport_layer_id`).
   - `ros2 service call` does not show the NUL; a C++ client does.
-
-1. Add types for:
-   Expected<std::vector<std::string>> features_list_get();
-   std::vector<std::string>
-
-   Expected<std::vector<FeatureInfo>> feature_info_query();
-   std::vector<FeatureInfo>
-
-   Expected<std::vector<std::uint8_t>> feature_raw_get();
-   std::vector<std::uint8_t>
-
-2. Rename function for:
-   Expected<bool> connection_status_get() -> Expected<bool> connection_status()
-   Expected<CameraStatus> camera_status_get() -> Expected<CameraStatus> camera_status()
-   Expected<std::vector<FeatureInfo>> feature_info_query() -> Expected<std::vector<FeatureInfo>> feature_info_list_get()
-
-   Any others?
-
-3. For `vimbax_response_conversion.hpp/cpp` tighten/shorten the namespacing of the arguments for the exposed functions. Function containing `vimbax_camera_msgs::srv::`
-   `vimbax_camera_msgs::srv::` -> `something::` not sure on the name yet. Done via `namespace something = vimbax_camera_msgs::srv` or via alias. Not sure the correct choice here.
-   Want to be careful about polluting the `venimapping::camera::gateway_support` namespace though.
-
-4. Consider moving the nameless namespace inside of `vimbax_camera_gateway.cpp` to its own file/s inside of `/gateway_support`
-
-5. Figure out a way to remove the extra or redunant C++ Standard Library headers inside of all of the files.
-   Do this is a systematic way. Somehow. Where if you think of the project and the files includes connection tree, standard includes are only added when needed to compile,
-   and at the furthest child "node" out in the include dependancy tree. Maybe write a script that can do this sort of recursive check for me automatically.
-
-Stretch Goals
-
-6. Maybe find a better name for `call_checked()`. Not the most clear. Maybe `call()` too?
-
-7. Break up or organize the VimbaxCameraGateway into having helper objects. Where there might be a `ServiceCalls` helper object that handles `call` and `call_checked` and maybe
-   threading too? And on top of that, there also being a set (number of helpers not sure yet) operation helpers that share `ServiceCalls` and these operation helpers would hold the
-   method implementations grouped accordingly. And vimbax_camera_gateway.cpp contains construction and the public methods that forward to the helpers.
-
-8. Come up with a more rebust CameraGateway object initilization "method". I.E. how currerntly, to use and create the class you must.
-     - Spin up a thread.
-     - Call `VimbaXCameraGateway::create()` scope outside the executor thread.
-     - Run a bind / bind check via `bind_to_current_thread()`
-     - Move the created object to a unique pointer `gateway`
-     - Assign a `CameraGateway` address to the object on the heap.
-   To me, while it makes sense, there seems to be a lot of friction here.
-   Furthermore, the threading limitations comes off as primitive and restrictive. It would be nice for all of the threading logic and things of that nature to be handle automatically.
-   Where creation of a CameraGateway/VimbaxCameraGateway object handles the threading for you, you do not need to care about other threadings going on, since CameraGateway is in its
-   own thread land. And there is really only one object that owns one thread (shared reseource) since you do not want to create to different objects trying to talk to one camera. Or
-   additional objects created simply point to the true first object, or something like that. Also is there are two threads, one address in each trying to call the camera, some sort of queing so that multithreads stay happy.
