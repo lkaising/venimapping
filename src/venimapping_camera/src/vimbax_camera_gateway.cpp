@@ -16,7 +16,6 @@
 #include <format>
 #include <future>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -24,11 +23,10 @@
 #include <vector>
 
 #include "rclcpp/utilities.hpp"
-#include "vimbax_camera_msgs/msg/feature_info.hpp"
 #include "vimbax_camera_msgs/msg/feature_module.hpp"
-#include "vimbax_camera_msgs/msg/trigger_info.hpp"
 
-#include "detail/gateway_util.hpp"
+#include "gateway_support/gateway_errors.hpp"
+#include "gateway_support/vimbax_response_conversion.hpp"
 
 namespace venimapping::camera {
 
@@ -91,61 +89,6 @@ template <typename Service>
   return request;
 }
 
-[[nodiscard]] std::vector<TriggerInfo> to_trigger_info(std::vector<vimbax_msgs::TriggerInfo>& wire)
-{
-  std::vector<TriggerInfo> trigger_info;
-  trigger_info.reserve(wire.size());
-  for (auto& entry : wire) {
-    trigger_info.push_back(TriggerInfo{
-        .selector = std::move(entry.selector),
-        .mode = std::move(entry.mode),
-        .source = std::move(entry.source),
-    });
-  }
-  return trigger_info;
-}
-
-[[nodiscard]] std::optional<std::string> to_optional_address(std::string& wire)
-{
-  if (wire.empty()) {
-    return std::nullopt;
-  }
-  return std::move(wire);
-}
-
-[[nodiscard]] constexpr FeatureDataType to_feature_data_type(std::uint32_t wire) noexcept
-{
-  if (wire > std::to_underlying(FeatureDataType::kNone)) {
-    return FeatureDataType::kUnknown;
-  }
-  return static_cast<FeatureDataType>(wire);
-}
-
-[[nodiscard]] std::vector<FeatureInfo> to_feature_info(std::vector<vimbax_msgs::FeatureInfo>& wire)
-{
-  std::vector<FeatureInfo> feature_info;
-  feature_info.reserve(wire.size());
-  for (auto& entry : wire) {
-    feature_info.push_back(FeatureInfo{
-        .name = std::move(entry.name),
-        .category = std::move(entry.category),
-        .display_name = std::move(entry.display_name),
-        .sfnc_namespace = std::move(entry.sfnc_namespace),
-        .unit = std::move(entry.unit),
-        .data_type = to_feature_data_type(entry.data_type),
-        .flags = FeatureFlags{
-            .none = entry.flags.flag_none,
-            .read = entry.flags.flag_read,
-            .write = entry.flags.flag_write,
-            .is_volatile = entry.flags.flag_volatile,
-            .modify_write = entry.flags.flag_modify_write,
-        },
-        .polling_time = entry.polling_time,
-    });
-  }
-  return feature_info;
-}
-
 template <typename Service>
 [[nodiscard]] Expected<void> wait_for_service(Client<Service>& client,
                                               const ContextPtr& context,
@@ -158,13 +101,13 @@ template <typename Service>
   }
 
   if (!rclcpp::ok(context)) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kServiceUnavailable,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kServiceUnavailable,
         std::format("service {} unavailable: context shut down while waiting", service_name)));
   }
 
-  return std::unexpected(detail::gateway_error(
-      detail::GatewayDiagnostic::kServiceUnavailable,
+  return std::unexpected(gateway_support::gateway_error(
+      gateway_support::GatewayDiagnostic::kServiceUnavailable,
       std::format("service {} unavailable: call deadline reached", service_name)));
 }
 
@@ -180,8 +123,8 @@ template <typename Service, typename Future>
 
   client.remove_pending_request(future);
 
-  return std::unexpected(detail::gateway_error(
-      detail::GatewayDiagnostic::kResponseTimeout,
+  return std::unexpected(gateway_support::gateway_error(
+      gateway_support::GatewayDiagnostic::kResponseTimeout,
       std::format("timeout on {}: call deadline reached", service_name)));
 }
 
@@ -193,14 +136,14 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::create(
     std::chrono::milliseconds timeout)
 {
   if (camera_namespace.empty()) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kConstructionFailed,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kConstructionFailed,
         "gateway construction failed: camera_namespace is empty"));
   }
 
   if (timeout <= std::chrono::milliseconds::zero()) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kConstructionFailed,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kConstructionFailed,
         std::format(
             "gateway construction failed: timeout is not positive ({} ms)",
             timeout.count())));
@@ -210,12 +153,12 @@ Expected<std::unique_ptr<VimbaXCameraGateway>> VimbaXCameraGateway::create(
     return std::unique_ptr<VimbaXCameraGateway>{
         new VimbaXCameraGateway{node, camera_namespace, timeout}};
   } catch (const std::exception& e) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kConstructionFailed,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kConstructionFailed,
         std::format("gateway construction failed: {}", e.what())));
   } catch (...) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kConstructionFailed,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kConstructionFailed,
         "gateway construction failed: unknown exception"));
   }
 }
@@ -322,8 +265,8 @@ Expected<void> VimbaXCameraGateway::bind_to_current_thread()
 {
   std::thread::id unbound{};
   if (!bound_thread_.compare_exchange_strong(unbound, std::this_thread::get_id())) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kThreadContractViolation,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kThreadContractViolation,
         "bind_to_current_thread() called more than once"));
   }
 
@@ -336,14 +279,14 @@ Expected<void> VimbaXCameraGateway::check_callable_from_this_thread() const
   const std::thread::id current = std::this_thread::get_id();
 
   if (bound == std::thread::id{}) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kThreadContractViolation,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kThreadContractViolation,
         "gateway call before bind_to_current_thread()"));
   }
 
   if (bound != current) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kThreadContractViolation,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kThreadContractViolation,
         "gateway call from a thread other than the bound worker"));
   }
 
@@ -373,12 +316,12 @@ auto VimbaXCameraGateway::call(Client<Service>& client, RequestPtr<Service> requ
 
     return wait_for_response<Service>(client, future, deadline, service_name);
   } catch (const std::exception& e) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kRosClientFailure,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kRosClientFailure,
         std::format("rclcpp client failure on {}: {}", service_name, e.what())));
   } catch (...) {
-    return std::unexpected(detail::gateway_error(
-        detail::GatewayDiagnostic::kRosClientFailure,
+    return std::unexpected(gateway_support::gateway_error(
+        gateway_support::GatewayDiagnostic::kRosClientFailure,
         std::format("rclcpp client failure on {}: unknown exception", service_name)));
   }
 }
@@ -394,7 +337,7 @@ auto VimbaXCameraGateway::call_checked(Client<Service>& client, RequestPtr<Servi
 
   const auto& driver = (*response)->error;
   if (driver.code != 0) {
-    return std::unexpected(detail::driver_error(driver.code, driver.text));
+    return std::unexpected(gateway_support::driver_error(driver.code, driver.text));
   }
 
   return response;
@@ -416,24 +359,7 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
              *status_client_,
              std::make_shared<ServiceT::Request>())
       .transform([](const auto& response) {
-        return CameraStatus{
-            .display_name = std::move(response->display_name),
-            .model_name = std::move(response->model_name),
-            .device_firmware_version = std::move(response->device_firmware_version),
-            .device_id = std::move(response->device_id),
-            .device_user_id = std::move(response->device_user_id),
-            .device_serial_number = std::move(response->device_serial_number),
-            .interface_id = std::move(response->interface_id),
-            .transport_layer_id = std::move(response->transport_layer_id),
-            .streaming = response->streaming,
-            .width = response->width,
-            .height = response->height,
-            .frame_rate = response->frame_rate,
-            .pixel_format = std::move(response->pixel_format),
-            .trigger_info = to_trigger_info(response->trigger_info),
-            .ip_address = to_optional_address(response->ip_address),
-            .mac_address = to_optional_address(response->mac_address),
-        };
+        return gateway_support::to_camera_status(std::move(*response));
       });
 }
 
@@ -491,7 +417,9 @@ Expected<std::vector<FeatureInfo>> VimbaXCameraGateway::feature_info_query(
   auto request = make_module_request<ServiceT>(feature_module);
   request->feature_names = feature_names;
   return call_checked<ServiceT>(*feature_info_query_client_, std::move(request))
-      .transform([](const auto& response) { return to_feature_info(response->feature_info); });
+      .transform([](const auto& response) {
+        return gateway_support::to_feature_info_list(std::move(*response));
+      });
 }
 
 Expected<FeatureAccessMode> VimbaXCameraGateway::feature_access_mode_get(

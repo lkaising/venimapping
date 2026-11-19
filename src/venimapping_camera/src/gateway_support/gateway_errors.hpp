@@ -1,5 +1,5 @@
 // -----------------------------------------------------------------------------
-//  Filename: gateway_util.hpp
+//  Filename: gateway_errors.hpp
 //
 //  Purpose:  Declares internal, ROS-independent gateway diagnostics and error helpers.
 //
@@ -13,7 +13,7 @@
 
 #include "venimapping_camera/types/error.hpp"
 
-namespace venimapping::camera::detail {
+namespace venimapping::camera::gateway_support {
 
 // For logs and tests only; callers classify errors by Error::domain().
 enum class GatewayDiagnostic : std::int32_t {  // NOLINT(performance-enum-size): int32_t base matches the Error::code() contract
@@ -28,4 +28,4 @@ Error gateway_error(GatewayDiagnostic diagnostic, std::string text);
 
 Error driver_error(std::int32_t code, std::string text);
 
-}  // namespace venimapping::camera::detail
+}  // namespace venimapping::camera::gateway_support
