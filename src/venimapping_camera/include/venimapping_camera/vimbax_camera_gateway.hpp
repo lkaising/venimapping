@@ -86,10 +86,10 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<void> settings_save(const std::string& filename) override;
   [[nodiscard]] Expected<void> settings_load(const std::string& filename) override;
 
-  [[nodiscard]] Expected<std::vector<std::string>> features_list_get(
+  [[nodiscard]] Expected<FeatureList> features_list_get(
       FeatureModule feature_module) override;
 
-  [[nodiscard]] Expected<std::vector<FeatureInfo>> feature_info_query(
+  [[nodiscard]] Expected<FeatureInfoList> feature_info_query(
       const std::vector<std::string>& feature_names,
       FeatureModule feature_module) override;
 
@@ -166,7 +166,7 @@ class VimbaXCameraGateway final : public CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) override;
 
-  [[nodiscard]] Expected<std::vector<std::uint8_t>> feature_raw_get(
+  [[nodiscard]] Expected<FeatureRawValue> feature_raw_get(
       const std::string& feature_name,
       FeatureModule feature_module) override;
   [[nodiscard]] Expected<void> feature_raw_set(

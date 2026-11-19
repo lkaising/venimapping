@@ -37,6 +37,7 @@ using venimapping::camera::FeatureDataType;
 using venimapping::camera::FeatureFlags;
 using venimapping::camera::FeatureFloatInfo;
 using venimapping::camera::FeatureInfo;
+using venimapping::camera::FeatureInfoList;
 using venimapping::camera::FeatureModule;
 using venimapping::camera::VimbaXCameraGateway;
 
@@ -238,11 +239,11 @@ void check_features_list(CameraGateway& camera, const ProbeOptions& options, Pro
   if (!succeeded(features, "FeaturesListGet", report)) {
     return;
   }
-  report.pass("FeaturesListGet", std::to_string(features->size()) + " features");
+  const auto& names = features->names;
+  report.pass("FeaturesListGet", std::to_string(names.size()) + " features");
 
   const bool known_name_present =
-      std::find(features->begin(), features->end(), options.float_feature) !=
-      features->end();
+      std::ranges::find(names, options.float_feature) != names.end();
   if (known_name_present) {
     report.pass("FeaturesListGet/known-name",
                 options.float_feature + " is present");
@@ -252,8 +253,7 @@ void check_features_list(CameraGateway& camera, const ProbeOptions& options, Pro
   }
 
   const bool absent_name_present =
-      std::find(features->begin(), features->end(), options.absent_feature) !=
-      features->end();
+      std::ranges::find(names, options.absent_feature) != names.end();
   if (absent_name_present) {
     report.fail("FeaturesListGet/absent-name",
                 options.absent_feature + " unexpectedly present");
@@ -280,7 +280,7 @@ void check_other_modules(CameraGateway& camera, ProbeReport& report)
     const std::string check = std::string{"FeaturesListGet/"} + entry.name;
     const auto features = camera.features_list_get(entry.feature_module);
     if (succeeded(features, check, report)) {
-      report.pass(check, std::to_string(features->size()) + " features");
+      report.pass(check, std::to_string(features->names.size()) + " features");
     }
   }
 }
@@ -307,16 +307,17 @@ void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& o
   }
 }
 
-std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+FeatureInfoList check_feature_info(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
   const auto named = camera.feature_info_query({options.float_feature, options.enum_feature}, FeatureModule::kRemoteDevice);
   if (succeeded(named, "FeatureInfoQuery/named", report)) {
+    const auto& entries = named->features;
     const bool as_requested =
-        named->size() == 2 &&
-        (*named)[0].name == options.float_feature && (*named)[0].data_type == FeatureDataType::kFloat &&
-        (*named)[1].name == options.enum_feature && (*named)[1].data_type == FeatureDataType::kEnum;
+        entries.size() == 2 &&
+        entries[0].name == options.float_feature && entries[0].data_type == FeatureDataType::kFloat &&
+        entries[1].name == options.enum_feature && entries[1].data_type == FeatureDataType::kEnum;
     std::string detail;
-    for (const auto& info : *named) {
+    for (const auto& info : entries) {
       detail += " [" + info.name + ": type=" + describe(info.data_type) +
                 " category=" + info.category +
                 " display_name=" + info.display_name +
@@ -326,7 +327,7 @@ std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOp
                 " polling_time=" + std::to_string(info.polling_time) + "]";
     }
     if (as_requested) {
-      report.pass("FeatureInfoQuery/named", std::to_string(named->size()) + " entries" + detail);
+      report.pass("FeatureInfoQuery/named", std::to_string(entries.size()) + " entries" + detail);
     } else {
       report.fail("FeatureInfoQuery/named", "expected a float and an enum entry in request order, got" + detail);
     }
@@ -337,24 +338,25 @@ std::vector<FeatureInfo> check_feature_info(CameraGateway& camera, const ProbeOp
     return {};
   }
   std::array<int, 9> count_by_type{};
-  for (const auto& info : *all) {
+  for (const auto& info : all->features) {
     count_by_type.at(std::to_underlying(info.data_type)) += 1;
   }
   std::string detail;
   for (std::size_t type = 0; type < count_by_type.size(); ++type) {
     detail += " " + describe(static_cast<FeatureDataType>(type)) + "=" + std::to_string(count_by_type.at(type));
   }
-  report.pass("FeatureInfoQuery/all", std::to_string(all->size()) + " features:" + detail);
+  report.pass("FeatureInfoQuery/all", std::to_string(all->features.size()) + " features:" + detail);
   return std::move(*all);
 }
 
 std::string resolve_feature(const std::string& configured_name,
                             FeatureDataType data_type,
-                            const std::vector<FeatureInfo>& features)
+                            const FeatureInfoList& feature_info)
 {
   if (!configured_name.empty()) {
     return configured_name;
   }
+  const auto& features = feature_info.features;
   const auto match = std::ranges::find(features, data_type, &FeatureInfo::data_type);
   return match == features.end() ? std::string{} : match->name;
 }
@@ -376,7 +378,7 @@ bool readable_now(CameraGateway& camera, const std::string& feature, const std::
 // Also checks that the feature's static flags allow what its live access
 // mode allows, which the driver gets wrong before v1.0.1-beta1-venimapping.1.
 void check_access_mode(CameraGateway& camera, const ProbeOptions& options,
-                       const std::vector<FeatureInfo>& features, ProbeReport& report)
+                       const FeatureInfoList& feature_info, ProbeReport& report)
 {
   const std::string check = "FeatureAccessModeGet(" + options.float_feature + ")";
   const auto access = camera.feature_access_mode_get(options.float_feature, FeatureModule::kRemoteDevice);
@@ -386,6 +388,7 @@ void check_access_mode(CameraGateway& camera, const ProbeOptions& options,
   report.pass(check, "readable=" + describe(access->readable) + " writable=" + describe(access->writable));
 
   const std::string flags_check = check + "/flags";
+  const auto& features = feature_info.features;
   const auto info = std::ranges::find(features, options.float_feature, &FeatureInfo::name);
   if (info == features.end()) {
     report.skip(flags_check, "feature is not in the FeatureInfoQuery/all result");
@@ -530,17 +533,17 @@ void check_raw_feature(CameraGateway& camera, const std::string& feature, ProbeR
     report.pass("FeatureRawInfoGet(" + feature + ")", "max_length=" + std::to_string(*max_length));
   }
 
-  const auto buffer = camera.feature_raw_get(feature, FeatureModule::kRemoteDevice);
-  if (succeeded(buffer, "FeatureRawGet(" + feature + ")", report)) {
-    report.pass("FeatureRawGet(" + feature + ")", std::to_string(buffer->size()) + " bytes");
+  const auto value = camera.feature_raw_get(feature, FeatureModule::kRemoteDevice);
+  if (succeeded(value, "FeatureRawGet(" + feature + ")", report)) {
+    report.pass("FeatureRawGet(" + feature + ")", std::to_string(value->bytes.size()) + " bytes");
   }
 }
 
 void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  std::vector<FeatureInfo> features;
+  FeatureInfoList feature_info;
   const auto first_of = [&](const std::string& configured_name, FeatureDataType data_type) {
-    return resolve_feature(configured_name, data_type, features);
+    return resolve_feature(configured_name, data_type, feature_info);
   };
 
   const std::array<std::function<void()>, 14> checks{{
@@ -549,8 +552,8 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
       [&] { check_features_list(camera, options, report); },
       [&] { check_other_modules(camera, report); },
       [&] { check_driver_error_passthrough(camera, options, report); },
-      [&] { features = check_feature_info(camera, options, report); },
-      [&] { check_access_mode(camera, options, features, report); },
+      [&] { feature_info = check_feature_info(camera, options, report); },
+      [&] { check_access_mode(camera, options, feature_info, report); },
       [&] { check_int_feature(camera, options, report); },
       [&] { check_float_feature(camera, options, report); },
       [&] { check_string_feature(camera, options, report); },
@@ -893,16 +896,17 @@ void run_raw_write_sequence(CameraGateway& camera, const ProbeOptions& options, 
     report.fail(check, "original read: " + describe(original.error()));
     return;
   }
-  if (auto written = camera.feature_raw_set(feature, *original, FeatureModule::kRemoteDevice); !written) {
+  const auto& original_bytes = original->bytes;
+  if (auto written = camera.feature_raw_set(feature, original_bytes, FeatureModule::kRemoteDevice); !written) {
     report.fail(check, "set: " + describe(written.error()));
     return;
   }
 
   if (auto readback = camera.feature_raw_get(feature, FeatureModule::kRemoteDevice);
-      readback && *readback == *original) {
-    report.pass(check, "wrote back " + std::to_string(original->size()) + " unchanged bytes");
+      readback && readback->bytes == original_bytes) {
+    report.pass(check, "wrote back " + std::to_string(original_bytes.size()) + " unchanged bytes");
   } else if (readback) {
-    report.fail(check, "readback differs from the " + std::to_string(original->size()) + " bytes written");
+    report.fail(check, "readback differs from the " + std::to_string(original_bytes.size()) + " bytes written");
   } else {
     report.fail(check, "readback: " + describe(readback.error()));
   }

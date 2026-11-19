@@ -399,17 +399,19 @@ Expected<void> VimbaXCameraGateway::settings_load(const std::string& filename)
       .transform([](const auto&) {});
 }
 
-Expected<std::vector<std::string>> VimbaXCameraGateway::features_list_get(
+Expected<FeatureList> VimbaXCameraGateway::features_list_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
   return call_checked<ServiceT>(
              *features_list_get_client_,
              make_module_request<ServiceT>(feature_module))
-      .transform([](const auto& response) { return std::move(response->feature_list); });
+      .transform([](const auto& response) {
+        return FeatureList{.names = std::move(response->feature_list)};
+      });
 }
 
-Expected<std::vector<FeatureInfo>> VimbaXCameraGateway::feature_info_query(
+Expected<FeatureInfoList> VimbaXCameraGateway::feature_info_query(
     const std::vector<std::string>& feature_names,
     FeatureModule feature_module)
 {
@@ -646,7 +648,7 @@ Expected<bool> VimbaXCameraGateway::feature_command_is_done(
       .transform([](const auto& response) { return response->is_done; });
 }
 
-Expected<std::vector<std::uint8_t>> VimbaXCameraGateway::feature_raw_get(
+Expected<FeatureRawValue> VimbaXCameraGateway::feature_raw_get(
     const std::string& feature_name,
     FeatureModule feature_module)
 {
@@ -654,7 +656,9 @@ Expected<std::vector<std::uint8_t>> VimbaXCameraGateway::feature_raw_get(
   return call_checked<ServiceT>(
              *feature_raw_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
-      .transform([](const auto& response) { return std::move(response->buffer); });
+      .transform([](const auto& response) {
+        return FeatureRawValue{.bytes = std::move(response->buffer)};
+      });
 }
 
 Expected<void> VimbaXCameraGateway::feature_raw_set(

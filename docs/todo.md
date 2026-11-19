@@ -4,7 +4,7 @@ Ideas parked for later. None of these are blocking.
 
 ## Camera gateway
 
-- [ ] **Add dedicated types for collection results.**
+- [x] **Add dedicated types for collection results.**
   Give each collection its own type and header. Decide the names and
   representations when revisiting the API.
   - `features_list_get()` returns feature names (`std::vector<std::string>`).

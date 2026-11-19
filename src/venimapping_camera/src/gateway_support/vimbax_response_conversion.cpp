@@ -68,7 +68,7 @@ CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& respons
   };
 }
 
-std::vector<FeatureInfo> to_feature_info_list(
+FeatureInfoList to_feature_info_list(
     vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response)
 {
   std::vector<FeatureInfo> features;
@@ -91,7 +91,7 @@ std::vector<FeatureInfo> to_feature_info_list(
         .polling_time = feature.polling_time,
     });
   }
-  return features;
+  return FeatureInfoList{.features = std::move(features)};
 }
 
 FeatureAccessMode to_feature_access_mode(

@@ -8,13 +8,11 @@
 
 #pragma once
 
-#include <vector>
-
 #include "venimapping_camera/types/camera_status.hpp"
 #include "venimapping_camera/types/feature_access_mode.hpp"
 #include "venimapping_camera/types/feature_enum_info.hpp"
 #include "venimapping_camera/types/feature_float_info.hpp"
-#include "venimapping_camera/types/feature_info.hpp"
+#include "venimapping_camera/types/feature_info_list.hpp"
 #include "venimapping_camera/types/feature_int_info.hpp"
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_info_get.hpp"
@@ -27,7 +25,7 @@ namespace venimapping::camera::gateway_support {
 
 [[nodiscard]] CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& response);
 
-[[nodiscard]] std::vector<FeatureInfo> to_feature_info_list(
+[[nodiscard]] FeatureInfoList to_feature_info_list(
     vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response);
 
 [[nodiscard]] FeatureAccessMode to_feature_access_mode(

@@ -17,9 +17,11 @@
 #include "venimapping_camera/types/feature_access_mode.hpp"
 #include "venimapping_camera/types/feature_enum_info.hpp"
 #include "venimapping_camera/types/feature_float_info.hpp"
-#include "venimapping_camera/types/feature_info.hpp"
+#include "venimapping_camera/types/feature_info_list.hpp"
 #include "venimapping_camera/types/feature_int_info.hpp"
+#include "venimapping_camera/types/feature_list.hpp"
 #include "venimapping_camera/types/feature_module.hpp"
+#include "venimapping_camera/types/feature_raw_value.hpp"
 
 namespace venimapping::camera {
 
@@ -46,11 +48,11 @@ class CameraGateway {
   [[nodiscard]] virtual Expected<void> settings_load(const std::string& filename) = 0;
 
   // Lists features whether or not they are accessible right now.
-  [[nodiscard]] virtual Expected<std::vector<std::string>> features_list_get(
+  [[nodiscard]] virtual Expected<FeatureList> features_list_get(
       FeatureModule feature_module) = 0;
 
   // An empty feature_names means every feature; one unknown name fails the call.
-  [[nodiscard]] virtual Expected<std::vector<FeatureInfo>> feature_info_query(
+  [[nodiscard]] virtual Expected<FeatureInfoList> feature_info_query(
       const std::vector<std::string>& feature_names,
       FeatureModule feature_module) = 0;
 
@@ -127,7 +129,7 @@ class CameraGateway {
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
 
-  [[nodiscard]] virtual Expected<std::vector<std::uint8_t>> feature_raw_get(
+  [[nodiscard]] virtual Expected<FeatureRawValue> feature_raw_get(
       const std::string& feature_name,
       FeatureModule feature_module) = 0;
   [[nodiscard]] virtual Expected<void> feature_raw_set(
