@@ -8,12 +8,33 @@
 
 #include "vimbax_response_conversion.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace venimapping::camera::gateway_support {
+
+namespace {
+
+[[nodiscard]] std::optional<std::string> to_optional_address(std::string& address)
+{
+  if (address.empty()) {
+    return std::nullopt;
+  }
+  return std::move(address);
+}
+
+[[nodiscard]] constexpr FeatureDataType to_feature_data_type(std::uint32_t code) noexcept
+{
+  if (code > std::to_underlying(FeatureDataType::kNone)) {
+    return FeatureDataType::kUnknown;
+  }
+  return static_cast<FeatureDataType>(code);
+}
+
+}  // namespace
 
 CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& response)
 {
@@ -26,13 +47,6 @@ CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& respons
         .source = std::move(trigger.source),
     });
   }
-
-  const auto optional_address = [](std::string&& address) -> std::optional<std::string> {
-    if (address.empty()) {
-      return std::nullopt;
-    }
-    return std::move(address);
-  };
 
   return CameraStatus{
       .display_name = std::move(response.display_name),
@@ -49,8 +63,8 @@ CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& respons
       .frame_rate = response.frame_rate,
       .pixel_format = std::move(response.pixel_format),
       .trigger_info = std::move(triggers),
-      .ip_address = optional_address(std::move(response.ip_address)),
-      .mac_address = optional_address(std::move(response.mac_address)),
+      .ip_address = to_optional_address(response.ip_address),
+      .mac_address = to_optional_address(response.mac_address),
   };
 }
 
@@ -60,19 +74,13 @@ std::vector<FeatureInfo> to_feature_info_list(
   std::vector<FeatureInfo> features;
   features.reserve(response.feature_info.size());
   for (auto& feature : response.feature_info) {
-    // The SDK codes are contiguous through kNone.
-    const auto code = feature.data_type;
-    const auto data_type = code <= std::to_underlying(FeatureDataType::kNone)
-        ? static_cast<FeatureDataType>(code)
-        : FeatureDataType::kUnknown;
-
     features.push_back(FeatureInfo{
         .name = std::move(feature.name),
         .category = std::move(feature.category),
         .display_name = std::move(feature.display_name),
         .sfnc_namespace = std::move(feature.sfnc_namespace),
         .unit = std::move(feature.unit),
-        .data_type = data_type,
+        .data_type = to_feature_data_type(feature.data_type),
         .flags = FeatureFlags{
             .none = feature.flags.flag_none,
             .read = feature.flags.flag_read,
