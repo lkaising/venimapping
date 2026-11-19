@@ -34,13 +34,12 @@ namespace venimapping::camera {
 
 namespace {
 
+namespace vimbax_msgs = vimbax_camera_msgs::msg;
+
 using Clock = std::chrono::steady_clock;
 using ContextPtr = rclcpp::Context::SharedPtr;
 using Deadline = Clock::time_point;
 using StringView = std::string_view;
-using WireFeatureInfo = vimbax_camera_msgs::msg::FeatureInfo;
-using WireFeatureModule = vimbax_camera_msgs::msg::FeatureModule;
-using WireTriggerInfo = vimbax_camera_msgs::msg::TriggerInfo;
 
 template <typename Service>
 using Client = rclcpp::Client<Service>;
@@ -66,15 +65,18 @@ template <typename Service>
   return node.create_client<Service>(std::format("{}/{}", camera_namespace, leaf));
 }
 
-static_assert(std::to_underlying(FeatureModule::kRemoteDevice) == WireFeatureModule::MODULE_REMOTE_DEVICE);
-static_assert(std::to_underlying(FeatureModule::kSystem) == WireFeatureModule::MODULE_SYSTEM);
-static_assert(std::to_underlying(FeatureModule::kInterface) == WireFeatureModule::MODULE_INTERFACE);
-static_assert(std::to_underlying(FeatureModule::kLocalDevice) == WireFeatureModule::MODULE_LOCAL_DEVICE);
-static_assert(std::to_underlying(FeatureModule::kStream) == WireFeatureModule::MODULE_STREAM);
-
 template <typename Service>
 [[nodiscard]] RequestPtr<Service> make_module_request(FeatureModule feature_module)
 {
+  using ModuleMsg = vimbax_msgs::FeatureModule;
+
+  static_assert(
+      std::to_underlying(FeatureModule::kRemoteDevice) == ModuleMsg::MODULE_REMOTE_DEVICE &&
+      std::to_underlying(FeatureModule::kSystem) == ModuleMsg::MODULE_SYSTEM &&
+      std::to_underlying(FeatureModule::kInterface) == ModuleMsg::MODULE_INTERFACE &&
+      std::to_underlying(FeatureModule::kLocalDevice) == ModuleMsg::MODULE_LOCAL_DEVICE &&
+      std::to_underlying(FeatureModule::kStream) == ModuleMsg::MODULE_STREAM);
+
   auto request = std::make_shared<typename Service::Request>();
   request->feature_module.id = std::to_underlying(feature_module);
   return request;
@@ -89,7 +91,7 @@ template <typename Service>
   return request;
 }
 
-[[nodiscard]] std::vector<TriggerInfo> to_trigger_info(std::vector<WireTriggerInfo>& wire)
+[[nodiscard]] std::vector<TriggerInfo> to_trigger_info(std::vector<vimbax_msgs::TriggerInfo>& wire)
 {
   std::vector<TriggerInfo> trigger_info;
   trigger_info.reserve(wire.size());
@@ -119,7 +121,7 @@ template <typename Service>
   return static_cast<FeatureDataType>(wire);
 }
 
-[[nodiscard]] std::vector<FeatureInfo> to_feature_info(std::vector<WireFeatureInfo>& wire)
+[[nodiscard]] std::vector<FeatureInfo> to_feature_info(std::vector<vimbax_msgs::FeatureInfo>& wire)
 {
   std::vector<FeatureInfo> feature_info;
   feature_info.reserve(wire.size());
