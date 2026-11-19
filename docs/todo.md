@@ -11,7 +11,7 @@ Ideas parked for later. None of these are blocking.
   - `feature_info_query()` returns feature metadata (`std::vector<FeatureInfo>`).
   - `feature_raw_get()` returns raw feature bytes (`std::vector<std::uint8_t>`).
 
-- [ ] **Review gateway method names.**
+- [x] **Review gateway method names.**
   Use shorter names for the status queries and make the feature-info list result
   explicit. Consider these renames.
   - `connection_status_get()` → `connection_status()`

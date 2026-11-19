@@ -59,7 +59,7 @@ namespace venimapping::camera {
 // A setter that times out may still have been applied; read back to be sure.
 //
 // The driver answers an unknown module with error -7, and any call but
-// connection_status_get() with -3 while it holds no camera.
+// connection_status() with -3 while it holds no camera.
 class VimbaXCameraGateway final : public CameraGateway {
  public:
   // node must outlive the gateway. timeout bounds each whole call, including
@@ -74,11 +74,11 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<void> bind_to_current_thread();
 
   // True means only that the driver currently holds a camera object.
-  [[nodiscard]] Expected<bool> connection_status_get() override;
+  [[nodiscard]] Expected<bool> connection_status() override;
 
   // Leaves TriggerSelector on its last value. Fields the camera lacks hold the
   // driver's placeholders: "N/A", or 0.0 for frame_rate.
-  [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
+  [[nodiscard]] Expected<CameraStatus> camera_status() override;
 
   [[nodiscard]] Expected<void> stream_start() override;
   [[nodiscard]] Expected<void> stream_stop() override;
@@ -86,10 +86,10 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<void> settings_save(const std::string& filename) override;
   [[nodiscard]] Expected<void> settings_load(const std::string& filename) override;
 
-  [[nodiscard]] Expected<FeatureList> features_list_get(
+  [[nodiscard]] Expected<FeatureList> feature_list_get(
       FeatureModule feature_module) override;
 
-  [[nodiscard]] Expected<FeatureInfoList> feature_info_query(
+  [[nodiscard]] Expected<FeatureInfoList> feature_info_list_get(
       const std::vector<std::string>& feature_names,
       FeatureModule feature_module) override;
 

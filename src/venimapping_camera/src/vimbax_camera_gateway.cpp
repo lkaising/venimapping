@@ -343,7 +343,7 @@ auto VimbaXCameraGateway::call_checked(Client<Service>& client, RequestPtr<Servi
   return response;
 }
 
-Expected<bool> VimbaXCameraGateway::connection_status_get()
+Expected<bool> VimbaXCameraGateway::connection_status()
 {
   using ServiceT = vimbax_camera_msgs::srv::ConnectionStatus;
   return call<ServiceT>(
@@ -352,7 +352,7 @@ Expected<bool> VimbaXCameraGateway::connection_status_get()
       .transform([](const auto& response) { return response->connected; });
 }
 
-Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
+Expected<CameraStatus> VimbaXCameraGateway::camera_status()
 {
   using ServiceT = vimbax_camera_msgs::srv::Status;
   return call_checked<ServiceT>(
@@ -399,7 +399,7 @@ Expected<void> VimbaXCameraGateway::settings_load(const std::string& filename)
       .transform([](const auto&) {});
 }
 
-Expected<FeatureList> VimbaXCameraGateway::features_list_get(
+Expected<FeatureList> VimbaXCameraGateway::feature_list_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
@@ -411,7 +411,7 @@ Expected<FeatureList> VimbaXCameraGateway::features_list_get(
       });
 }
 
-Expected<FeatureInfoList> VimbaXCameraGateway::feature_info_query(
+Expected<FeatureInfoList> VimbaXCameraGateway::feature_info_list_get(
     const std::vector<std::string>& feature_names,
     FeatureModule feature_module)
 {

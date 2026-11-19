@@ -195,19 +195,19 @@ bool succeeded(const Expected<T>& result, const std::string& check, ProbeReport&
 
 void check_connection_status(CameraGateway& camera, ProbeReport& report)
 {
-  const auto connected = camera.connection_status_get();
-  if (succeeded(connected, "ConnectionStatusGet", report)) {
-    report.pass("ConnectionStatusGet", *connected ? "connected" : "not connected");
+  const auto connected = camera.connection_status();
+  if (succeeded(connected, "ConnectionStatus", report)) {
+    report.pass("ConnectionStatus", *connected ? "connected" : "not connected");
   }
 }
 
 void check_camera_status(CameraGateway& camera, ProbeReport& report)
 {
-  const auto status = camera.camera_status_get();
-  if (!succeeded(status, "CameraStatusGet", report)) {
+  const auto status = camera.camera_status();
+  if (!succeeded(status, "CameraStatus", report)) {
     return;
   }
-  report.pass("CameraStatusGet",
+  report.pass("CameraStatus",
               "model=" + status->model_name +
                   " serial=" + status->device_serial_number +
                   " pixel_format=" + status->pixel_format +
@@ -215,7 +215,7 @@ void check_camera_status(CameraGateway& camera, ProbeReport& report)
                   " size=" + std::to_string(status->width) + "x" +
                   std::to_string(status->height) +
                   " streaming=" + describe(status->streaming));
-  report.pass("CameraStatusGet/identity",
+  report.pass("CameraStatus/identity",
               "display_name=" + status->display_name +
                   " firmware=" + status->device_firmware_version +
                   " device_id=" + status->device_id +
@@ -229,36 +229,36 @@ void check_camera_status(CameraGateway& camera, ProbeReport& report)
   for (const auto& trigger : status->trigger_info) {
     triggers += " [" + trigger.selector + ": mode=" + trigger.mode + " source=" + trigger.source + "]";
   }
-  report.pass("CameraStatusGet/trigger_info",
+  report.pass("CameraStatus/trigger_info",
               std::to_string(status->trigger_info.size()) + " selector(s)" + triggers);
 }
 
-void check_features_list(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
+void check_feature_list(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  const auto features = camera.features_list_get(FeatureModule::kRemoteDevice);
-  if (!succeeded(features, "FeaturesListGet", report)) {
+  const auto features = camera.feature_list_get(FeatureModule::kRemoteDevice);
+  if (!succeeded(features, "FeatureListGet", report)) {
     return;
   }
   const auto& names = features->names;
-  report.pass("FeaturesListGet", std::to_string(names.size()) + " features");
+  report.pass("FeatureListGet", std::to_string(names.size()) + " features");
 
   const bool known_name_present =
       std::ranges::find(names, options.float_feature) != names.end();
   if (known_name_present) {
-    report.pass("FeaturesListGet/known-name",
+    report.pass("FeatureListGet/known-name",
                 options.float_feature + " is present");
   } else {
-    report.fail("FeaturesListGet/known-name",
+    report.fail("FeatureListGet/known-name",
                 options.float_feature + " is absent from the feature list");
   }
 
   const bool absent_name_present =
       std::ranges::find(names, options.absent_feature) != names.end();
   if (absent_name_present) {
-    report.fail("FeaturesListGet/absent-name",
+    report.fail("FeatureListGet/absent-name",
                 options.absent_feature + " unexpectedly present");
   } else {
-    report.pass("FeaturesListGet/absent-name",
+    report.pass("FeatureListGet/absent-name",
                 options.absent_feature + " is absent as expected");
   }
 }
@@ -277,8 +277,8 @@ void check_other_modules(CameraGateway& camera, ProbeReport& report)
   }};
 
   for (const auto& entry : modules) {
-    const std::string check = std::string{"FeaturesListGet/"} + entry.name;
-    const auto features = camera.features_list_get(entry.feature_module);
+    const std::string check = std::string{"FeatureListGet/"} + entry.name;
+    const auto features = camera.feature_list_get(entry.feature_module);
     if (succeeded(features, check, report)) {
       report.pass(check, std::to_string(features->names.size()) + " features");
     }
@@ -297,7 +297,7 @@ void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& o
   }
 
   // Deliberately invalid: the driver, not the gateway, must reject it.
-  const auto unknown_module = camera.features_list_get(static_cast<FeatureModule>(200));
+  const auto unknown_module = camera.feature_list_get(static_cast<FeatureModule>(200));
   if (unknown_module) {
     report.fail("DriverError/unknown-module", "listing module 200 unexpectedly succeeded");
   } else if (unknown_module.error().domain() != ErrorDomain::kDriver) {
@@ -309,8 +309,8 @@ void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& o
 
 FeatureInfoList check_feature_info(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  const auto named = camera.feature_info_query({options.float_feature, options.enum_feature}, FeatureModule::kRemoteDevice);
-  if (succeeded(named, "FeatureInfoQuery/named", report)) {
+  const auto named = camera.feature_info_list_get({options.float_feature, options.enum_feature}, FeatureModule::kRemoteDevice);
+  if (succeeded(named, "FeatureInfoListGet/named", report)) {
     const auto& entries = named->features;
     const bool as_requested =
         entries.size() == 2 &&
@@ -327,14 +327,14 @@ FeatureInfoList check_feature_info(CameraGateway& camera, const ProbeOptions& op
                 " polling_time=" + std::to_string(info.polling_time) + "]";
     }
     if (as_requested) {
-      report.pass("FeatureInfoQuery/named", std::to_string(entries.size()) + " entries" + detail);
+      report.pass("FeatureInfoListGet/named", std::to_string(entries.size()) + " entries" + detail);
     } else {
-      report.fail("FeatureInfoQuery/named", "expected a float and an enum entry in request order, got" + detail);
+      report.fail("FeatureInfoListGet/named", "expected a float and an enum entry in request order, got" + detail);
     }
   }
 
-  auto all = camera.feature_info_query({}, FeatureModule::kRemoteDevice);
-  if (!succeeded(all, "FeatureInfoQuery/all", report)) {
+  auto all = camera.feature_info_list_get({}, FeatureModule::kRemoteDevice);
+  if (!succeeded(all, "FeatureInfoListGet/all", report)) {
     return {};
   }
   std::array<int, 9> count_by_type{};
@@ -345,7 +345,7 @@ FeatureInfoList check_feature_info(CameraGateway& camera, const ProbeOptions& op
   for (std::size_t type = 0; type < count_by_type.size(); ++type) {
     detail += " " + describe(static_cast<FeatureDataType>(type)) + "=" + std::to_string(count_by_type.at(type));
   }
-  report.pass("FeatureInfoQuery/all", std::to_string(all->features.size()) + " features:" + detail);
+  report.pass("FeatureInfoListGet/all", std::to_string(all->features.size()) + " features:" + detail);
   return std::move(*all);
 }
 
@@ -391,7 +391,7 @@ void check_access_mode(CameraGateway& camera, const ProbeOptions& options,
   const auto& features = feature_info.features;
   const auto info = std::ranges::find(features, options.float_feature, &FeatureInfo::name);
   if (info == features.end()) {
-    report.skip(flags_check, "feature is not in the FeatureInfoQuery/all result");
+    report.skip(flags_check, "feature is not in the FeatureInfoListGet/all result");
     return;
   }
   const std::string detail = "static " + describe(info->flags);
@@ -549,7 +549,7 @@ void run_read_only_sequence(CameraGateway& camera, const ProbeOptions& options, 
   const std::array<std::function<void()>, 14> checks{{
       [&] { check_connection_status(camera, report); },
       [&] { check_camera_status(camera, report); },
-      [&] { check_features_list(camera, options, report); },
+      [&] { check_feature_list(camera, options, report); },
       [&] { check_other_modules(camera, report); },
       [&] { check_driver_error_passthrough(camera, options, report); },
       [&] { feature_info = check_feature_info(camera, options, report); },
@@ -945,7 +945,7 @@ void run_settings_sequence(CameraGateway& camera, const ProbeOptions& options, P
 
 void run_stream_sequence(CameraGateway& camera, ProbeReport& report)
 {
-  const auto before = camera.camera_status_get();
+  const auto before = camera.camera_status();
   if (!before) {
     report.fail("Stream", "initial status: " + describe(before.error()));
     return;
@@ -956,7 +956,7 @@ void run_stream_sequence(CameraGateway& camera, ProbeReport& report)
       report.fail(check, describe(switched.error()));
       return;
     }
-    if (auto status = camera.camera_status_get(); status && status->streaming == streaming) {
+    if (auto status = camera.camera_status(); status && status->streaming == streaming) {
       report.pass(check, "status reports streaming=" + describe(status->streaming));
     } else if (status) {
       report.fail(check, "status still reports streaming=" + describe(status->streaming));

@@ -36,9 +36,9 @@ class CameraGateway {
   CameraGateway& operator=(CameraGateway&&) = delete;
   virtual ~CameraGateway() = default;
 
-  [[nodiscard]] virtual Expected<bool> connection_status_get() = 0;
+  [[nodiscard]] virtual Expected<bool> connection_status() = 0;
 
-  [[nodiscard]] virtual Expected<CameraStatus> camera_status_get() = 0;
+  [[nodiscard]] virtual Expected<CameraStatus> camera_status() = 0;
 
   [[nodiscard]] virtual Expected<void> stream_start() = 0;
   [[nodiscard]] virtual Expected<void> stream_stop() = 0;
@@ -48,11 +48,11 @@ class CameraGateway {
   [[nodiscard]] virtual Expected<void> settings_load(const std::string& filename) = 0;
 
   // Lists features whether or not they are accessible right now.
-  [[nodiscard]] virtual Expected<FeatureList> features_list_get(
+  [[nodiscard]] virtual Expected<FeatureList> feature_list_get(
       FeatureModule feature_module) = 0;
 
   // An empty feature_names means every feature; one unknown name fails the call.
-  [[nodiscard]] virtual Expected<FeatureInfoList> feature_info_query(
+  [[nodiscard]] virtual Expected<FeatureInfoList> feature_info_list_get(
       const std::vector<std::string>& feature_names,
       FeatureModule feature_module) = 0;
 
