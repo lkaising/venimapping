@@ -17,9 +17,9 @@
 
 namespace venimapping::camera::gateway_support {
 
-[[nodiscard]] CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response&& response);
+[[nodiscard]] CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& response);
 
 [[nodiscard]] std::vector<FeatureInfo> to_feature_info_list(
-    vimbax_camera_msgs::srv::FeatureInfoQuery::Response&& response);
+    vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response);
 
 }  // namespace venimapping::camera::gateway_support

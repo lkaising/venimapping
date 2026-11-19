@@ -359,7 +359,7 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status_get()
              *status_client_,
              std::make_shared<ServiceT::Request>())
       .transform([](const auto& response) {
-        return gateway_support::to_camera_status(std::move(*response));
+        return gateway_support::to_camera_status(*response);
       });
 }
 
@@ -418,7 +418,7 @@ Expected<std::vector<FeatureInfo>> VimbaXCameraGateway::feature_info_query(
   request->feature_names = feature_names;
   return call_checked<ServiceT>(*feature_info_query_client_, std::move(request))
       .transform([](const auto& response) {
-        return gateway_support::to_feature_info_list(std::move(*response));
+        return gateway_support::to_feature_info_list(*response);
       });
 }
 
