@@ -94,4 +94,43 @@ std::vector<FeatureInfo> to_feature_info_list(
   return features;
 }
 
+FeatureAccessMode to_feature_access_mode(
+    const vimbax_camera_msgs::srv::FeatureAccessModeGet::Response& response)
+{
+  return FeatureAccessMode{
+      .readable = response.is_readable,
+      .writable = response.is_writeable,
+  };
+}
+
+FeatureIntInfo to_feature_int_info(
+    const vimbax_camera_msgs::srv::FeatureIntInfoGet::Response& response)
+{
+  return FeatureIntInfo{
+      .min = response.min,
+      .max = response.max,
+      .inc = response.inc,
+  };
+}
+
+FeatureFloatInfo to_feature_float_info(
+    const vimbax_camera_msgs::srv::FeatureFloatInfoGet::Response& response)
+{
+  return FeatureFloatInfo{
+      .min = response.min,
+      .max = response.max,
+      .inc = response.inc,
+      .inc_available = response.inc_available,
+  };
+}
+
+FeatureEnumInfo to_feature_enum_info(
+    vimbax_camera_msgs::srv::FeatureEnumInfoGet::Response& response)
+{
+  return FeatureEnumInfo{
+      .possible_values = std::move(response.possible_values),
+      .available_values = std::move(response.available_values),
+  };
+}
+
 }  // namespace venimapping::camera::gateway_support

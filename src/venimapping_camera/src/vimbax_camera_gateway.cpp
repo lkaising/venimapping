@@ -431,10 +431,7 @@ Expected<FeatureAccessMode> VimbaXCameraGateway::feature_access_mode_get(
              *feature_access_mode_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
-        return FeatureAccessMode{
-            .readable = response->is_readable,
-            .writable = response->is_writeable,
-        };
+        return gateway_support::to_feature_access_mode(*response);
       });
 }
 
@@ -470,11 +467,7 @@ Expected<FeatureIntInfo> VimbaXCameraGateway::feature_int_info_get(
              *feature_int_info_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
-        return FeatureIntInfo{
-            .min = response->min,
-            .max = response->max,
-            .inc = response->inc,
-        };
+        return gateway_support::to_feature_int_info(*response);
       });
 }
 
@@ -510,12 +503,7 @@ Expected<FeatureFloatInfo> VimbaXCameraGateway::feature_float_info_get(
              *feature_float_info_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
-        return FeatureFloatInfo{
-            .min = response->min,
-            .max = response->max,
-            .inc = response->inc,
-            .inc_available = response->inc_available,
-        };
+        return gateway_support::to_feature_float_info(*response);
       });
 }
 
@@ -608,10 +596,7 @@ Expected<FeatureEnumInfo> VimbaXCameraGateway::feature_enum_info_get(
              *feature_enum_info_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
-        return FeatureEnumInfo{
-            .possible_values = std::move(response->possible_values),
-            .available_values = std::move(response->available_values),
-        };
+        return gateway_support::to_feature_enum_info(*response);
       });
 }
 
