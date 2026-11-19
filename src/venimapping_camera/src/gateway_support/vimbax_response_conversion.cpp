@@ -68,6 +68,13 @@ CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& respons
   };
 }
 
+FeatureList to_feature_list(vimbax_camera_msgs::srv::FeaturesListGet::Response& response)
+{
+  return FeatureList{
+      .names = std::move(response.feature_list),
+  };
+}
+
 FeatureInfoList to_feature_info_list(
     vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response)
 {
@@ -130,6 +137,13 @@ FeatureEnumInfo to_feature_enum_info(
   return FeatureEnumInfo{
       .possible_values = std::move(response.possible_values),
       .available_values = std::move(response.available_values),
+  };
+}
+
+FeatureRawValue to_feature_raw_value(vimbax_camera_msgs::srv::FeatureRawGet::Response& response)
+{
+  return FeatureRawValue{
+      .bytes = std::move(response.buffer),
   };
 }
 

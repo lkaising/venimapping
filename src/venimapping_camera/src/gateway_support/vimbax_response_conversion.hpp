@@ -14,16 +14,23 @@
 #include "venimapping_camera/types/feature_float_info.hpp"
 #include "venimapping_camera/types/feature_info_list.hpp"
 #include "venimapping_camera/types/feature_int_info.hpp"
+#include "venimapping_camera/types/feature_list.hpp"
+#include "venimapping_camera/types/feature_raw_value.hpp"
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_info_query.hpp"
 #include "vimbax_camera_msgs/srv/feature_int_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_get.hpp"
+#include "vimbax_camera_msgs/srv/features_list_get.hpp"
 #include "vimbax_camera_msgs/srv/status.hpp"
 
 namespace venimapping::camera::gateway_support {
 
 [[nodiscard]] CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& response);
+
+[[nodiscard]] FeatureList to_feature_list(
+    vimbax_camera_msgs::srv::FeaturesListGet::Response& response);
 
 [[nodiscard]] FeatureInfoList to_feature_info_list(
     vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response);
@@ -39,5 +46,8 @@ namespace venimapping::camera::gateway_support {
 
 [[nodiscard]] FeatureEnumInfo to_feature_enum_info(
     vimbax_camera_msgs::srv::FeatureEnumInfoGet::Response& response);
+
+[[nodiscard]] FeatureRawValue to_feature_raw_value(
+    vimbax_camera_msgs::srv::FeatureRawGet::Response& response);
 
 }  // namespace venimapping::camera::gateway_support

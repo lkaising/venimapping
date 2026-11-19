@@ -407,7 +407,7 @@ Expected<FeatureList> VimbaXCameraGateway::features_list_get(
              *features_list_get_client_,
              make_module_request<ServiceT>(feature_module))
       .transform([](const auto& response) {
-        return FeatureList{.names = std::move(response->feature_list)};
+        return gateway_support::to_feature_list(*response);
       });
 }
 
@@ -657,7 +657,7 @@ Expected<FeatureRawValue> VimbaXCameraGateway::feature_raw_get(
              *feature_raw_get_client_,
              make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
-        return FeatureRawValue{.bytes = std::move(response->buffer)};
+        return gateway_support::to_feature_raw_value(*response);
       });
 }
 
