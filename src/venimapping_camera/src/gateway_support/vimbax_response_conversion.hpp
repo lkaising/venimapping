@@ -27,27 +27,30 @@
 
 namespace venimapping::camera::gateway_support {
 
-[[nodiscard]] CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& response);
+namespace vimbax_srv = vimbax_camera_msgs::srv;
+
+[[nodiscard]] CameraStatus to_camera_status(
+    vimbax_srv::Status::Response& response);
 
 [[nodiscard]] FeatureList to_feature_list(
-    vimbax_camera_msgs::srv::FeaturesListGet::Response& response);
+    vimbax_srv::FeaturesListGet::Response& response);
 
 [[nodiscard]] FeatureInfoList to_feature_info_list(
-    vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response);
+    vimbax_srv::FeatureInfoQuery::Response& response);
 
 [[nodiscard]] FeatureAccessMode to_feature_access_mode(
-    const vimbax_camera_msgs::srv::FeatureAccessModeGet::Response& response);
+    const vimbax_srv::FeatureAccessModeGet::Response& response);
 
 [[nodiscard]] FeatureIntInfo to_feature_int_info(
-    const vimbax_camera_msgs::srv::FeatureIntInfoGet::Response& response);
+    const vimbax_srv::FeatureIntInfoGet::Response& response);
 
 [[nodiscard]] FeatureFloatInfo to_feature_float_info(
-    const vimbax_camera_msgs::srv::FeatureFloatInfoGet::Response& response);
+    const vimbax_srv::FeatureFloatInfoGet::Response& response);
 
 [[nodiscard]] FeatureEnumInfo to_feature_enum_info(
-    vimbax_camera_msgs::srv::FeatureEnumInfoGet::Response& response);
+    vimbax_srv::FeatureEnumInfoGet::Response& response);
 
 [[nodiscard]] FeatureRawValue to_feature_raw_value(
-    vimbax_camera_msgs::srv::FeatureRawGet::Response& response);
+    vimbax_srv::FeatureRawGet::Response& response);
 
 }  // namespace venimapping::camera::gateway_support

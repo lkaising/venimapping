@@ -36,7 +36,7 @@ namespace {
 
 }  // namespace
 
-CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& response)
+CameraStatus to_camera_status(vimbax_srv::Status::Response& response)
 {
   std::vector<TriggerInfo> triggers;
   triggers.reserve(response.trigger_info.size());
@@ -68,15 +68,14 @@ CameraStatus to_camera_status(vimbax_camera_msgs::srv::Status::Response& respons
   };
 }
 
-FeatureList to_feature_list(vimbax_camera_msgs::srv::FeaturesListGet::Response& response)
+FeatureList to_feature_list(vimbax_srv::FeaturesListGet::Response& response)
 {
   return FeatureList{
       .names = std::move(response.feature_list),
   };
 }
 
-FeatureInfoList to_feature_info_list(
-    vimbax_camera_msgs::srv::FeatureInfoQuery::Response& response)
+FeatureInfoList to_feature_info_list(vimbax_srv::FeatureInfoQuery::Response& response)
 {
   std::vector<FeatureInfo> features;
   features.reserve(response.feature_info.size());
@@ -101,8 +100,7 @@ FeatureInfoList to_feature_info_list(
   return FeatureInfoList{.features = std::move(features)};
 }
 
-FeatureAccessMode to_feature_access_mode(
-    const vimbax_camera_msgs::srv::FeatureAccessModeGet::Response& response)
+FeatureAccessMode to_feature_access_mode(const vimbax_srv::FeatureAccessModeGet::Response& response)
 {
   return FeatureAccessMode{
       .readable = response.is_readable,
@@ -110,8 +108,7 @@ FeatureAccessMode to_feature_access_mode(
   };
 }
 
-FeatureIntInfo to_feature_int_info(
-    const vimbax_camera_msgs::srv::FeatureIntInfoGet::Response& response)
+FeatureIntInfo to_feature_int_info(const vimbax_srv::FeatureIntInfoGet::Response& response)
 {
   return FeatureIntInfo{
       .min = response.min,
@@ -120,8 +117,7 @@ FeatureIntInfo to_feature_int_info(
   };
 }
 
-FeatureFloatInfo to_feature_float_info(
-    const vimbax_camera_msgs::srv::FeatureFloatInfoGet::Response& response)
+FeatureFloatInfo to_feature_float_info(const vimbax_srv::FeatureFloatInfoGet::Response& response)
 {
   return FeatureFloatInfo{
       .min = response.min,
@@ -131,8 +127,7 @@ FeatureFloatInfo to_feature_float_info(
   };
 }
 
-FeatureEnumInfo to_feature_enum_info(
-    vimbax_camera_msgs::srv::FeatureEnumInfoGet::Response& response)
+FeatureEnumInfo to_feature_enum_info(vimbax_srv::FeatureEnumInfoGet::Response& response)
 {
   return FeatureEnumInfo{
       .possible_values = std::move(response.possible_values),
@@ -140,7 +135,7 @@ FeatureEnumInfo to_feature_enum_info(
   };
 }
 
-FeatureRawValue to_feature_raw_value(vimbax_camera_msgs::srv::FeatureRawGet::Response& response)
+FeatureRawValue to_feature_raw_value(vimbax_srv::FeatureRawGet::Response& response)
 {
   return FeatureRawValue{
       .bytes = std::move(response.buffer),

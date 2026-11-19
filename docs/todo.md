@@ -20,7 +20,7 @@ Ideas parked for later. None of these are blocking.
   - Also consider `features_list_get()` → `feature_list_get()` to match the
     naming pattern for list results.
 
-- [ ] **Shorten the response converter signatures.**
+- [x] **Shorten the response converter signatures.**
   Reduce the repeated `vimbax_camera_msgs::srv::` qualification in
   `vimbax_response_conversion.hpp` and `.cpp`. Compare a namespace alias with
   aliases for individual response types, and keep any alias narrowly scoped.
