@@ -140,27 +140,15 @@ step "generating the VS Code config (scripts/ide.sh)"
 
 if [[ "${mode}" == "check" ]]; then
   step "running clang-tidy (scripts/tidy.sh check)"
-  "${script_dir}/tidy.sh" check
+  if ! "${script_dir}/tidy.sh" check; then
+    error "see ${tidy_report#"${project_root}/"}"
+    exit 1
+  fi
 
   if ! grep -qF -- "${camera_src}" "${tidy_report}"; then
     error "clang-tidy report does not reference ${camera_src}"
     exit 1
   fi
-
-  # grep: 0 = findings, 1 = no findings, >1 = search failure.
-  findings_rc=0
-  grep -E ": (warning|error): " "${tidy_report}" || findings_rc=$?
-  case "${findings_rc}" in
-    0)
-      error "clang-tidy reported findings: ${tidy_report#"${project_root}/"}"
-      exit 1
-      ;;
-    1) ;;
-    *)
-      error "cannot search the clang-tidy report (grep exit ${findings_rc}): ${tidy_report}"
-      exit 1
-      ;;
-  esac
 fi
 
 # --- Summary ------------------------------------------------------------------
