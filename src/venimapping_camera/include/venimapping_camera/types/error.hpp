@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
-//  Filename: expected.hpp
+//  Filename: error.hpp
 //
-//  Purpose:  Defines the shared success/error vocabulary returned by the camera layers.
+//  Purpose:  Defines the error type returned by the camera layers.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
@@ -10,7 +10,6 @@
 
 #include <cassert>
 #include <cstdint>
-#include <expected>
 #include <string>
 
 namespace venimapping::camera {
@@ -48,20 +47,5 @@ class [[nodiscard]] Error final {
   std::int32_t code_;
   std::string text_;
 };
-
-template <typename T>
-using Expected = std::expected<T, Error>;
-
-// using Unexpected = std::unexpected<Error>;
-
-// [[nodiscard]] constexpr Unexpected make_driver_error(std::int32_t code, std::string text) noexcept
-// {
-//   return Unexpected{Error::from_driver(code, std::move(text))};
-// }
-
-// [[nodiscard]] constexpr Unexpected make_gateway_error(std::int32_t code, std::string text) noexcept
-// {
-//   return Unexpected{Error::from_gateway(code, std::move(text))};
-// }
 
 }  // namespace venimapping::camera

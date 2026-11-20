@@ -1,104 +1,171 @@
 // -----------------------------------------------------------------------------
 //  Filename: vimbax_camera_gateway.hpp
 //
-//  Purpose:  Declares the concrete ROS 2 implementation of CameraGateway over
-//            the vimbax_ros2_driver services.
+//  Purpose:  Declares the concrete ROS 2 camera gateway backed by Vimba X driver services.
 //
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
 
 #pragma once
 
-#include "rclcpp/client.hpp"
-#include "rclcpp/context.hpp"
 #include "rclcpp/node.hpp"
 #include "vimbax_camera_msgs/srv/connection_status.hpp"
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_bool_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_bool_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_command_is_done.hpp"
+#include "vimbax_camera_msgs/srv/feature_command_run.hpp"
+#include "vimbax_camera_msgs/srv/feature_enum_as_int_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_enum_as_string_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_enum_set.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_info_get.hpp"
 #include "vimbax_camera_msgs/srv/feature_float_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_info_query.hpp"
+#include "vimbax_camera_msgs/srv/feature_int_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_int_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_int_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_raw_set.hpp"
+#include "vimbax_camera_msgs/srv/feature_string_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_string_info_get.hpp"
+#include "vimbax_camera_msgs/srv/feature_string_set.hpp"
 #include "vimbax_camera_msgs/srv/features_list_get.hpp"
+#include "vimbax_camera_msgs/srv/settings_load_save.hpp"
 #include "vimbax_camera_msgs/srv/status.hpp"
+#include "vimbax_camera_msgs/srv/stream_start_stop.hpp"
 
 #include "venimapping_camera/camera_gateway.hpp"
-#include "venimapping_camera/expected.hpp"
 
 namespace venimapping::camera {
 
-// Implements CameraGateway through vimbax_ros2_driver services. Service names,
-// request assembly, timeout handling, rclcpp exceptions, and driver-error
-// passthrough are hidden here; no ROS request or response type escapes through
-// the public API.
+// Calls block and must come from the thread given to bind_to_current_thread(),
+// which must not spin the node (under a single-threaded executor every call
+// would time out). The thread check catches misuse; it is not synchronization.
 //
-// The methods are synchronous and block on service futures. They are designed
-// to run on a dedicated worker thread that is not an executor thread, while a
-// ROS executor spins the node independently. If the bound thread is a
-// single-threaded executor's callback thread, a call from it prevents that
-// executor from processing the response and fails with a timeout error rather
-// than blocking indefinitely; use from executor callbacks under any other
-// executor configuration is unsupported. Calls are serialized on the bound
-// thread, and a call from any other thread -- or before binding -- fails with
-// a gateway error before any ROS interaction. That checking is misuse
-// detection, not thread synchronization; concurrent use from multiple threads
-// is unsupported.
+// A setter that times out may still have been applied; read back to be sure.
 //
-// A setter that fails with a timeout does not establish whether the camera
-// applied the requested value; a caller that needs to know shall read the
-// feature back.
+// The driver answers an unknown module with error -7, and any call but
+// connection_status() with -3 while it holds no camera.
 class VimbaXCameraGateway final : public CameraGateway {
  public:
-  // The only supported construction path: ROS client creation can throw, and
-  // the factory converts that into an Error rather than an exception.
-  //
-  // node is a non-owning, mandatory reference. The gateway does not own the
-  // node, the ROS executor, or the worker thread; the caller shall ensure the
-  // node and ROS context outlive the gateway's use of its clients.
-  //
-  // timeout bounds each call as a whole: one deadline, started when the call
-  // begins, is shared by the service-availability wait and the response wait.
-  // Thread-scheduling overhead can stretch it slightly, so it is not a hard
-  // limit.
-  //
-  // Fails with domain() == ErrorDomain::kGateway when camera_namespace is empty,
-  // when timeout is not positive, or when client construction throws (exception
-  // text preserved).
-  //
-  // Success means every service client object was constructed. It does not mean
-  // the services are currently available or that a camera is connected;
-  // availability is checked per call.
+  // node must outlive the gateway. timeout bounds each whole call, including
+  // the wait for the service. Success does not mean the services are up or a
+  // camera is connected.
   [[nodiscard]] static Expected<std::unique_ptr<VimbaXCameraGateway>> create(
       rclcpp::Node& node,
       const std::string& camera_namespace,
       std::chrono::milliseconds timeout);
 
-  // Records the calling thread as the designated worker thread. It shall be
-  // called exactly once, from that thread, before the first gateway call, and
-  // every later call shall come from that same thread. Violations are reported
-  // as a gateway error: a second bind fails, and gateway calls made before
-  // binding or from another thread fail without touching ROS.
+  // Call once, from the worker thread, before any other call.
   [[nodiscard]] Expected<void> bind_to_current_thread();
 
-  [[nodiscard]] Expected<double> feature_float_get(const std::string& name) override;
-  [[nodiscard]] Expected<void> feature_float_set(const std::string& name, double value) override;
-  [[nodiscard]] Expected<FloatInfo> feature_float_info_get(const std::string& name) override;
+  // True means only that the driver currently holds a camera object.
+  [[nodiscard]] Expected<bool> connection_status() override;
 
-  [[nodiscard]] Expected<std::string> feature_enum_get(const std::string& name) override;
-  [[nodiscard]] Expected<void> feature_enum_set(const std::string& name,
-                                                const std::string& value) override;
-  [[nodiscard]] Expected<EnumInfo> feature_enum_info_get(const std::string& name) override;
+  // Leaves TriggerSelector on its last value. Fields the camera lacks hold the
+  // driver's placeholders: "N/A", or 0.0 for frame_rate.
+  [[nodiscard]] Expected<CameraStatus> camera_status() override;
 
-  [[nodiscard]] Expected<AccessMode> feature_access_mode_get(const std::string& name) override;
+  [[nodiscard]] Expected<void> stream_start() override;
+  [[nodiscard]] Expected<void> stream_stop() override;
 
-  // The Vimba X driver serves this list from a per-module cache built when it
-  // opens the camera, so the result is a snapshot refreshed on reopen after a
-  // reconnect rather than a live query.
-  [[nodiscard]] Expected<std::vector<std::string>> features_list_get() override;
+  [[nodiscard]] Expected<void> settings_save(const std::string& filename) override;
+  [[nodiscard]] Expected<void> settings_load(const std::string& filename) override;
 
-  [[nodiscard]] Expected<CameraStatus> camera_status_get() override;
-  [[nodiscard]] Expected<bool> connection_status_get() override;
+  [[nodiscard]] Expected<FeatureList> feature_list_get(
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<FeatureInfoList> feature_info_list_get(
+      const FeatureList& feature_list,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<FeatureAccessMode> feature_access_mode_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<std::int64_t> feature_int_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_int_set(
+      const std::string& feature_name,
+      std::int64_t value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<FeatureIntInfo> feature_int_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<double> feature_float_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_float_set(
+      const std::string& feature_name,
+      double value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<FeatureFloatInfo> feature_float_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<std::string> feature_string_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_string_set(
+      const std::string& feature_name,
+      const std::string& value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::int64_t> feature_string_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<bool> feature_bool_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_bool_set(
+      const std::string& feature_name,
+      bool value,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<std::string> feature_enum_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_enum_set(
+      const std::string& feature_name,
+      const std::string& value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<FeatureEnumInfo> feature_enum_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::int64_t> feature_enum_as_int_get(
+      const std::string& feature_name,
+      const std::string& option,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::string> feature_enum_as_string_get(
+      const std::string& feature_name,
+      std::int64_t value,
+      FeatureModule feature_module) override;
+
+  // Takes at least ~100 ms. A gateway timeout below the driver's
+  // command_feature_timeout (default 1 s) can leave the outcome unknown.
+  [[nodiscard]] Expected<void> feature_command_run(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<bool> feature_command_is_done(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+
+  [[nodiscard]] Expected<FeatureRawValue> feature_raw_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<void> feature_raw_set(
+      const std::string& feature_name,
+      const FeatureRawValue& value,
+      FeatureModule feature_module) override;
+  [[nodiscard]] Expected<std::int64_t> feature_raw_info_get(
+      const std::string& feature_name,
+      FeatureModule feature_module) override;
 
  private:
   template <typename Service>
@@ -121,30 +188,47 @@ class VimbaXCameraGateway final : public CameraGateway {
   [[nodiscard]] Expected<ResponsePtr<Service>> call(Client<Service>& client,
                                                     RequestPtr<Service> request);
 
-  // connection_status_get() alone stays on call(), because its response has no
-  // error member.
   template <typename Service>
-  [[nodiscard]] Expected<ResponsePtr<Service>> call_checked(Client<Service>& client,
-                                                            RequestPtr<Service> request);
+  [[nodiscard]] Expected<ResponsePtr<Service>> call_checking_driver_error(
+      Client<Service>& client,
+      RequestPtr<Service> request);
 
   [[nodiscard]] Expected<void> check_callable_from_this_thread() const;
 
   std::chrono::milliseconds timeout_;
-  // Default-constructed thread::id is the unbound sentinel: the standard
-  // guarantees it never equals the id of a running thread.
   std::atomic<std::thread::id> bound_thread_{std::thread::id{}};
   rclcpp::Context::SharedPtr context_;
 
   ClientPtr<vimbax_camera_msgs::srv::ConnectionStatus> connection_status_client_;
   ClientPtr<vimbax_camera_msgs::srv::Status> status_client_;
+  ClientPtr<vimbax_camera_msgs::srv::StreamStartStop> stream_start_client_;
+  ClientPtr<vimbax_camera_msgs::srv::StreamStartStop> stream_stop_client_;
+  ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_save_client_;
+  ClientPtr<vimbax_camera_msgs::srv::SettingsLoadSave> settings_load_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeaturesListGet> features_list_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureInfoQuery> feature_info_query_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureAccessModeGet> feature_access_mode_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureIntGet> feature_int_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureIntSet> feature_int_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureIntInfoGet> feature_int_info_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatGet> feature_float_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatSet> feature_float_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureFloatInfoGet> feature_float_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureStringGet> feature_string_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureStringSet> feature_string_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureStringInfoGet> feature_string_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureBoolGet> feature_bool_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureBoolSet> feature_bool_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumGet> feature_enum_get_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumSet> feature_enum_set_client_;
   ClientPtr<vimbax_camera_msgs::srv::FeatureEnumInfoGet> feature_enum_info_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumAsIntGet> feature_enum_as_int_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureEnumAsStringGet> feature_enum_as_string_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureCommandRun> feature_command_run_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureCommandIsDone> feature_command_is_done_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureRawGet> feature_raw_get_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureRawSet> feature_raw_set_client_;
+  ClientPtr<vimbax_camera_msgs::srv::FeatureRawInfoGet> feature_raw_info_get_client_;
 };
 
 }  // namespace venimapping::camera

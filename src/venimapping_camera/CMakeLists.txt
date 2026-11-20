@@ -1,8 +1,7 @@
 # ------------------------------------------------------------------------------
 #  Filename: CMakeLists.txt
 #
-#  Purpose:  Builds the ROS-free gateway API, the concrete Vimba X gateway
-#            library, and the temporary integration probe.
+#  Purpose:  Builds the ROS-free gateway API, the Vimba X gateway, and the temporary probe.
 #
 #  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 # ------------------------------------------------------------------------------
@@ -21,8 +20,8 @@ find_package(rclcpp REQUIRED)
 find_package(vimbax_camera_msgs REQUIRED)
 
 # --- venimapping_camera_gateway_api -------------------------------------------
-# Header-only target for the ROS-free contract (expected.hpp,
-# camera_gateway.hpp); vimbax_camera_gateway.hpp needs the gateway library.
+# Header-only target for the ROS-free contract (camera_gateway.hpp and
+# everything under types/); vimbax_camera_gateway.hpp needs the gateway library.
 
 add_library(venimapping_camera_gateway_api INTERFACE)
 target_compile_features(venimapping_camera_gateway_api INTERFACE cxx_std_23)
@@ -37,7 +36,9 @@ target_include_directories(venimapping_camera_gateway_api INTERFACE
 
 add_library(venimapping_camera_vimbax_gateway
   src/vimbax_camera_gateway.cpp
-  src/detail/gateway_util.cpp)
+  src/gateway_support/gateway_errors.cpp
+  src/gateway_support/vimbax_response_conversion.cpp
+  src/gateway_support/vimbax_service_calls.cpp)
 target_compile_features(venimapping_camera_vimbax_gateway PUBLIC cxx_std_23)
 target_include_directories(venimapping_camera_vimbax_gateway PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -55,8 +56,8 @@ target_link_libraries(camera_gateway_probe PRIVATE
   rclcpp::rclcpp)
 
 # --- Install ------------------------------------------------------------------
-# Only the public headers are installed; nothing under src/ is, which keeps
-# the detail/ diagnostic vocabulary off every consumer's include path.
+# Only the public headers under include/ are installed.
+# The headers under src/gateway_support/ are private to the gateway target.
 
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME}
   FILES_MATCHING PATTERN "*.hpp")
