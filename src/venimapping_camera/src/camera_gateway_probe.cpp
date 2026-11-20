@@ -309,7 +309,7 @@ void check_driver_error_passthrough(CameraGateway& camera, const ProbeOptions& o
 
 FeatureInfoList check_feature_info(CameraGateway& camera, const ProbeOptions& options, ProbeReport& report)
 {
-  const auto named = camera.feature_info_list_get({options.float_feature, options.enum_feature}, FeatureModule::kRemoteDevice);
+  const auto named = camera.feature_info_list_get({.names = {options.float_feature, options.enum_feature}}, FeatureModule::kRemoteDevice);
   if (succeeded(named, "FeatureInfoListGet/named", report)) {
     const auto& entries = named->features;
     const bool as_requested =
@@ -897,7 +897,7 @@ void run_raw_write_sequence(CameraGateway& camera, const ProbeOptions& options, 
     return;
   }
   const auto& original_bytes = original->bytes;
-  if (auto written = camera.feature_raw_set(feature, original_bytes, FeatureModule::kRemoteDevice); !written) {
+  if (auto written = camera.feature_raw_set(feature, *original, FeatureModule::kRemoteDevice); !written) {
     report.fail(check, "set: " + describe(written.error()));
     return;
   }

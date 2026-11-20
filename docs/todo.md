@@ -25,7 +25,7 @@ Ideas parked for later. None of these are blocking.
   `vimbax_response_conversion.hpp` and `.cpp`. Compare a namespace alias with
   aliases for individual response types, and keep any alias narrowly scoped.
 
-- [ ] **Consider moving the file-local gateway helpers.**
+- [x] **Consider moving the file-local gateway helpers.**
   Explore moving the client creation, request construction, and wait helpers
   from the unnamed namespace in `vimbax_camera_gateway.cpp` into one new private
   `.hpp`/`.cpp` pair under `src/gateway_support/`.

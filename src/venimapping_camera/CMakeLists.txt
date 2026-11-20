@@ -37,7 +37,8 @@ target_include_directories(venimapping_camera_gateway_api INTERFACE
 add_library(venimapping_camera_vimbax_gateway
   src/vimbax_camera_gateway.cpp
   src/gateway_support/gateway_errors.cpp
-  src/gateway_support/vimbax_response_conversion.cpp)
+  src/gateway_support/vimbax_response_conversion.cpp
+  src/gateway_support/vimbax_service_calls.cpp)
 target_compile_features(venimapping_camera_vimbax_gateway PUBLIC cxx_std_23)
 target_include_directories(venimapping_camera_vimbax_gateway PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src")

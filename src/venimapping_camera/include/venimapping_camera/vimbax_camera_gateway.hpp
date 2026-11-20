@@ -14,7 +14,6 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include "rclcpp/client.hpp"
 #include "rclcpp/context.hpp"
@@ -90,7 +89,7 @@ class VimbaXCameraGateway final : public CameraGateway {
       FeatureModule feature_module) override;
 
   [[nodiscard]] Expected<FeatureInfoList> feature_info_list_get(
-      const std::vector<std::string>& feature_names,
+      const FeatureList& feature_list,
       FeatureModule feature_module) override;
 
   [[nodiscard]] Expected<FeatureAccessMode> feature_access_mode_get(
@@ -171,7 +170,7 @@ class VimbaXCameraGateway final : public CameraGateway {
       FeatureModule feature_module) override;
   [[nodiscard]] Expected<void> feature_raw_set(
       const std::string& feature_name,
-      const std::vector<std::uint8_t>& buffer,
+      const FeatureRawValue& value,
       FeatureModule feature_module) override;
   [[nodiscard]] Expected<std::int64_t> feature_raw_info_get(
       const std::string& feature_name,

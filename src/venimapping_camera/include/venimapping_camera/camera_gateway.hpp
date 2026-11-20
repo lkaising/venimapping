@@ -10,7 +10,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include "venimapping_camera/types/camera_status.hpp"
 #include "venimapping_camera/types/expected.hpp"
@@ -51,9 +50,9 @@ class CameraGateway {
   [[nodiscard]] virtual Expected<FeatureList> feature_list_get(
       FeatureModule feature_module) = 0;
 
-  // An empty feature_names means every feature; one unknown name fails the call.
+  // An empty feature_list means every feature; one unknown name fails the call.
   [[nodiscard]] virtual Expected<FeatureInfoList> feature_info_list_get(
-      const std::vector<std::string>& feature_names,
+      const FeatureList& feature_list,
       FeatureModule feature_module) = 0;
 
   [[nodiscard]] virtual Expected<FeatureAccessMode> feature_access_mode_get(
@@ -134,7 +133,7 @@ class CameraGateway {
       FeatureModule feature_module) = 0;
   [[nodiscard]] virtual Expected<void> feature_raw_set(
       const std::string& feature_name,
-      const std::vector<std::uint8_t>& buffer,
+      const FeatureRawValue& value,
       FeatureModule feature_module) = 0;
   // Maximum length of the value, in bytes.
   [[nodiscard]] virtual Expected<std::int64_t> feature_raw_info_get(
