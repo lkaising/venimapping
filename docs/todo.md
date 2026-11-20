@@ -30,7 +30,7 @@ Ideas parked for later. None of these are blocking.
   from the unnamed namespace in `vimbax_camera_gateway.cpp` into one new private
   `.hpp`/`.cpp` pair under `src/gateway_support/`.
 
-- [ ] **Audit all direct C++ includes bottom-up.**
+- [x] **Audit all direct C++ includes bottom-up.**
   Report which can be removed together, verify that headers still compile
   independently, and confirm the combined result with a clean full-project build.
 

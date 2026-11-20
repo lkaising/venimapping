@@ -23,6 +23,7 @@ colcon build --symlink-install # Build the workspace
 ./scripts/ide.sh              # Generate VS Code configuration
 ./scripts/tidy.sh check       # Run clang-tidy
 ./scripts/workspace.sh check  # Run the full build, tests and clang-tidy checks
+./scripts/audit-includes.sh   # Find includes that can be removed together
 ```
 
 Connect to the running dev container from an outside terminal. Run from the
