@@ -10,6 +10,9 @@ A ROS 2 project using the Allied Vision Vimba X SDK and ROS 2 camera driver.
    [ros2-jazzy-bootstrap](https://github.com/lkaising/ros2-jazzy-bootstrap),
    [vimbax-sdk-bootstrap](https://github.com/lkaising/vimbax-sdk-bootstrap), and
    [vimbax-ros2-driver-bootstrap](https://github.com/lkaising/vimbax-ros2-driver-bootstrap).
+   For the driver, set
+   `REPO_URL=https://github.com/lkaising/vimbax_ros2_driver.git` and pass
+   `--ref v1.0.1-beta1-venimapping.1`.
 2. **VS Code dev container (Apple Silicon Macs)** — follow the
    [macOS quickstart](docs/macos-quickstart.md).
 
