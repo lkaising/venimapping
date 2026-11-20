@@ -4,35 +4,13 @@ Ideas parked for later. None of these are blocking.
 
 ## Camera gateway
 
-- [x] **Add dedicated types for collection results.**
-  Give each collection its own type and header. Decide the names and
-  representations when revisiting the API.
-  - `features_list_get()` returns feature names (`std::vector<std::string>`).
-  - `feature_info_query()` returns feature metadata (`std::vector<FeatureInfo>`).
-  - `feature_raw_get()` returns raw feature bytes (`std::vector<std::uint8_t>`).
-
-- [x] **Review gateway method names.**
-  Use shorter names for the status queries and make the feature-info list result
-  explicit. Consider these renames.
-  - `connection_status_get()` → `connection_status()`
-  - `camera_status_get()` → `camera_status()`
-  - `feature_info_query()` → `feature_info_list_get()`
-  - Also consider `features_list_get()` → `feature_list_get()` to match the
-    naming pattern for list results.
-
-- [x] **Shorten the response converter signatures.**
-  Reduce the repeated `vimbax_camera_msgs::srv::` qualification in
-  `vimbax_response_conversion.hpp` and `.cpp`. Compare a namespace alias with
-  aliases for individual response types, and keep any alias narrowly scoped.
-
-- [x] **Consider moving the file-local gateway helpers.**
-  Explore moving the client creation, request construction, and wait helpers
-  from the unnamed namespace in `vimbax_camera_gateway.cpp` into one new private
-  `.hpp`/`.cpp` pair under `src/gateway_support/`.
-
-- [x] **Audit all direct C++ includes bottom-up.**
-  Report which can be removed together, verify that headers still compile
-  independently, and confirm the combined result with a clean full-project build.
+- [ ] **Remove comments and clean up formatting in the camera gateway.**
+  The long-term goal is a codebase with no comments. Start with these files.
+  - Review the comments in `types/feature_enum_info.hpp`,
+    `types/feature_info_list.hpp`, `types/feature_module.hpp`, and
+    `src/gateway_support/gateway_errors.hpp`.
+  - Review the comments and the formatting in `camera_gateway.hpp` and
+    `vimbax_camera_gateway.hpp`.
 
 - [ ] **Explore introducing an `Unexpected` type.**
   Add `using Unexpected = std::unexpected<Error>;` to `types/expected.hpp` and have
@@ -51,19 +29,7 @@ Ideas parked for later. None of these are blocking.
   fakes and future layers could still pass 0. If they are removed, also drop
   `#include <cassert>`.
 
-- [ ] **Remove comments and clean up formatting in the camera gateway.**
-  The long-term goal is a codebase with no comments. Start with these files.
-  - Review the comments in `types/feature_enum_info.hpp`,
-    `types/feature_info_list.hpp`, `types/feature_module.hpp`, and
-    `src/gateway_support/gateway_errors.hpp`.
-  - Review the comments and the formatting in `camera_gateway.hpp` and
-    `vimbax_camera_gateway.hpp`.
-
 ### Stretch goals
-
-- [x] **Revisit the names of `call_checked()` and `call()`.**
-  Rename `call_checked()` to `call_checking_driver_error()` so the name shows
-  that it also inspects the driver's error field. Keep the name `call()`.
 
 - [ ] **Explore gateway helper objects.**
   Consider a shared `ServiceCalls` helper for `call()` and
