@@ -121,7 +121,7 @@ From the repository root, run:
 ./scripts/tidy.sh check
 ```
 
-Confirm that the script exits successfully and reports no findings.
+A clean run reports “no findings” and exits with status 0. The script exits with status 1 if it finds warnings or errors or if Clang-Tidy fails. If it prints `clang-tidy failed`, open the report at the path shown for details.
 
 ## Troubleshooting
 

@@ -37,6 +37,11 @@ readonly clang_tidy="/usr/bin/clang-tidy-20"
 readonly apply_replacements="/usr/bin/clang-apply-replacements-20"
 readonly header_filter='venimapping_camera'
 
+# Diagnostics start a line or follow a file:line:col location. Source excerpts
+# and notes never match.
+readonly diagnostic_pattern='(^|:[0-9]+:[0-9]+: )(warning|error): '
+readonly check_name_pattern='\[[A-Za-z0-9_,.-]+\]$'
+
 # --- Diagnostics --------------------------------------------------------------
 
 error() {
@@ -48,26 +53,43 @@ usage() {
 Usage: ${BASH_SOURCE[0]} [check|fix]
 
   check  Run clang-tidy and export its report and suggested fixes (default).
+         Exit 1 if clang-tidy reports any warning or error, 0 if it reports
+         none.
   fix    Regenerate the fixes, apply every available fix-it, then check again.
 EOF
 }
 
+# Sets finding_count to the number of unique warning and error lines.
 print_summary() {
-  local findings
+  local diagnostics
+  local grep_status=0
+  local by_check
 
-  findings="$(
-    grep -E '\[[a-z0-9,.-]+\]$' "${report}" |
-      sort -u |
-      grep -oE '\[[a-z0-9,.-]+\]$' |
-      sort |
-      uniq -c |
-      sort -rn || true
-  )"
+  diagnostics="$(grep -E "${diagnostic_pattern}" "${report}")" ||
+    grep_status=$?
 
-  if [[ -n "${findings}" ]]; then
-    printf '\n[venimapping] findings by check:\n%s\n' "${findings}"
-  else
+  if (( grep_status > 1 )); then
+    error "cannot search the clang-tidy report: ${report}"
+    return 1
+  fi
+
+  diagnostics="$(sort -u <<<"${diagnostics}")"
+
+  if [[ -z "${diagnostics}" ]]; then
+    finding_count=0
     printf '\n[venimapping] no findings\n'
+  else
+    finding_count="$(wc -l <<<"${diagnostics}")"
+    by_check="$(
+      sed -E "s/.*(${check_name_pattern})/\1/; t; s/.*/[no check name]/" \
+        <<<"${diagnostics}" |
+        sort |
+        uniq -c |
+        sort -rn
+    )"
+    printf '\n[venimapping] findings:\n%s\n' "${diagnostics}"
+    printf '\n[venimapping] findings by check:\n%s\n' "${by_check}"
+    printf '[venimapping] total findings: %d\n' "${finding_count}"
   fi
 
   printf '\n[venimapping] report: %s\n' "${report#"${project_root}/"}"
@@ -140,6 +162,8 @@ mkdir -p -- "${output_dir}"
 
 # --- Analysis -----------------------------------------------------------------
 
+finding_count=0
+
 run_tidy() {
   local action="$1"
 
@@ -169,6 +193,10 @@ if ! run_tidy "running clang-tidy..."; then
 fi
 
 if [[ "${mode}" == "check" ]]; then
+  if (( finding_count > 0 )); then
+    error "clang-tidy check failed (findings: ${finding_count})"
+    exit 1
+  fi
   exit 0
 fi
 
