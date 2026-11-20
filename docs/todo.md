@@ -30,11 +30,9 @@ Ideas parked for later. None of these are blocking.
   from the unnamed namespace in `vimbax_camera_gateway.cpp` into one new private
   `.hpp`/`.cpp` pair under `src/gateway_support/`.
 
-- [ ] **Trim standard-library includes bottom-up.**
-  Work from the deepest headers in the include graph toward the files that use
-  them. Remove direct standard-library includes wherever existing dependencies,
-  including ROS 2 headers, already supply them. Use a full-project build to
-  verify the removals. Consider scripting the process so it can be repeated.
+- [ ] **Audit all direct C++ includes bottom-up.**
+  Report which can be removed together, verify that headers still compile
+  independently, and confirm the combined result with a clean full-project build.
 
 - [ ] **Explore introducing an `Unexpected` type.**
   Add `using Unexpected = std::unexpected<Error>;` to `types/expected.hpp` and have
