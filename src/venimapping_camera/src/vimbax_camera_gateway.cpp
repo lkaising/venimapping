@@ -8,17 +8,6 @@
 
 #include "venimapping_camera/vimbax_camera_gateway.hpp"
 
-#include <chrono>
-#include <cstdint>
-#include <exception>
-#include <expected>
-#include <format>
-#include <memory>
-#include <string>
-#include <thread>
-#include <utility>
-
-#include "gateway_support/gateway_errors.hpp"
 #include "gateway_support/vimbax_response_conversion.hpp"
 #include "gateway_support/vimbax_service_calls.hpp"
 

@@ -8,10 +8,6 @@
 
 #include "gateway_errors.hpp"
 
-#include <cstdint>
-#include <string>
-#include <utility>
-
 namespace venimapping::camera::gateway_support {
 
 Error gateway_error(GatewayDiagnostic diagnostic, std::string text)

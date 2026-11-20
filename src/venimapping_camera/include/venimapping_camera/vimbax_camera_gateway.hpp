@@ -8,15 +8,6 @@
 
 #pragma once
 
-#include <atomic>
-#include <chrono>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <thread>
-
-#include "rclcpp/client.hpp"
-#include "rclcpp/context.hpp"
 #include "rclcpp/node.hpp"
 #include "vimbax_camera_msgs/srv/connection_status.hpp"
 #include "vimbax_camera_msgs/srv/feature_access_mode_get.hpp"

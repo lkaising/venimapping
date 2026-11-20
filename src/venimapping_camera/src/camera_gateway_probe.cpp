@@ -6,25 +6,8 @@
 //  Copyright (C) 2026 Logan Kaising.  All rights reserved.
 // -----------------------------------------------------------------------------
 
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <exception>
-#include <functional>
-#include <memory>
-#include <string>
-#include <thread>
-#include <utility>
-#include <vector>
-
 #include "rclcpp/rclcpp.hpp"
 
-#include "venimapping_camera/camera_gateway.hpp"
-#include "venimapping_camera/types/expected.hpp"
 #include "venimapping_camera/vimbax_camera_gateway.hpp"
 
 namespace {

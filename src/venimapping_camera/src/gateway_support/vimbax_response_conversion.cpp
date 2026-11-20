@@ -8,12 +8,6 @@
 
 #include "vimbax_response_conversion.hpp"
 
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
-
 namespace venimapping::camera::gateway_support {
 
 namespace {

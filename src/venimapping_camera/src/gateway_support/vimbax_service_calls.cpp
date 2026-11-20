@@ -8,14 +8,6 @@
 
 #include "vimbax_service_calls.hpp"
 
-#include <algorithm>
-#include <chrono>
-#include <expected>
-#include <format>
-#include <string_view>
-
-#include "rclcpp/utilities.hpp"
-
 namespace venimapping::camera::gateway_support {
 
 Expected<void> wait_for_service(rclcpp::ClientBase& client,
