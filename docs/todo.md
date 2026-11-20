@@ -80,7 +80,7 @@ works around. Driver fork tag `v1.0.1-beta1-venimapping.1`, which the project no
 builds, fixes both. Revisit each one if upstream fixes it.
 
 - [x] **Add `FeatureFlags` to `FeatureInfo` once upstream reports them correctly.**
-  `types/feature_info.hpp` leaves out the `flags` field of
+  `types/feature_info_list.hpp` leaves out the `flags` field of
   `vimbax_camera_msgs/msg/FeatureInfo` because its values are wrong.
   `VimbaXCamera::feature_info_query_list` in `vimbax_camera/src/vimbax_camera.cpp`
   (lines 1241 to 1249) derives every flag from `vmb_info.featureDataType` instead of
