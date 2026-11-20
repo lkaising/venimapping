@@ -37,8 +37,6 @@ readonly clang_tidy="/usr/bin/clang-tidy-20"
 readonly apply_replacements="/usr/bin/clang-apply-replacements-20"
 readonly header_filter='venimapping_camera'
 
-# Diagnostics start a line or follow a file:line:col location. Source excerpts
-# and notes never match.
 readonly diagnostic_pattern='(^|:[0-9]+:[0-9]+: )(warning|error): '
 readonly check_name_pattern='\[[A-Za-z0-9_,.-]+\]$'
 
@@ -59,7 +57,6 @@ Usage: ${BASH_SOURCE[0]} [check|fix]
 EOF
 }
 
-# Sets finding_count to the number of unique warning and error lines.
 print_summary() {
   local diagnostics
   local grep_status=0
