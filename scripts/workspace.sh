@@ -141,7 +141,7 @@ step "generating the VS Code config (scripts/ide.sh)"
 if [[ "${mode}" == "check" ]]; then
   step "running clang-tidy (scripts/tidy.sh check)"
   if ! "${script_dir}/tidy.sh" check; then
-    error "clang-tidy check failed: ${tidy_report#"${project_root}/"}"
+    error "see ${tidy_report#"${project_root}/"}"
     exit 1
   fi
 

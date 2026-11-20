@@ -121,7 +121,7 @@ From the repository root, run:
 ./scripts/tidy.sh check
 ```
 
-A clean run reports “no findings” and exits with status 0. The script exits with status 1 if it finds warnings or errors or if Clang-Tidy fails. If it prints `clang-tidy failed`, open the report at the path shown for details.
+A clean run prints `no findings` and exits with status 0. If Clang-Tidy reports any warning or error, the script lists each one with its file and line and exits with status 1. If it prints `clang-tidy failed` instead, Clang-Tidy could not finish (usually because a file did not compile); see `build/venimapping_camera/tidy/report.txt` for details.
 
 ## Troubleshooting
 

@@ -37,7 +37,7 @@ readonly clang_tidy="/usr/bin/clang-tidy-20"
 readonly apply_replacements="/usr/bin/clang-apply-replacements-20"
 readonly header_filter='venimapping_camera'
 
-readonly diagnostic_pattern='(^|:[0-9]+:[0-9]+: )(warning|error): '
+readonly diagnostic_pattern='^([^[:space:]|:]([^|:]|:[^ |])*:[0-9]+:[0-9]+: )?(warning|error): '
 readonly check_name_pattern='\[[A-Za-z0-9_,.-]+\]$'
 
 # --- Diagnostics --------------------------------------------------------------
@@ -70,7 +70,10 @@ print_summary() {
     return 1
   fi
 
-  diagnostics="$(sort -u <<<"${diagnostics}")"
+  diagnostics="$(
+    LC_ALL=C sort -u <<<"${diagnostics}" |
+      LC_ALL=C sort -t: -k1,1 -k2,2n -k3,3n
+  )"
 
   if [[ -z "${diagnostics}" ]]; then
     finding_count=0
