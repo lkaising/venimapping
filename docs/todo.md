@@ -51,6 +51,14 @@ Ideas parked for later. None of these are blocking.
   fakes and future layers could still pass 0. If they are removed, also drop
   `#include <cassert>`.
 
+- [ ] **Remove comments and clean up formatting in the camera gateway.**
+  The long-term goal is a codebase with no comments. Start with these files.
+  - Review the comments in `types/feature_enum_info.hpp`,
+    `types/feature_info_list.hpp`, `types/feature_module.hpp`, and
+    `src/gateway_support/gateway_errors.hpp`.
+  - Review the comments and the formatting in `camera_gateway.hpp` and
+    `vimbax_camera_gateway.hpp`.
+
 ### Stretch goals
 
 - [x] **Revisit the names of `call_checked()` and `call()`.**
