@@ -211,8 +211,9 @@ auto VimbaXCameraGateway::call(Client<Service>& client, RequestPtr<Service> requ
 }
 
 template <typename Service>
-auto VimbaXCameraGateway::call_checked(Client<Service>& client, RequestPtr<Service> request)
-    -> Expected<ResponsePtr<Service>>
+auto VimbaXCameraGateway::call_checking_driver_error(
+    Client<Service>& client,
+    RequestPtr<Service> request) -> Expected<ResponsePtr<Service>>
 {
   auto response = call<Service>(client, std::move(request));
   if (!response) {
@@ -239,7 +240,7 @@ Expected<bool> VimbaXCameraGateway::connection_status()
 Expected<CameraStatus> VimbaXCameraGateway::camera_status()
 {
   using ServiceT = vimbax_camera_msgs::srv::Status;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *status_client_,
              std::make_shared<ServiceT::Request>())
       .transform([](const auto& response) {
@@ -250,7 +251,7 @@ Expected<CameraStatus> VimbaXCameraGateway::camera_status()
 Expected<void> VimbaXCameraGateway::stream_start()
 {
   using ServiceT = vimbax_camera_msgs::srv::StreamStartStop;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *stream_start_client_,
              std::make_shared<ServiceT::Request>())
       .transform([](const auto&) {});
@@ -259,7 +260,7 @@ Expected<void> VimbaXCameraGateway::stream_start()
 Expected<void> VimbaXCameraGateway::stream_stop()
 {
   using ServiceT = vimbax_camera_msgs::srv::StreamStartStop;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *stream_stop_client_,
              std::make_shared<ServiceT::Request>())
       .transform([](const auto&) {});
@@ -270,7 +271,7 @@ Expected<void> VimbaXCameraGateway::settings_save(const std::string& filename)
   using ServiceT = vimbax_camera_msgs::srv::SettingsLoadSave;
   auto request = std::make_shared<ServiceT::Request>();
   request->filename = filename;
-  return call_checked<ServiceT>(*settings_save_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*settings_save_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -279,7 +280,7 @@ Expected<void> VimbaXCameraGateway::settings_load(const std::string& filename)
   using ServiceT = vimbax_camera_msgs::srv::SettingsLoadSave;
   auto request = std::make_shared<ServiceT::Request>();
   request->filename = filename;
-  return call_checked<ServiceT>(*settings_load_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*settings_load_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -287,7 +288,7 @@ Expected<FeatureList> VimbaXCameraGateway::feature_list_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeaturesListGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *features_list_get_client_,
              gateway_support::make_module_request<ServiceT>(feature_module))
       .transform([](const auto& response) {
@@ -302,7 +303,7 @@ Expected<FeatureInfoList> VimbaXCameraGateway::feature_info_list_get(
   using ServiceT = vimbax_camera_msgs::srv::FeatureInfoQuery;
   auto request = gateway_support::make_module_request<ServiceT>(feature_module);
   request->feature_names = feature_list.names;
-  return call_checked<ServiceT>(*feature_info_query_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_info_query_client_, std::move(request))
       .transform([](const auto& response) {
         return gateway_support::to_feature_info_list(*response);
       });
@@ -313,7 +314,7 @@ Expected<FeatureAccessMode> VimbaXCameraGateway::feature_access_mode_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureAccessModeGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_access_mode_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
@@ -326,7 +327,7 @@ Expected<std::int64_t> VimbaXCameraGateway::feature_int_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureIntGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_int_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return response->value; });
@@ -340,7 +341,7 @@ Expected<void> VimbaXCameraGateway::feature_int_set(
   using ServiceT = vimbax_camera_msgs::srv::FeatureIntSet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->value = value;
-  return call_checked<ServiceT>(*feature_int_set_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_int_set_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -349,7 +350,7 @@ Expected<FeatureIntInfo> VimbaXCameraGateway::feature_int_info_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureIntInfoGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_int_info_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
@@ -362,7 +363,7 @@ Expected<double> VimbaXCameraGateway::feature_float_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_float_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return response->value; });
@@ -376,7 +377,7 @@ Expected<void> VimbaXCameraGateway::feature_float_set(
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatSet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->value = value;
-  return call_checked<ServiceT>(*feature_float_set_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_float_set_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -385,7 +386,7 @@ Expected<FeatureFloatInfo> VimbaXCameraGateway::feature_float_info_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureFloatInfoGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_float_info_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
@@ -398,7 +399,7 @@ Expected<std::string> VimbaXCameraGateway::feature_string_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureStringGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_string_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return std::move(response->value); });
@@ -412,7 +413,7 @@ Expected<void> VimbaXCameraGateway::feature_string_set(
   using ServiceT = vimbax_camera_msgs::srv::FeatureStringSet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->value = value;
-  return call_checked<ServiceT>(*feature_string_set_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_string_set_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -421,7 +422,7 @@ Expected<std::int64_t> VimbaXCameraGateway::feature_string_info_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureStringInfoGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_string_info_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return response->max_length; });
@@ -432,7 +433,7 @@ Expected<bool> VimbaXCameraGateway::feature_bool_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureBoolGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_bool_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return response->value; });
@@ -446,7 +447,7 @@ Expected<void> VimbaXCameraGateway::feature_bool_set(
   using ServiceT = vimbax_camera_msgs::srv::FeatureBoolSet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->value = value;
-  return call_checked<ServiceT>(*feature_bool_set_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_bool_set_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -455,7 +456,7 @@ Expected<std::string> VimbaXCameraGateway::feature_enum_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_enum_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return std::move(response->value); });
@@ -469,7 +470,7 @@ Expected<void> VimbaXCameraGateway::feature_enum_set(
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumSet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->value = value;
-  return call_checked<ServiceT>(*feature_enum_set_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_enum_set_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -478,7 +479,7 @@ Expected<FeatureEnumInfo> VimbaXCameraGateway::feature_enum_info_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumInfoGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_enum_info_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
@@ -494,7 +495,7 @@ Expected<std::int64_t> VimbaXCameraGateway::feature_enum_as_int_get(
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumAsIntGet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->option = option;
-  return call_checked<ServiceT>(*feature_enum_as_int_get_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_enum_as_int_get_client_, std::move(request))
       .transform([](const auto& response) { return response->value; });
 }
 
@@ -506,7 +507,9 @@ Expected<std::string> VimbaXCameraGateway::feature_enum_as_string_get(
   using ServiceT = vimbax_camera_msgs::srv::FeatureEnumAsStringGet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->value = value;
-  return call_checked<ServiceT>(*feature_enum_as_string_get_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(
+             *feature_enum_as_string_get_client_,
+             std::move(request))
       .transform([](const auto& response) { return std::move(response->option); });
 }
 
@@ -515,7 +518,7 @@ Expected<void> VimbaXCameraGateway::feature_command_run(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureCommandRun;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_command_run_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto&) {});
@@ -526,7 +529,7 @@ Expected<bool> VimbaXCameraGateway::feature_command_is_done(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureCommandIsDone;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_command_is_done_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return response->is_done; });
@@ -537,7 +540,7 @@ Expected<FeatureRawValue> VimbaXCameraGateway::feature_raw_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureRawGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_raw_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) {
@@ -553,7 +556,7 @@ Expected<void> VimbaXCameraGateway::feature_raw_set(
   using ServiceT = vimbax_camera_msgs::srv::FeatureRawSet;
   auto request = gateway_support::make_feature_request<ServiceT>(feature_name, feature_module);
   request->buffer = value.bytes;
-  return call_checked<ServiceT>(*feature_raw_set_client_, std::move(request))
+  return call_checking_driver_error<ServiceT>(*feature_raw_set_client_, std::move(request))
       .transform([](const auto&) {});
 }
 
@@ -562,7 +565,7 @@ Expected<std::int64_t> VimbaXCameraGateway::feature_raw_info_get(
     FeatureModule feature_module)
 {
   using ServiceT = vimbax_camera_msgs::srv::FeatureRawInfoGet;
-  return call_checked<ServiceT>(
+  return call_checking_driver_error<ServiceT>(
              *feature_raw_info_get_client_,
              gateway_support::make_feature_request<ServiceT>(feature_name, feature_module))
       .transform([](const auto& response) { return response->max_length; });

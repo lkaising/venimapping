@@ -189,8 +189,9 @@ class VimbaXCameraGateway final : public CameraGateway {
                                                     RequestPtr<Service> request);
 
   template <typename Service>
-  [[nodiscard]] Expected<ResponsePtr<Service>> call_checked(Client<Service>& client,
-                                                            RequestPtr<Service> request);
+  [[nodiscard]] Expected<ResponsePtr<Service>> call_checking_driver_error(
+      Client<Service>& client,
+      RequestPtr<Service> request);
 
   [[nodiscard]] Expected<void> check_callable_from_this_thread() const;
 

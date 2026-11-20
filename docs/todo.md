@@ -53,16 +53,16 @@ Ideas parked for later. None of these are blocking.
 
 ### Stretch goals
 
-- [ ] **Revisit the names of `call_checked()` and `call()`.**
-  Find a name that makes it clear that `call_checked()` also inspects the
-  driver's error field. Revisit `call()` if naming the pair together helps
-  clarify their roles.
+- [x] **Revisit the names of `call_checked()` and `call()`.**
+  Rename `call_checked()` to `call_checking_driver_error()` so the name shows
+  that it also inspects the driver's error field. Keep the name `call()`.
 
 - [ ] **Explore gateway helper objects.**
-  Consider a shared `ServiceCalls` helper for `call()` and `call_checked()`,
-  with separate helpers for groups of camera operations. The concrete gateway
-  would construct the helpers and forward its public methods to them. The
-  operation groups and where threading belongs are open questions.
+  Consider a shared `ServiceCalls` helper for `call()` and
+  `call_checking_driver_error()`, with separate helpers for groups of camera
+  operations. The concrete gateway would construct the helpers and forward its
+  public methods to them. The operation groups and where threading belongs are
+  open questions.
 
 - [ ] **Explore simpler gateway startup and thread ownership.**
   The probe starts the ROS executor on a separate thread, creates the gateway,
