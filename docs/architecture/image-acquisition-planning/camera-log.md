@@ -12,3 +12,15 @@ Runner cleanup:
 - Features restored and verified: True
 - Driver processes left: []
 
+## c2 (claude, 2026-11-23T01:03:47-05:00)
+
+Question: Answer T6 in coordinator/facts.md. Does the camera offer TriggerSelector FrameStart, TriggerSource Software, and the TriggerSoftware command? With FrameStart, TriggerMode On, and TriggerSource Software, does one features/command_run TriggerSoftware give exactly one image_raw frame after a quiet interval of 2 s? What is the time from the command_run call to the frame header, over five commands? Rules: Keep the current PixelFormat. Call stream_start only if it is on the driver gate list. Before any write, set TriggerSelector to FrameStart and read TriggerMode and TriggerSource. Do not call the status service between a TriggerSelector write and a TriggerMode or TriggerSource write, because status moves TriggerSelector. After the test, run stream_stop, set TriggerSelector to FrameStart, and write back the TriggerMode and TriggerSource values that you read. The runner then restores TriggerSelector. If the camera lacks FrameStart, Software, or TriggerSoftware, report that and do not stream.
+
+Result file: `docs/architecture/image-acquisition-planning/claude/camera/c2.md`
+
+Runner cleanup:
+
+- Stream stopped and verified: True
+- Features restored and verified: True
+- Driver processes left: []
+

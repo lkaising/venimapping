@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T01:03:46-05:00
-- Last completed checkpoint: camera-c1 (this commit)
+- Updated: 2026-11-23T01:13:42-05:00
+- Last completed checkpoint: camera-c2 (this commit)
 - Push pending: False
 
 ## Next step
@@ -38,5 +38,5 @@ If the workstation restarted, run this command from the worktree root. The runne
 | prose | claude | pending | 0 |  |
 | meaning-check | codex | pending | 0 |  |
 | finish | claude | pending | 0 |  |
-| camera-c1 | claude | done | 1 |  |
-| camera-c2 | claude | pending | 0 |  |
+| camera-c1 | claude | done | 1 | 3ace405867 |
+| camera-c2 | claude | done | 1 |  |
