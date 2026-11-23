@@ -1,0 +1,61 @@
+{
+  "progress": {"closed": 3, "open": 26, "for_logan": 1},
+  "tasks": [
+    {
+      "id": "fix-codex-r1",
+      "template": "fix",
+      "tool": "codex",
+      "params": {
+        "round": "1",
+        "issues": "i1,i2,i3,i4,i5,i6,i7,i8,i9",
+        "sections": "data-plane"
+      },
+      "deps": [],
+      "blocks": []
+    },
+    {
+      "id": "recheck-claude-r1",
+      "template": "recheck",
+      "tool": "claude",
+      "params": {
+        "round": "1",
+        "issues": "i1,i2,i3,i4,i5,i6,i7,i8,i9",
+        "sections": "data-plane"
+      },
+      "deps": ["fix-codex-r1"],
+      "blocks": []
+    },
+    {
+      "id": "fix-claude-r1",
+      "template": "fix",
+      "tool": "claude",
+      "params": {
+        "round": "1",
+        "issues": "i10,i11,i13,i14,i15,i16,i17,i18,i19,i20,i21,i22,i23,i24,i25,i26,i27",
+        "sections": "control-plane,error-vocabulary,bring-up,testing,implementation-sequence"
+      },
+      "deps": ["fix-codex-r1"],
+      "blocks": []
+    },
+    {
+      "id": "recheck-codex-r1",
+      "template": "recheck",
+      "tool": "codex",
+      "params": {
+        "round": "1",
+        "issues": "i10,i11,i13,i14,i15,i16,i17,i18,i19,i20,i21,i22,i23,i24,i25,i26,i27",
+        "sections": "control-plane,error-vocabulary,bring-up,testing,implementation-sequence"
+      },
+      "deps": ["fix-claude-r1"],
+      "blocks": []
+    },
+    {
+      "id": "integrate-2",
+      "template": "integrate",
+      "tool": "claude",
+      "params": {"round": "2"},
+      "deps": ["fix-codex-r1", "recheck-claude-r1", "fix-claude-r1", "recheck-codex-r1"],
+      "blocks": ["prose"]
+    }
+  ]
+}
