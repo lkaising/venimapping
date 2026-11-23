@@ -1,0 +1,37 @@
+{
+  "progress": {"closed": 3, "open": 1, "for_logan": 1},
+  "tasks": [
+    {
+      "id": "fix-claude-r4",
+      "template": "fix",
+      "tool": "claude",
+      "params": {
+        "round": "4",
+        "issues": "i15",
+        "sections": "control-plane,testing,implementation-sequence"
+      },
+      "deps": [],
+      "blocks": []
+    },
+    {
+      "id": "recheck-codex-r4",
+      "template": "recheck",
+      "tool": "codex",
+      "params": {
+        "round": "4",
+        "issues": "i15",
+        "sections": "control-plane,testing,implementation-sequence"
+      },
+      "deps": ["fix-claude-r4"],
+      "blocks": []
+    },
+    {
+      "id": "integrate-5",
+      "template": "integrate",
+      "tool": "claude",
+      "params": {"round": "5"},
+      "deps": ["fix-claude-r4", "recheck-codex-r4"],
+      "blocks": ["prose"]
+    }
+  ]
+}
