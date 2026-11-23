@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T17:30:08-05:00
-- Last completed checkpoint: meaning-check (this commit)
+- Updated: 2026-11-23T17:35:13-05:00
+- Last completed checkpoint: finish (this commit)
 - Push pending: False
 
 ## Next step
@@ -38,8 +38,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | review-codex | codex | done | 1 | 8d2c7604b0 |
 | integrate-1 | claude | done | 1 | d8c43edaea |
 | prose | claude | done | 1 | c44a4e226b |
-| meaning-check | codex | done | 1 |  |
-| finish | claude | pending | 0 |  |
+| meaning-check | codex | done | 1 | 5e47a37348 |
+| finish | claude | done | 1 |  |
 | camera-c1 | claude | done | 1 | 3ace405867 |
 | camera-c2 | claude | done | 1 | 25faa9d303 |
 | camera-c3 | codex | done | 1 | 44322da0e5 |

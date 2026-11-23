@@ -151,8 +151,7 @@ c1, formats, size, rate, stamps, start latency, and access modes:
 
 | Question | Result | Source |
 |---|---|---|
-| Formats offered and on the gate (T1) | The camera offers Mono8, Mono10, Mono10p, Mono12, Mono12p, Mono12Packed. Only Mono8 and Mono12 pass the driver gate. The default is Mono8. | c1 §3.1 |
-| Format refusal | A start at a format that is not on the gate, for example Mono10, returns -18 and leaves the driver in `kStarting`. | c1 §3.1 item 2 |
+| Formats offered (T1) | The camera offers Mono8, Mono10, Mono10p, Mono12, Mono12p, Mono12Packed. The default after driver start is Mono8. Streams at Mono8 and at Mono12 ran with no error. | c1 §2.1 step 3, §3.1 |
 | Size and payload (T2) | Full sensor 1296 x 1032. Mono8 1,337,472 bytes, `step` 1296. Mono12 2,674,944 bytes, `step` 2592. | c1 §3.2 |
 | Free-run rate (T3) | 69.721 Hz Mono8, intervals 13 to 16 ms, 93.2 MB/s. 45.124 Hz Mono12, intervals 21 to 23 ms. `ExposureTime` 4999.455 us. | c1 §3.3 |
 | Timestamp (T4) | No `DeviceTimestampFrequency`. The header stamp is camera-clock nanoseconds, about 12674 s, not comparable with host time. Drift 13 ppm or less over 42 s. | c1 §3.4 |
@@ -160,8 +159,13 @@ c1, formats, size, rate, stamps, start latency, and access modes:
 | CLI call time | 586.6 ms per call. It includes process start and discovery, so it does not predict an in-process gateway call. | c1 §3.5 item 4 |
 | Calibration | No calibration file exists for this camera. | c1 §3.5 item 5 |
 | Access while streaming (T7) | `PixelFormat`, `Width`, and `TriggerMode` become read only. `ExposureTime` and `AcquisitionFrameRateEnable` stay writable. `AcquisitionFrameRate` is read only while the enable is false. | c1 §3.6 |
-| Power-on rate state (T8) | `AcquisitionFrameRateEnable` exists and is false. Free run then gives the 69.7 Hz maximum. | c1 §3.6 item 2, §3.7 |
+| Initial rate state at the check (T8) | `AcquisitionFrameRateEnable` exists. At the start of c1 it read false, and `AcquisitionFrameRate` read 69.71556 Hz. Free run then gave 69.7 Hz. c1 made no power cycle, so this is the observed state at the check, not a measured power-on default. | c1 §2.1 steps 8 and 9, §3.7 item 1 |
 | Driver loss log | No "frames missing" and no "Frame with status" line in about 3100 Mono8 frames and 630 Mono12 frames at `buffer_count` 7. | c1 §3.7 item 2 |
+
+Driver gate facts for the c1 formats. These come from the driver source and not from a check. c1 did not start a stream in a format that the gate refuses (c1 §5 item 8).
+
+1. `[F]` Formats on the gate. Of the six offered formats, only Mono8 and Mono12 pass the driver start gate (`driver:vimbax_camera/src/vimbax_camera.cpp:1621-1651`).
+2. `[F]` Format refusal. A `stream_start` at an offered format that is not on the gate, for example Mono10, returns -18 (`VmbErrorNotSupported`) before `CaptureStart`. It leaves the driver in `kStarting` (`driver:vimbax_camera/src/vimbax_camera.cpp:414-431`, `vimbax:api/include/VmbC/VmbCommonTypes.h:243`).
 
 c2, software trigger:
 
@@ -169,9 +173,11 @@ c2, software trigger:
 |---|---|---|
 | Trigger features (T6) | `TriggerSelector` `FrameStart`, `TriggerSource` `Software`, and the `TriggerSoftware` command exist. | c2 §3.1 |
 | One command, one frame | With `TriggerMode` `On` under `FrameStart`, each of the 7 commands that gave a frame gave exactly one. Commands 1 and 6 returned error code 0 and gave no frame. Command 1 had no selector write before it. c2 attributes command 6 to a `status` call that moved the selector. | c2 §3.2, §3.3 |
-| Selector dependency | `TriggerSoftware` follows the current `TriggerSelector`. A `status` call between a selector write and a mode write sent the mode write to the wrong selector at least 3 times in 13 windows. | c2 §3.3 |
+| Selector writes | Command 1 had no selector write before it and gave no frame. Seven of the eight commands with a `FrameStart` write just before them gave one frame. A `status` call between a selector write and a mode write sent the mode write to the wrong selector at least 3 times in 13 windows. | c2 §3.3 items 1, 2, 5, 6 |
 | Selector during a stream | `TriggerSelector` is writable during acquisition. Runner `status` calls moved it many times during both streams, and `TriggerMode` under `FrameStart` did not change. | c2 §3.3 item 7, §5 item 9 |
-| Latency | The frame arrives about 76 to 101 ms before the `command_run` reply. | c2 §3.4 |
+| CLI command timing | One `command_run` took 577.9 to 589.4 ms of CLI time. The request reached the driver about 273 to 284 ms after the CLI start. | c2 §3.4 |
+
+`[A]` Selector dependency. c2 infers from the command outcomes that `TriggerSoftware` acts on the selector that is current when it runs (c2 §3.3 item 3). No check read the selector at the moment of each command.
 
 c3, 30 Hz rate profile:
 
@@ -179,7 +185,7 @@ c3, 30 Hz rate profile:
 |---|---|---|
 | Rate access after enable (T8) | With `AcquisitionFrameRateEnable` true and the stream stopped, `AcquisitionFrameRate` is readable and writable. Range 1.04e-05 to 69.71556 Hz. | c3 §3 items 1, 2 |
 | 30.0 Hz write | The write succeeded. The read back was 30.000001907348633 Hz. | c3 §3 item 3 |
-| Delivered rate | 30.010 Hz over a window of 555 messages, intervals 32 to 34 ms. The longest interval was 34 ms. | c3 §3 item 4 |
+| Delivered rate | 30.010 Hz over a window of 555 inter-message intervals, intervals 32 to 34 ms. The longest interval was 34 ms. | c3 §3 item 4 |
 
 ### Derived estimates
 
@@ -189,18 +195,20 @@ Each row comes from arithmetic on the measured results. No check measured it dir
 |---|---|---|
 | Mono8 frame is 1.34 MB. Four distinct payloads are 5,349,888 bytes. | 1,337,472 bytes per frame, times 4 | Memory bound in the data plane |
 | Cold `stream_start` reply about 110 ms after the driver starts to handle the call | 30 ms to the first frame plus 79 ms to the reply, 109 ms | Cold get image time, first-frame limit |
-| In-process trigger latency about 17 to 32 ms after the command is sent | c2 §3.4 | Phase 2 trigger path only |
+| In-process trigger latency about 17 to 32 ms after the command is sent | c2 reconstruction from the CLI and driver log times, and a physical floor of 5.0 ms exposure, 10.7 ms link transfer, and 1.4 to 2.3 ms DDS (c2 §3.4 items 1 to 3) | Phase 2 trigger path only |
+| The trigger frame arrives about 76 to 101 ms before the `command_run` reply | c2 reconstruction from the CLI exit time less the 190 to 200 ms after the reply (c2 §3.4 item 4). The 100 ms command poll in the driver agrees with the order (`driver:vimbax_camera/src/vimbax_camera.cpp:674-688`) | Phase 2 trigger path only |
+| Warm get image limit of 67 ms in the `get_image` probe mode | Two frame periods at 30 Hz, 2 / 30 Hz. c1 states the warm wait as at most two frame periods (c1 §4, row R7) | Probe pass condition |
 | Five frame periods are 167 ms at 30 Hz | 5 / 30 Hz | Silence threshold of 250 ms |
 | Float tolerance 0.001 against a read back error of 1.9e-6 Hz | 30.000001907348633 minus 30.0 | Profile comparison |
 | Warm get image about one frame period, 33 ms at 30 Hz | 1 / 30 Hz | Get image timing |
 | Without a deadline, a camera that does not answer blocks a cold `feed_open` for about 50 s | About 25 calls at the 2000 ms gateway timeout. These are 8 reads, up to 8 writes, 8 reads, and `stream_start` | `FeedOptions::deadline` |
-| The first-frame limit of 2000 ms is about 18 times the 110 ms start | 2000 / 110 | Bring-up check |
+| The first-frame limit of 2000 ms is about 18 times the 110 ms from the start of `stream_start` handling to its reply. The first frame comes before the reply. | 2000 / 110 | Bring-up check |
 
 ### Rules that rest on these measurements
 
 | Design rule | Measurement |
 |---|---|
-| Format allow-list and the check before `stream_start` | Format refusal, formats on the gate |
+| Format allow-list and the check before `stream_start` | Formats offered, and the driver gate facts (format refusal, formats on the gate) |
 | Byte bounds and memory estimates | Size and payload, free-run rate |
 | Match before start, admission before `stream_start` | Start latency |
 | Stamp basis check of 1 s | Timestamp |
@@ -208,7 +216,7 @@ Each row comes from arithmetic on the measured results. No check measured it dir
 | 30 Hz profile, enable written before the rate, tolerance 0.001 | Rate access after enable, 30.0 Hz write |
 | Silence floor of 250 ms | Delivered rate at 30 Hz, free-run intervals at 69.7 Hz |
 | `buffer_count` 7 | Driver loss log |
-| Selector write before each `TriggerMode` read | Selector dependency, selector during a stream |
+| Selector write before each `TriggerMode` read | Selector writes, selector during a stream, and the selector dependency inference |
 | No software trigger in phase 1 | Trigger features, one command one frame |
 
 ### Questions that no check answered
@@ -234,7 +242,7 @@ No requirement below has an answer from Logan. Each row is a working assumption 
 | R4 | Feed frame rate | 30 Hz Mono8 free run. The design must also carry 69.7 Hz Mono8, 93.2 MB/s. | Subscriber QoS, queue and `buffer_count`, bring-up profile, outage threshold | Low |
 | R5 | Memory budget for held frames | At most `(queue capacity + frames the consumer holds) x 1.34 MB` per subscription | Queue and `buffer_count`, `ImageFrame` contract, several consumers | Low |
 | R6 | Freshness for get image | "Received after the request" is enough. | Get image freshness, get image source, deadline, L4 | Medium |
-| R7 | Maximum wait for get image | Cold up to 2 s. Warm about one frame period, 33 ms at 30 Hz. | Idle behavior, get image deadline, L6 | Low above 200 ms |
+| R7 | Maximum wait for get image | Cold up to 2 s. Warm about one frame period, 33 ms at 30 Hz. | Idle behavior, get image deadline, L6 | Low for a cold limit of about 200 ms or more. A lower cold limit needs a linger (L6). |
 | R8 | Get image rate and overlap | Less than once per second. It may overlap a feed and must not stop it. | Several consumers, idle behavior, get image during a feed, L6 | Low |
 | R9 | Feed loss tolerance | The feed may drop frames. Newer frames have priority. Each visible drop is counted. | Subscriber QoS, queue and `buffer_count`, loss reporting, L1, L7 | High if loss must be zero |
 | R10 | Time basis | Consumers need a stamp on the host clock. No PTP or hardware sync. | Timestamp source, L1 | Medium |
@@ -335,7 +343,7 @@ The control plane and the policy layer are one class, `AcquisitionController`. I
 
 ### Build targets
 
-All targets are in `venimapping_camera`. Each library has its own `install(TARGETS ... EXPORT export_${PROJECT_NAME})` call. The section "Implementation sequence" gives the CMake layout rules.
+All targets are in `venimapping_camera`. Each library has its own `install(TARGETS ... EXPORT export_${PROJECT_NAME})` call. Section 12, "CMake layout", gives the install and export rules.
 
 | Target | Kind | Links |
 |---|---|---|
@@ -387,7 +395,11 @@ The shared owner means that fan-out adds no pixel copy. A copy per consumer woul
 
 ### Source, subscription, and backpressure
 
-`VimbaXFrameSource` keeps one ROS subscription for its lifetime, including while idle. The idle subscription means a cold request never waits for a new match, and it removes the need to create a subscription for each get image call. [F] rclcpp states no frequency rule against short-lived subscriptions (`ros:ros2/rclcpp/rclcpp/include/rclcpp/wait_for_message.hpp:31-48`, `:80-103`), so a rule against temporary subscriptions is not the reason. `FrameSource::subscribe` opens an empty project queue. The controller owns stream operations and leases. Get image opens its own capacity-1 subscription on the same source.
+`VimbaXFrameSource` keeps one ROS subscription for its lifetime, including while idle. The persistent reader removes the need to create a subscription for each get image call, and it stays matched between requests. The worker still checks for a matched publisher before each start. That check can wait up to 1000 ms, inside the request deadline (section 8, "Start sequence", step 6). A cold request can arrive before discovery ends, or after the driver publisher returns.
+
+[F] `rclcpp::wait_for_message` has one form that waits on a subscription that the caller made, and one form that makes a new subscription for each call (`ros:ros2/rclcpp/rclcpp/include/rclcpp/wait_for_message.hpp:31-48`, `:80-103`). These lines show the scope of that API only. They do not establish a library rule against short-lived subscriptions. The reason for the lifetime reader is reuse and matching.
+
+`FrameSource::subscribe` opens an empty project queue. The controller owns stream operations and leases. Get image opens its own capacity-1 subscription on the same source.
 
 ```cpp
 struct SubscribeOptions {
@@ -1007,10 +1019,11 @@ Freshness:
 
 1. The answer is a frame that the fan-out pushed to the get image subscription after it opened, with `receive_seq` greater than `frames_received` at the request. A scheme that drains the queue and takes the next frame cannot see a frame that is in flight at the request. The new subscription and the cutoff handle that case.
 2. `[F]` `receive_seq = frames_received.fetch_add(1) + 1`, and `stats().frames_received` loads the same atomic (section 7, "Admission and loss reporting"). So `R` is the last sequence that existed at the request.
-3. `[F]` A callback can take its sequence before `subscribe` and push after the queue link. Take loop step 5 skips that frame.
-4. The queue has capacity 1 and drops the oldest frame. If several frames arrive before the caller takes, the caller gets the newest one. Each one meets R6, "received after the request".
-5. `[F]` A frame received after the request can have been exposed before it, because the driver publishes after receipt, queue wait, and transform (`driver:vimbax_camera/src/vimbax_camera.cpp:458-482`). Phase 1 accepts this (R6). L4 asks Logan.
-6. A different rule is possible. A one-shot latch would make the first pushed frame the answer, and the oldest queued frame at the pull would be the other choice. Phase 1 rejects both, because R6 needs only "received after the request". The first frame arrives before the start reply, so a latch would also return a frame from before the caller could take it. The rule reopens if Logan makes the first frame contractual.
+3. `[F]` The worker reads `R` before it calls `subscribe`. A callback can take its sequence at or before that read and push after the queue link (section 7, "Admission and loss reporting"). That frame reaches the new queue with `receive_seq <= R`, and take loop step 5 skips it. The skip applies also when that frame is the only pending frame. The caller then waits for the next frame.
+4. A frame that takes its sequence after the `R` read and pushes after the queue link has `receive_seq > R`. It qualifies, also if its sequence came before the `subscribe` call.
+5. `take` returns the oldest queued frame. The get image queue has capacity 1 and drops the oldest frame, so it keeps the newest pending frame. If several frames arrive before the caller takes, the caller gets the newest one. The caller accepts it only if it passes the deadline check of take loop step 4 and the sequence check of take loop step 5. Each accepted frame meets R6, "received after the request".
+6. `[F]` A frame received after the request can have been exposed before it, because the driver publishes after receipt, queue wait, and transform (`driver:vimbax_camera/src/vimbax_camera.cpp:458-482`). Phase 1 accepts this (R6). L4 asks Logan.
+7. Phase 1 does not make the first qualifying push the answer. A one-shot latch would do that. R6 needs only "received after the request", so phase 1 needs no latch. The first frame arrives before the start reply, so a latch would hold a frame from before the caller could take it. The rule reopens if Logan makes the first qualifying push contractual.
 
 Deadline and stop:
 
@@ -1054,7 +1067,9 @@ In `kWedged`:
 8. If the confirmation stop fails in any way, the state stays `kWedged`. This covers -15, -3, another driver error, a gateway error, and a timeout. The worker records the error in `status().last_reconciliation` and waits for the next change signal. `last_error` keeps the error that caused the wedge.
 9. After the clear, with no lease, the state becomes `kIdle`. With leases, the worker runs the start sequence, which reads back and waits for a match before `open_admission`. A failure there goes to the failure recovery, or to `kFaulted` for steps 4 to 6 of the sequence.
 
-A poll error alone never clears `kWedged`. A gateway timeout on a live driver followed by `true` gives a change signal, but the confirmation stop then returns -15 on the live wedge. Only a successful stop clears the state. This is direct evidence, because no service resets a wedge (input 8). A driver reconnect is one recovery path, because a wedged `kStarting` stream at disconnect sets the restart flag, so the reconnect starts a stream on the new camera object (`driver:vimbax_camera/src/vimbax_camera_node.cpp:551`, `:590-593`).
+A poll error alone never clears `kWedged`. A gateway timeout on a live driver followed by `true` gives a change signal, but the confirmation stop then returns -15 on the live wedge. Only a successful stop clears the state. This is direct evidence, because no service resets a wedge (input 8).
+
+A driver reconnect alone does not clear `kWedged`. A disconnect while the driver is in `kStarting` can set the restart flag, because `is_streaming()` is true in `kStarting`. After the reopen, the driver graph notify thread attempts the restart on the new camera object and ignores its result (`driver:vimbax_camera/src/vimbax_camera_node.cpp:551`, `:561-566`, `:580-593`). A failed restart can leave a new wedge. So the project still needs a successful confirmation stop to clear `kWedged`.
 
 `[A]` A disconnect and a driver restart each last more than 250 ms, so the poll sees a result other than `true`. If a restart is faster, the wedge stays until the next change signal. The cost is a longer `kWedged`, not a wrong clear.
 
@@ -1489,7 +1504,7 @@ Notes on part A:
 2. Steps 2, 7, and 14 make each `grep` run after the driver tried the load. So no `grep` reads a log before its failed-load line can be in it.
 3. Step 11 makes sure that the camera held 10000.0 and 20.0 before the reopen. Part B step 6 then fails if the file did not set the profile values.
 4. `[F]` `AcquisitionFrameRate` is writable only while `AcquisitionFrameRateEnable` is true (see "Measured camera behavior", access while streaming and c3). Step 6 loads the file, which sets the enable to true.
-5. `[A]` The camera keeps written values across a driver restart without a power cycle (P11). If it does not, the camera returns to its own defaults. The measured power-on default is the enable false with a 69.7 Hz free run (see "Measured camera behavior"), so part B still fails on a failed load.
+5. `[A]` The camera keeps written values across a driver restart without a power cycle (P11). No check has measured this. If it does not, the camera returns to its own defaults. c1 observed the enable false with a 69.7 Hz free run at the start of its check, and R16 assumes that a power cycle resets service writes (see "Measured camera behavior", initial rate state). With those defaults, part B still fails on a failed load.
 6. The launch in step 1 also loads no profile. The camera keeps its last values, and step 6 loads the file again.
 
 Part B, `camera_feed_probe` with `mode:=bringup`, before any `stream_start`:
@@ -1520,7 +1535,7 @@ Failures that part B catches: with the current launch file, there is no `setting
 1. Run `sysctl net.core.rmem_max net.core.rmem_default` on the driver host.
 2. If a value is less than 8388608, record it in the probe report.
 
-No code depends on these values (T11). A project `cyclonedds.xml` is not added, because one host with tuned kernel buffers needs no file, and no measurement shows a loss without it.
+No code depends on these values (T11). Phase 1 ships no project `cyclonedds.xml` and no `CYCLONEDDS_URI` setting. This host check takes their place, and no measurement shows a need for them.
 
 `[F]` `env.sh` keeps a `RMW_IMPLEMENTATION` value that the user already set (`scripts/env.sh:127-134`). The probe report prints the RMW in use, because `transport_lost` and the loan rules depend on Cyclone DDS.
 
@@ -1677,7 +1692,7 @@ These tests check the data-plane contract. Each test uses a `TestClock` and call
 | `Fanout.CloseAdmissionClears` | Two queued frames. `close_admission()` empties the queue and adds 2 to `frames_cleared`. The subscription stays open. | Frames of a closed epoch staying in a queue. |
 | `Fanout.WrongThread` | A `take` from a second thread returns `kWrongThread` | Two consumer threads on one subscription. |
 | `Fanout.SubscribeAfterPush` | A frame pushed before `subscribe` does not reach the new queue. The next one does. | A new queue that receives a frame from before its link. |
-| `Fanout.InFlightPushAfterLink` | Arm the hold on a helper thread. The helper injects, and `wait_until_held` returns. `subscribe`, then `release_hold`. The new queue gets the held frame, and its `receive_seq` is at or below `frames_received` at `subscribe`. | A get image that treats a frame with a pre-subscribe sequence and a post-link push as older than the request. The queue link decides the push. |
+| `Fanout.InFlightPushAfterLink` | Arm the hold on a helper thread. The helper injects, and `wait_until_held` returns. `subscribe`, then `release_hold`. The new queue gets the held frame, and its `receive_seq` is at or below `frames_received` at `subscribe`. | A queue that drops a push after its link because the sequence of the frame came before the link. The queue link alone decides which pushes reach the queue. Request acceptance is a separate rule in the controller. |
 | `Fanout.CallbackDuration` | No hold. Inject 10 frames. `callback_ns_total` is more than 0 and at least `callback_ns_max`. | Missing or zero callback duration counters. |
 | `Fanout.SourceGone` | Destroy the source. `take` on the subscription returns `kFeedClosed`. A later `close()` returns. | A use of freed source state by a subscription that outlives its source. |
 
@@ -1712,7 +1727,7 @@ Leases, get image, and deadlines:
 | `Controller.ExpiredBeforeStart` | 5 | `on_open_admission` sleeps 400 ms. `feed_open` with a 300 ms deadline returns `kDeadlinePassed`. The log shows `close_admission` after `open_admission`, and no `stream_start`. `stats().admission_open` is false. Lease count 0. State `kIdle`. | An epoch left open with no stream start. |
 | `Controller.LeaseCount` | 6 | Open a feed, then a warm get image. One `stream_start`. Close the feed while the get image waits. No stop. After the get image returns, `close_admission` and then `stream_stop`. | A close that always stops the stream and cuts off the other lease. |
 | `Controller.WarmFreshness` | 6 | Inject frame A, then call `get_image`. The result is a later frame, with `receive_seq` greater than A. | A get image that returns a frame that was queued before the request. |
-| `Controller.InFlightFrameSkipped` | 6 | See the steps below the table | A get image that returns a frame whose callback ran before the request. |
+| `Controller.InFlightFrameSkipped` | 6 | See the steps below the table | A get image that returns a frame with `receive_seq <= R`. The callback of that frame took its sequence before the worker read `R`, and it was still in flight when the queue linked. The queue accepts the push, and the controller must skip the frame. |
 | `Controller.FrameAfterDeadlineRejected` | 6 | See the steps below the table | A caller that accepts a fresh frame that `take` returns after the deadline. |
 | `Controller.DeadlinePassed` | 6 | `stream_start` blocks 3 s. `get_image` returns `kDeadlinePassed` at 2000 ms. Later, the worker calls `stream_stop`, and the lease count is 0. | A get image with no deadline. |
 | `Controller.ExpiredInQueue` | 6 | A `feed_open` holds the worker, because `stream_start` blocks 1 s. A `get_image` with a 300 ms deadline returns `kDeadlinePassed` at 300 ms. After the worker takes it, `subscriptions_opened` does not rise, and the log has no new call. | A worker that runs a request that has already expired. |
@@ -1802,7 +1817,7 @@ Lifecycle and ownership:
 | `Controller.ShutdownWakesGetImage` | 6 | A feed is open, and a warm `get_image` waits for a frame. `shutdown()` makes the `get_image` return `kFeedClosed`. | A get image that waits for its full deadline after shutdown. |
 | `Controller.DestroyWithPendingRequest` | 5 | `stream_start` blocks 1 s. A `feed_open` waits. The test destroys the controller. The `feed_open` returns `kFeedClosed`. No error under AddressSanitizer. | A destructor that frees request state that a waiting caller still uses. |
 | `Controller.FeedOutlivesController` | 5 | Destroy the controller, then close the `Feed`. No error under AddressSanitizer. | A lease release that posts to a freed worker queue. |
-| `Controller.FeedDestroyDuringShutdown` | 5 | One thread destroys a `Feed` while another runs `shutdown()`, 1000 times. No error under ThreadSanitizer and AddressSanitizer. | A worker and a `Feed` that close or free the same subscription. The `LeaseLink` lock orders the two closes. |
+| `Controller.FeedDestroyDuringShutdown` | 5 | One thread destroys a `Feed` while another runs `shutdown()`, 1000 times. No error under ThreadSanitizer and AddressSanitizer. | A worker close path that uses a subscription after the `Feed` destroyed it. The `LeaseLink` mutex serializes access to the non-owning pointer. The first path that closes the subscription clears the pointer, and a path that sees a null pointer makes no subscription call. Only `Feed` destroys the subscription. |
 | `Controller.FeedMoveAssignIntoLive` | 5 | Open feed A and close it. Open feed B, which is live. Run `B = std::move(A)`. Lease count 0. The log shows a second `stream_stop`. Then run `shutdown()`. No error under AddressSanitizer. | A move assignment that replaces a live subscription with no close, so the old link keeps a freed pointer. |
 | `Controller.FeedCloseThenDestroy` | 6 | A feed is open, and a warm `get_image` waits. Call `close()` on the feed, then destroy it. Lease count 1. No `stream_stop` in 300 ms. Inject a frame. The `get_image` returns it. Then the lease count is 0, and `stream_stop` runs. | A second release from the destructor that removes the get image lease and stops its stream. One release for each link. |
 
@@ -1888,7 +1903,7 @@ A `start` with no row for a successful `init` in `kStopped` fails step 9. A resu
 | `feed` | Open a feed for 30 s at the profile. Record the rate, the counters, `callback_ns_max`, `callback_ns_total / frames_received`, and the match time. | 29 to 31 Hz. `discarded_*` all 0. `transport_lost` 0. `queue_evictions` less than 1 % of `frames_delivered`. | Reference: a CLI reader measured 30.010 Hz at this profile (see "Measured camera behavior") |
 | `load` | Same as `feed` with `profile.acquisition_frame_rate:=69.71556` for 30 s, then 10 s at 30 Hz | 69 to 70.5 Hz. The camera ends at the 30 Hz profile. | Reference: 69.721 Hz measured in free run |
 | `rtt` | 50 `feature_enum_get PixelFormat` calls while stopped, then 50 while streaming at 69.7 Hz. Report the median and the 95th percentile. | Report only. If the streaming median is more than 5 ms above the stopped median, the image subscription moves to a second node (step 9a). | Not measured before |
-| `get_image` | 10 cold calls 2 s apart, then 10 warm calls with a feed open | Each returns a frame. Each `receive_seq` is above the value at the request. Cold times under 2 s. Warm times under 67 ms. | Not possible with the gateway alone |
+| `get_image` | 10 cold calls 2 s apart, then 10 warm calls with a feed open | Each returns a frame. Each `receive_seq` is above the value at the request. Cold times under 2 s. Warm times under 67 ms, two frame periods at 30 Hz. | Not possible with the gateway alone |
 | `stamps` | Needs the driver with `use_ros_time:=false`. No controller. See "Stamp run" | Report only. The two stamp conditions, or "inconclusive" | Not measured before. Informs L1. |
 | `wedge` | The probe part of the tier 4 wedge check. The probe keeps one controller alive across a driver restart | See tier 4 | Not possible with the gateway alone |
 
@@ -2355,15 +2370,16 @@ Phase 1 leaves out the items below. Each has a trigger to start it and an engine
 | Item | Trigger to start it | Why it waits |
 |---|---|---|
 | Software trigger get image, `kTriggerNoFrame`, trigger association | Logan answers L4 with yes | R6 needs only a frame received after the request. A trigger needs `TriggerMode` `On`, which is read only during a stream, so it stops an open feed. The `TriggerSelector` race with `status` also needs a driver patch or a rule that no one calls `status`. |
-| `CameraInfo` pairing | A consumer needs intrinsics (R11) | No calibration exists for this camera, and no consumer needs one. |
-| `stamp_gap_frames` and `device_stamp_ns` | L1 chooses the DDS source timestamp, and the step 9 stamp run meets both stamp conditions | No check measured the device stamp delta spread, so a gap counter is unproven. |
+| `CameraInfo` pairing | A consumer needs intrinsics (R11) | No calibration exists for this camera. `[Q]` Whether a consumer needs calibration is still open under R11. |
+| `device_stamp_ns` | L1 decides how to expose the device stamp: the DDS source timestamp option, or the driver patch that publishes both stamps | Phase 1 uses the host header stamp, and no consumer reads a device stamp yet. |
+| `stamp_gap_frames` | The step 9 stamp run meets both stamp conditions, and the device stamp is exposed | No check measured the device stamp delta spread, so a gap counter is unproven. |
 | A ROS service for get image | Logan answers L2 with another process | R1 names one in-process consumer. |
 | Driver fork patches | Logan answers L3 | The design works with an operator restart and a file-only `buffer_count`. |
-| A direct VmbC adapter in place of the ROS driver | A requirement that the ROS driver cannot meet, for example zero loss (L7) | The driver opens the camera in exclusive mode, so the swap also moves capture and reconnect into the project. |
-| A project `cyclonedds.xml` | A measured loss with tuned kernel buffers | One host with the 8 MiB kernel buffers needs no file. |
+| A direct VmbC adapter in place of the ROS driver | A requirement that the ROS driver cannot meet, for example zero loss (L7) | `[F]` The driver opens the camera with `VmbAccessModeExclusive` in `CameraOpen` (`driver:vimbax_camera/src/vimbax_camera.cpp:164-185`). So the driver and a direct adapter cannot share capture. A replacement adapter takes over capture and reconnect. |
+| A project `cyclonedds.xml` or a `CYCLONEDDS_URI` setting in `env.sh` | A measurement that shows the project needs its own Cyclone DDS configuration | Phase 1 uses the 8 MiB kernel-buffer values as a host check instead (T11). The design has no measurement that shows a need for the file or the setting. |
 | A RELIABLE subscriber with a deeper queue | Logan answers L7 with yes | A RELIABLE reader can make the driver block in `publish` (T9). |
 | A second node and executor | The `rtt` streaming median is more than 5 ms above the stopped median | No measurement yet shows executor delay under image load. |
-| Mono12 and other formats | Logan answers L5 with yes | R3 assumes 8 bits. Mono12 doubles the frame size. |
+| Mono12 | Logan answers L5 with yes | R3 assumes 8 bits. A yes enables Mono12 with 12 significant bits and twice the Mono8 payload. No decision opens a format outside Mono8 and Mono12. |
 | Linger above 0 | Logan answers L6 with yes | The stream would run while idle. |
 | A feed that closes at an outage, with error code 12 | Logan answers L9 with close | R14 keeps the feed open. |
 | `AcquisitionFrameRate` change during a stream | A consumer needs run-time rate control (T7) | Writability during a stream is unknown. Phase 1 writes no acquisition value during a stream. |
@@ -2377,10 +2393,13 @@ Each question changes an interface, an owner, or a package. A question that chan
 The design runs on a default until a measurement decides it.
 
 1. Executor split. The `rtt` mode measures the gateway round-trip time while stopped and while streaming at 69.7 Hz. If the streaming median is more than 5 ms above the stopped median, step 9a moves the image subscription to a second node and executor.
-2. Stamp conditions. The `stamps` mode applies the gap rules. Condition 1 needs no device gap and no driver gap at 30 Hz. Condition 2 needs each driver gap at 69.7 Hz to match a device gap, with no reader gap. If no gap occurs in two runs, the result is "inconclusive", and L1 stays open.
-3. Camera write persistence (P11). Bring-up part A step 11 checks that the camera keeps service writes across a driver restart. If it does not, the camera returns to its own defaults, and part B still fails on a failed load.
+2. Stamp conditions. The `stamps` mode applies the gap rules and the result rules of section 11, "Stamp run".
+   1. Condition 1 needs no device gap and no driver gap at 30 Hz, and a device stamp delta spread within 0.5 period. An ambiguous item makes it inconclusive.
+   2. Condition 2 needs each driver gap line at 69.7 Hz to be a matched driver gap, with no reader gap. A run with no driver gap, a reader gap, or an ambiguous item makes it inconclusive. An inconclusive condition does not pass.
+   3. If no driver gap occurs in two runs, the report states "inconclusive", and L1 stays open.
+3. Camera write persistence (P11). Bring-up part A step 11 verifies the written values before the reopen. It proves only that the camera accepted the writes. Whether the writes survive a driver restart stays open under P11. Part B checks the loaded profile after the reopen. If the writes do not survive, the camera returns to its own defaults, and part B still fails on a failed load.
 4. Init wait limit. The 60 s limit has no measurement behind it. A slow driver start fails the check with status 124.
-5. Gateway call time (P10). The `rtt` mode measures it. If the in-process call time is far above a few milliseconds, the cold path estimate of less than 500 ms fails, and `FeedOptions::deadline` needs a new value.
+5. Gateway call time (P10). The `rtt` mode measures it. If the in-process call time is far above a few milliseconds, revise the cold path estimate of less than 500 ms. The 5000 ms `FeedOptions::deadline` stays the design default.
 
 ### L1. Host header stamp or camera-side loss count
 
@@ -2390,7 +2409,7 @@ The design runs on a default until a measurement decides it.
 - Options and effects:
   1. An outside reader needs a host stamp. Keep `use_ros_time: true`. Camera-side loss stays invisible in phase 1.
   2. No outside reader needs it, and camera-side loss must be counted. Set `use_ros_time: false`. The adapter uses the message-info form, fills `host_stamp_ns` from the DDS source timestamp, and adds `device_stamp_ns`. `stamp_gap_frames` enters after the probe meets both stamp conditions.
-  3. Both are needed. The driver must publish both stamps. This is a new patch for L3.
+  3. Both are needed. The driver must publish both stamps. This needs a driver patch that is not one of the four L3 candidates, so a yes also adds it to L3.
   4. Neither is needed. Keep `use_ros_time: true`.
 - Recommended default: option 1 or 4, the current assumption. It has fewer parts, and the reversal adds one field and changes no consumer code.
 - Depends on it: timestamp source, loss reporting, R9, R10.
