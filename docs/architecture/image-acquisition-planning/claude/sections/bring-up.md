@@ -99,7 +99,26 @@ The failed-load line:
 3. `[F]` `launch` puts `[<process name>] ` before each line of process output (`ros:ros2/launch/launch/launch/actions/execute_local.py:91`).
 4. So the message is in the middle of the console line, after two prefixes. Each check in this document matches the text anywhere in the line, with `grep -F 'Loading settings from file'`.
 
-The controller readback is a check of the seven listed profile values and the selector write only (d18 item 3). It does not check any other feature in the file. It also cannot see a failed load when the camera already holds the listed values. The rig check below uses the failed-load line and a controlled reopen to see the load result.
+The init line:
+
+1. `[F]` The node constructor runs `initialize_camera` as one of its init steps (`driver:vimbax_camera/src/vimbax_camera_node.cpp:97`). That function tries the load and logs a failed load before it returns (`:390-400`).
+2. `[F]` The node logs `Initialization done!` through `RCLCPP_INFO` only after each init step succeeded (`driver:vimbax_camera/src/vimbax_camera_node.cpp:97-134`). A search of the driver source finds that text at this one place.
+3. `[F]` rcutils sends each severity to the same stream, stderr by default (`ros:ros2/rcutils/src/logging.c:659-670`). The failed-load line and the init line therefore leave the driver on one stream, in program order.
+4. `[A]` `launch` and `tee` keep the line order of one stream. The control launch in part A tests this. Its failed-load line must be in the file when the init line is.
+5. `[F]` If the camera does not open, the driver logs a fatal line and calls `rclcpp::shutdown()` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:375-382`). No init line appears, so the init wait fails.
+6. `[F]` The driver also tries the load on each reconnect, from its observer thread (`driver:vimbax_camera/src/vimbax_camera_node.cpp:561-566`). The checks below make no cable change, so each launch log holds one load attempt.
+
+The init wait makes a log check wait until the driver has tried the load. Run it on one log file:
+
+```sh
+timeout 60 sh -c 'until grep -qF "Initialization done!" "$1"; do sleep 0.5; done' sh driver_b.log
+```
+
+1. The command ends with status 0 when the init line is in the file. It ends with status 124 at the 60 s limit.
+2. If the status is not 0, the check fails. Stop the check and keep the log.
+3. `[A]` The limit is 60 s. No measurement of the driver start time exists. A slow start fails the check with a clear status, and the limit is one number to change.
+
+The controller readback is a check of the seven listed profile values and the selector write only (d18 item 3). It does not check any other feature in the file. It also cannot see a failed load when the camera already holds the listed values. The rig check below reads the failed-load line after the init wait, so it sees the load result of each launch. A controlled reopen from known different values then proves that the installed file applied.
 
 `[A]` A change to a feature outside the profile enters through the file with no readback (N7). Review the file diff in each change to `camera_settings.xml`.
 
@@ -175,7 +194,7 @@ Configuration test without a camera, `test/test_camera_config.py`:
 
 The rig check has two parts. The operator does part A, and `camera_feed_probe` with `mode:=bringup` does part B (ic6 item 3, d18 item 8, d20 items 7 and 8). Part A makes a controlled reopen from known different values, so a pass proves that the installed file applied.
 
-Each launch in part A writes the console output to a file. The step 11 launch is an example:
+Each launch in part A writes the console output to a file. Run each launch in its own terminal. The step 13 launch is an example:
 
 ```sh
 ros2 launch venimapping_bringup camera.launch.py 2>&1 | tee driver_b.log
@@ -184,26 +203,30 @@ ros2 launch venimapping_bringup camera.launch.py 2>&1 | tee driver_b.log
 Part A, the controlled reopen:
 
 1. Launch the driver with `settings_file:=/nonexistent.xml`. Write its console output to `driver_control.log`.
-2. Run `grep -F 'Loading settings from file' driver_control.log`.
-3. If step 2 prints no line, the capture does not show the failed-load line. Stop the check and fix the capture.
-4. Stop the driver.
-5. Launch the driver with the default arguments. Write its console output to `driver_a.log`.
-6. With the stream stopped, write `ExposureTime` 10000.0 with the CLI.
-7. Write `AcquisitionFrameRate` 20.0 with the CLI.
-8. Read back `ExposureTime` and `AcquisitionFrameRate` with the CLI.
-9. If a value in step 8 differs from the written value by more than 0.001, stop the check. Record that the camera did not take the part A values.
-10. Stop the driver.
-11. Launch the driver again with the default arguments. Write its console output to `driver_b.log`.
-12. Run `grep -F 'Loading settings from file' driver_a.log driver_b.log`.
-13. If step 12 prints a line, the check fails.
+2. Run the init wait on `driver_control.log`.
+3. Run `grep -F 'Loading settings from file' driver_control.log`.
+4. If step 3 prints no line, the capture does not show the failed-load line. Stop the check and fix the capture.
+5. Stop the driver.
+6. Launch the driver with the default arguments. Write its console output to `driver_a.log`.
+7. Run the init wait on `driver_a.log`.
+8. With the stream stopped, write `ExposureTime` 10000.0 with the CLI.
+9. Write `AcquisitionFrameRate` 20.0 with the CLI.
+10. Read back `ExposureTime` and `AcquisitionFrameRate` with the CLI.
+11. If a value in step 10 differs from the written value by more than 0.001, stop the check. Record that the camera did not take the part A values.
+12. Stop the driver.
+13. Launch the driver again with the default arguments. Write its console output to `driver_b.log`.
+14. Run the init wait on `driver_b.log`.
+15. Run `grep -F 'Loading settings from file' driver_a.log driver_b.log`.
+16. If step 15 prints a line, the check fails.
 
 Notes on part A:
 
-1. Steps 1 to 3 prove that the check can fail. A capture that misses stderr, or a match on the wrong text, stops the check at step 3.
-2. Step 9 makes sure that the camera held 10000.0 and 20.0 before the reopen. Part B step 6 then fails if the file did not set the profile values.
-3. `[F]` `AcquisitionFrameRate` is writable only while `AcquisitionFrameRateEnable` is true (c1 §3.6 item 2, c3 §3 item 2). Step 5 loads the file, which sets the enable to true.
-4. `[A]` The camera keeps written values across a driver restart without a power cycle. If it does not, the camera returns to its own defaults. c1 read 69.7 Hz with the enable false as the default (c1 §3.6 item 2), so part B still fails on a failed load.
-5. The launch in step 1 also loads no profile. The camera keeps its last values, and step 5 loads the file again.
+1. Steps 1 to 4 prove that the check can fail. A capture that misses stderr, or a match on the wrong text, stops the check at step 4.
+2. Steps 2, 7, and 14 make each `grep` run after the driver tried the load. So no `grep` reads a log before its failed-load line can be in it.
+3. Step 11 makes sure that the camera held 10000.0 and 20.0 before the reopen. Part B step 6 then fails if the file did not set the profile values.
+4. `[F]` `AcquisitionFrameRate` is writable only while `AcquisitionFrameRateEnable` is true (c1 §3.6 item 2, c3 §3 item 2). Step 6 loads the file, which sets the enable to true.
+5. `[A]` The camera keeps written values across a driver restart without a power cycle. If it does not, the camera returns to its own defaults. c1 read 69.7 Hz with the enable false as the default (c1 §3.6 item 2), so part B still fails on a failed load.
+6. The launch in step 1 also loads no profile. The camera keeps its last values, and step 6 loads the file again.
 
 Part B, `camera_feed_probe` with `mode:=bringup`, before any `stream_start`:
 
@@ -222,8 +245,9 @@ Notes on part B:
 1. The prefix rule in step 5 finds each plugin topic, because each extra image topic from a plugin is a subtopic of `image_raw` (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:142-147`). This replaces the ic6 item 3.2 wording (N6).
 2. Step 4 makes step 5 fail when `image_raw` has no publisher. An empty topic list cannot pass.
 3. The 2000 ms limit is about 18 times the measured 110 ms from `stream_start` to the first frame (c1 §3.5 items 1 and 2).
+4. Part B runs on the driver of part A step 13, after the init wait of step 14. So each service and parameter exists when the probe starts.
 
-Old behavior: the launch file has no `settings_file` argument, so the driver loads no file, and part A stops at step 3. Part B step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 2 fails, because `settings_file` is empty. Step 6 fails, because the camera keeps 10000.0 and 20.0 from part A. Step 8 fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
+Old behavior: the launch file has no `settings_file` argument, so the driver loads no file, and part A stops at step 4. Part B step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 2 fails, because `settings_file` is empty. Step 6 fails, because the camera keeps 10000.0 and 20.0 from part A. Step 8 fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
 
 ### Host check
 

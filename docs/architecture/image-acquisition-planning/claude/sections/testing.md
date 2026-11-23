@@ -31,7 +31,7 @@ All test files are in `src/venimapping_camera/test/`, except the bring-up test.
 | `acquisition_error_test.cpp` | Tier 1, error domain |
 | `image_frame_test.cpp` | Tier 1, `ImageFrame` |
 | `frame_fanout_test.cpp` | Tier 1, queues, admission, counters |
-| `acquisition_controller_test.cpp` | Tier 1, controller with both fakes |
+| `acquisition_controller_test.cpp` | Tier 1, controller with both fakes. Also holds `WorkerExitMark` for the lifecycle tests |
 | `vimbax_frame_source_test.cpp` | Tier 2, adapter over a test publisher |
 | `installed_consumer/CMakeLists.txt`, `main.cpp` | Step 5 exit check. A project outside the package that links the installed targets |
 | `src/venimapping_bringup/test/test_camera_config.py` | Tier 2, bring-up files (see the bring-up section) |
@@ -107,8 +107,23 @@ class FakeFrameSource final : public FrameSource {
 5. A feature call with a module other than `FeatureModule::kRemoteDevice` fails the test.
 6. `script(method, results)` sets the next results of one method, in order. `delay(method, duration)` makes one call block.
 7. `on_stream_start(callback)` runs a callback inside `stream_start`. A test uses it to inject frames before the reply (c1 §3.5 item 2).
-8. `calls()` returns the call log as strings, for example `enum_set TriggerSelector FrameStart`.
+8. `calls()` returns the call log as strings, for example `enum_set TriggerSelector FrameStart`. The fake adds the entry when the call starts, before any delay.
 9. `camera_status()` fails the test if a controller calls it.
+
+`WorkerExitMark` shows when the worker thread has exited. It is in `acquisition_controller_test.cpp`.
+
+```cpp
+class WorkerExitMark final {
+ public:
+  // Call inside WorkerInit. Makes a thread_local guard on the worker thread.
+  // At thread exit, the guard sleeps for delay, then sets *exited to true.
+  static void arm(std::atomic<bool>* exited, std::chrono::milliseconds delay);
+};
+```
+
+1. `[F]` C++ destroys the `thread_local` objects of a thread when the thread exits. The completion of the thread synchronizes with the return of `join()` (C++17 [basic.start.term], [thread.thread.member]). So `exited` is true before any join of the worker returns.
+2. The delay widens the time between the end of the worker function and the thread exit. A call that returns before the worker exits then reads `exited` as false.
+3. The mark needs no hook in the controller.
 
 `[A]` The controller tests run in real time. The thresholds are 250 ms and the tick is 100 ms, so a silence test takes about 0.5 s. The whole controller suite takes a few seconds. A fake worker clock is not needed in phase 1.
 
@@ -256,7 +271,9 @@ Lifecycle and ownership:
 | `Controller.InitFailure` | 5 | `WorkerInit` returns a gateway error. A queued `feed_open` returns `kFeedClosed`. `start` returns the init error. The fake log is empty. A later `feed_open` returns `kFeedClosed`. State `kShutDown`. | Queued callers had no result (i15) | Passes |
 | `Controller.ShutdownFromInit` | 5 | `WorkerInit` calls `shutdown()`. `start` returns `kFeedClosed` within 100 ms with no deadlock. State `kShutDown`. | A worker call would join its own thread (i15) | Passes |
 | `Controller.ShutdownBeforeStart` | 5 | Two threads post a `feed_open` with a 2000 ms deadline before `start`. The test calls `shutdown()`. Both return `kFeedClosed` within 50 ms. The fake log is empty, and `subscriptions_opened()` is 0. A later `start` returns `kFeedClosed`, and its `init` never runs. | With no worker, the callers waited until their deadline (i15) | Passes |
-| `Controller.StartShutdownOverlap` | 5 | `init` sleeps 200 ms. Thread A calls `start`. Threads B and C call `shutdown()` 50 ms later. Run it 100 times under ThreadSanitizer. Each call returns. `start` returns `kFeedClosed`. No `std::system_error` from a second join, and no sanitizer report. | Both `start` and `shutdown` could join (i15) | Passes. One thread takes the thread object |
+| `Controller.StartShutdownOverlap` | 5 | `init` arms a `WorkerExitMark` with 20 ms and sleeps 50 ms. Thread A calls `start`. Threads B and C call `shutdown()` 10 ms later. Run it 20 times under ThreadSanitizer. Each call returns, and `exited` is true at each return. `start` returns `kFeedClosed`. No `std::system_error` from a second join, and no sanitizer report. | Both `start` and `shutdown` could join (i15) | Passes. One thread takes the thread object |
+| `Controller.InitFailureWithShutdown` | 5 | See the steps below the table | `start` set `kStopped` while a `shutdown()` still joined. `start` and a later `shutdown()` returned before the worker exited (i15) | Passes. Only the join owner sets `kStopped` |
+| `Controller.ShutdownFromInitWithWaiter` | 5 | See the steps below the table | `start` owned the join after a `shutdown()` from `WorkerInit` and set no `kStopped`. A second `shutdown()` waited with no end (i15) | Passes |
 | `Controller.Shutdown` | 5 | A thread waits in `Feed::take`. `shutdown()` makes it return `kFeedClosed`. The log ends with `close_admission` and `stream_stop`, all on the worker thread. A later `feed_open` returns `kFeedClosed`. | No controller | Passes (ic4) |
 | `Controller.ShutdownWakesGetImage` | 6 | A feed is open, and a warm `get_image` waits for a frame. `shutdown()` makes the `get_image` return `kFeedClosed`. | No controller | Passes (ic4) |
 | `Controller.DestroyWithPendingRequest` | 5 | `stream_start` blocks 1 s. A `feed_open` waits. The test destroys the controller. The `feed_open` returns `kFeedClosed`. No error under AddressSanitizer. | No destructor rule (i15) | Passes |
@@ -264,6 +281,36 @@ Lifecycle and ownership:
 | `Controller.FeedDestroyDuringShutdown` | 5 | One thread destroys a `Feed` while another runs `shutdown()`, 1000 times. No error under ThreadSanitizer and AddressSanitizer. | The worker shared the subscription (i26) | Passes. The `LeaseLink` lock orders the two closes |
 | `Controller.FeedMoveAssignIntoLive` | 5 | Open feed A and close it. Open feed B, which is live. Run `B = std::move(A)`. Lease count 0. The log shows a second `stream_stop`. Then run `shutdown()`. No error under AddressSanitizer. | The assignment replaced the live subscription with no close, and the old link kept a freed pointer (i26) | Passes |
 | `Controller.FeedCloseThenDestroy` | 6 | A feed is open, and a warm `get_image` waits. Call `close()` on the feed, then destroy it. Lease count 1. No `stream_stop` in 300 ms. Inject a frame. The `get_image` returns it. Then the lease count is 0, and `stream_stop` runs. | A second release from the destructor removed the get image lease and stopped its stream (i26) | Passes. One release for each link |
+
+`Controller.InitFailureWithShutdown` steps:
+
+1. Make `exited` false and a gate.
+2. `init` arms a `WorkerExitMark` with 100 ms. It waits for the gate with a 1 s limit and then returns a gateway error.
+3. Thread A calls `start(init)`.
+4. Thread B calls `shutdown()`. Wait until `status().state` is `kShutDown`, with a 1 s limit.
+5. Open the gate.
+6. When `start` on A returns, check that the result is the init error and `exited` is true.
+7. After `start` returns, thread C calls `shutdown()`. When it returns, check that `exited` is true.
+8. When `shutdown()` on B returns, check that `exited` is true.
+9. Check that A, B, and C end within 2 s.
+10. Run the test 20 times under ThreadSanitizer. No sanitizer report, and no `std::system_error`.
+
+Step 4 makes B the join owner. B sets `kStopping` and moves the thread object out in one locked section, so `kShutDown` shows that B holds the object. With the old rule, `start` set `kStopped` at step 6 while B still joined. The mark sleeps 100 ms, so step 6 read `exited` as false, and C also returned at once.
+
+`Controller.ShutdownFromInitWithWaiter` steps:
+
+1. Make `exited` false. Call `delay(stream_stop, 100 ms)` on the fake gateway.
+2. `init` arms a `WorkerExitMark` with 20 ms. It calls `shutdown()`, which returns at once, and then returns success.
+3. Thread A calls `start(init)`.
+4. Wait until `calls()` holds `stream_stop`, with a 1 s limit. The worker now runs the shutdown steps, because a new controller has no confirmed stop.
+5. Thread B calls `shutdown()`.
+6. When `start` on A returns, check that the result is `kFeedClosed` and `exited` is true.
+7. Check that `shutdown()` on B returns within 1000 ms, with `exited` true.
+8. Run the test 20 times under ThreadSanitizer. No sanitizer report.
+
+Either A or B can own the join, and both orders must pass. In most runs, A owns it, because A wakes when `init` returns, before the worker reaches `stream_stop`. With the old rule, A then set no `kStopped`, and B waited with no end. At the step 7 limit, the test reports the failure and aborts, because the stuck thread cannot be joined.
+
+`[A]` The three lifecycle tests with repeats take about 7 s together: 20 runs each of about 80 ms, 120 ms, and 130 ms. The step 7 exit check keeps the whole suite under 30 s. If the suite is too slow, lower the repeat counts first.
 
 ### Tier 2: adapter with ROS, no driver
 
@@ -345,7 +392,7 @@ Each check takes less than 5 minutes. An operator runs them in the order of the 
 | Order | Check | Steps | Pass condition | Old behavior |
 |---|---|---|---|---|
 | 1 | Unplug | 1. Start `camera_feed_probe` with `mode:=feed` and 120 s. 2. After 20 s, pull the PoE cable for 10 s. 3. Plug it in. | `status()` goes to `kOutage` within 400 ms of the last frame. After the reconnect, frames arrive with epoch 2. The feed stays open. | v1 assumed that the driver does not restart the stream (facts A28). With no controller, nothing reports the outage. |
-| 2 | Settings load | 1. Start the driver with `settings_file:=/nonexistent.xml`, with the console output in a file. 2. Change `ExposureTime` with the CLI. 3. Run `mode:=feed`. | `grep -F 'Loading settings from file' <file>` prints one line. The controller stops, corrects `ExposureTime`, and streams at 30 Hz | The driver only logs the failed load (`driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`) |
+| 2 | Settings load | 1. Start the driver with `settings_file:=/nonexistent.xml`, with the console output in a file. 2. Run the bring-up init wait on that file. 3. Change `ExposureTime` with the CLI. 4. Run `mode:=feed`. | The init wait ends with status 0. After it, `grep -F 'Loading settings from file' <file>` prints one line. The controller stops, corrects `ExposureTime`, and streams at 30 Hz | The driver only logs the failed load (`driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`) |
 | 3 | Outside reader and stamp run | 1. Relaunch the driver with `use_ros_time:=false`, with the console output in a file. 2. Start the outside reader. 3. Run `mode:=stamps`. 4. Stop the outside reader. | Report the stamp results with the gap rules, the driver gap lines, and the outside reader loss lines | Not measured. Tests T9 and d20 item 7. |
 | 4 | Host stamps back | 1. Stop the driver. 2. Launch it with the default arguments. 3. Run `ros2 param get /vimbax_camera/vimbax_camera use_ros_time`. | It prints `True` | Without this step, a later feed discards each frame for stamp basis |
 | 5 | Wedge | See the steps below | See the steps below | The driver stays wedged, and each start returns -15 (facts 1.4.3) |
@@ -361,7 +408,7 @@ ros2 topic echo --qos-reliability reliable --qos-depth 10 \
 2. `ros2 topic echo` deserializes each full 1337472-byte message in Python before it prints the field. It is therefore a slow RELIABLE reader, which is the T9 case.
 3. The outside reader prints a line when it sees lost messages, unless `--no-lost-messages` is set (`ros:ros2/ros2cli/ros2topic/ros2topic/verb/echo.py:94-95`).
 
-Check 2 also proves that the console capture shows the failed-load line. The bring-up part A uses the same capture and the same `grep`.
+Check 2 also proves that the console capture shows the failed-load line. The bring-up part A uses the same capture, the same init wait, and the same `grep`.
 
 Wedge check steps. The scripted gateway tests in tier 1 check the recovery logic (`WedgeOnStartTimeout`, `WedgeCleared`, `WedgePollErrorKeepsWedge`, `WedgeConfirmMinus3`). This check proves only what the fake cannot: the real driver wedge, and the detection of a real driver restart by one live controller.
 
@@ -402,4 +449,5 @@ Notes on the wedge check:
 | d19 | `Wedge*`, `StartFail*`, `FirstErrorMinus15`, `NoUserStopFails`, `ConsumerDuringFailingStart` | | `wedge` | Wedge |
 | d22 | `SilenceToOutage`, `RequestDuringOutage`, `Reconnect*`, `Stall`, `FaultedRetry` | | | Unplug |
 | d26, i27 | `DeadlinePassed`, `ExpiredInQueue`, `ExpiredDuringReadback`, `ExpiredDuringMatch`, `ExpiredBeforeStart`, `FrameAfterDeadlineRejected`, `FeedOpenDeadline`, `StopOutsideDeadline` | | `get_image` | |
-| ic2, ic4 | `Shutdown`, `ShutdownWakesGetImage`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `FeedMoveAssignIntoLive`, `FeedCloseThenDestroy`, `InitFailure` | | | |
+| ic2, ic4 | `Shutdown`, `ShutdownWakesGetImage`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `FeedMoveAssignIntoLive`, `FeedCloseThenDestroy`, `InitFailure` | | | |
+| ic6 | | `test_camera_config.py` | `bringup` | Settings load |

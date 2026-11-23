@@ -91,9 +91,10 @@ class AcquisitionController final {
 
   // Starts the worker. The worker runs init first. Returns the init result,
   // kInvalidArgument for a second call, or kFeedClosed after shutdown started.
+  // A failed or shut-down start returns only after the worker has exited.
   [[nodiscard]] Expected<void> start(WorkerInit init);
 
-  // Idempotent. Any thread. On the worker thread it only sets the flag.
+  // Idempotent. Any thread. On the worker thread it only requests the stop.
   // Elsewhere it returns after the worker has exited, or at once if no worker started.
   void shutdown() noexcept;
   ~AcquisitionController();                 // runs shutdown()
@@ -120,7 +121,7 @@ The controller follows ic4. It adds no thread beyond the worker.
 
 | Thread | Runs in the controller | Never does |
 |---|---|---|
-| Controller worker | The request queue, all gateway calls, all `FrameSource` calls, the 100 ms tick, the shutdown steps | `take` or `try_take`, a join of its own thread |
+| Controller worker | The request queue, all gateway calls, all `FrameSource` calls, the 100 ms tick, the shutdown steps | `take` or `try_take`, a join of its own thread, a wait for `kStopped` |
 | Caller of `feed_open` or `get_image` | Posts a request and waits on its request state until the deadline. In `get_image`, it also runs `take` on the get image subscription | Gateway calls, `FrameSource` calls |
 | Any other thread | `Feed::close`, `status`, `start`, `shutdown` | A gateway call |
 
@@ -168,7 +169,7 @@ A start sequence that runs for a recovery with no request has no deadline and no
 
 ### Lifecycle and shutdown
 
-The controller keeps a lifecycle value: `kCreated`, `kStarting`, `kRunning`, `kStopping`, or `kStopped`. One lifecycle mutex guards it, the shutdown flag, and the `std::thread` object of the worker. The request queue has its own mutex. A thread that holds both takes the lifecycle mutex first. `status().state` is `kShutDown` from the moment that the value leaves `kRunning` or `kStarting` for `kStopping` or `kStopped`.
+The controller keeps a lifecycle value: `kCreated`, `kStarting`, `kRunning`, `kStopping`, or `kStopped`. One lifecycle mutex guards the value, the shutdown flag, the `std::thread` object of the worker, the worker thread id, and the init result. One lifecycle condition variable on that mutex signals each change. The request queue has its own mutex. A thread that holds both takes the lifecycle mutex first. `status().state` is `kShutDown` in `kStopping` and `kStopped`.
 
 | Lifecycle point | New request | Queued request |
 |---|---|---|
@@ -179,23 +180,51 @@ The controller keeps a lifecycle value: `kCreated`, `kStarting`, `kRunning`, `kS
 | `shutdown()` after `start` | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
 | `kStopped` | `kFeedClosed` at once | None |
 
-Join rule: a thread joins the worker only if it moved the `std::thread` object out of the controller under the lifecycle mutex. Only one thread can do that. So only one thread joins, also when `start` and `shutdown` overlap. A `shutdown()` caller that did not get the object waits on a condition variable until the value is `kStopped`.
+Lifecycle transitions. No other transition exists:
+
+| From | To | Thread | When |
+|---|---|---|---|
+| `kCreated` | `kStarting` | `start` | It makes the worker thread and records its id, in one locked section |
+| `kCreated` | `kStopped` | `shutdown()` | No worker exists |
+| `kStarting` | `kRunning` | `start` | `init` succeeded, and the value is still `kStarting` |
+| `kStarting` | `kStopping` | `start` | `init` failed |
+| `kStarting`, `kRunning` | `kStopping` | `shutdown()`, on any thread, also the worker | It sets the shutdown flag in the same locked section |
+| `kStopping` | `kStopped` | The join owner | After its join returns |
+
+Join rules:
+
+1. The join owner is the thread that moves the `std::thread` object out of the controller under the lifecycle mutex. Only one thread can do that, so only one thread joins.
+2. The worker never becomes the join owner. A thread compares its id with the recorded worker id first. The id stays recorded after another thread moves the object out.
+3. After its join returns, the join owner locks the lifecycle mutex, sets `kStopped`, and notifies all waiters. No other thread leaves `kStopping`.
+4. A thread that did not get the object waits on the lifecycle condition variable until the value is `kStopped`. The wait uses that predicate, so a notify before the wait is not lost.
+5. So `kStopped` means that the worker has exited, or that no worker was made. A `start` or `shutdown()` that waits for the worker returns only after `kStopped`.
+6. The worker never joins and never waits for `kStopped`.
+
+The stop wait is the step that `start` and `shutdown()` share. Under the lifecycle mutex, if the object is still in the controller, move it out. Then unlock, join, lock, set `kStopped`, and notify all. If the object is gone, wait for `kStopped`.
+
+The stop request is a flag in the request queue. A thread sets it under the queue mutex and notifies the worker. The worker waits with a predicate that includes the flag, so no wake is lost. At the top of each loop, the worker checks the flag. If it is set, the worker runs the shutdown steps.
 
 `start(init)`:
 
-1. Under the lifecycle mutex: in `kCreated`, set `kStarting` and make the worker thread. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither case makes a thread.
-2. Wait for the init result. The worker runs `init` first and gives its result to `start`.
-3. If `init` failed, the worker makes no gateway call, because the gateway is not bound. It completes each queued request with `kFeedClosed`, closes the queue, and exits. `start` applies the join rule, sets `kStopped`, and returns the init error.
-4. If `init` succeeded and the shutdown flag is clear, `start` sets `kRunning` and returns success.
-5. If `init` succeeded and the shutdown flag is set, the worker runs the shutdown steps. `start` applies the join rule and returns `kFeedClosed`. This covers a `shutdown()` call from `WorkerInit` and a `shutdown()` on another thread during `init`.
+1. Under the lifecycle mutex: in `kCreated`, set `kStarting`, make the worker thread, and record its id. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither error case makes a thread.
+2. Wait on the lifecycle condition variable for the init result. The worker runs `init` first, records the result under the lifecycle mutex, and notifies.
+3. If `init` failed, the worker makes no gateway call, because the gateway is not bound. In one locked section of the queue mutex, it closes the queue and completes each queued request with `kFeedClosed`. Then it exits.
+4. After an `init` failure, `start` sets `kStopping` if the value is still `kStarting`. It runs the stop wait and returns the init error.
+5. If `init` succeeded and the value is still `kStarting`, `start` sets `kRunning` and returns success. The check and the set are in one locked section, so no `shutdown()` falls between them.
+6. If `init` succeeded and the value is `kStopping`, a `shutdown()` came during `init`. The worker sees the stop request at the top of its first loop and runs the shutdown steps. `start` runs the stop wait and returns `kFeedClosed`.
 
 `shutdown()`:
 
-1. On the worker thread, which is only possible inside `WorkerInit`: set the shutdown flag and return. No join.
+1. If the calling thread is the worker, which is only possible inside `WorkerInit`: in `kStarting`, set the shutdown flag and `kStopping`, and post the stop request. Return in each case. No join and no wait.
 2. In `kCreated`: no worker exists. Set `kStopped` under the lifecycle mutex. Then close the request queue and complete each queued request with `kFeedClosed`, on the calling thread. No queued request holds a `Feed` or a lease, because only the worker calls `subscribe`. No gateway call runs.
-3. In `kStarting` or `kRunning`: set the shutdown flag and `kStopping`. Move the thread object out if it is still there. Wake the worker. If this call got the object, join, set `kStopped`, and notify. Else wait for `kStopped`.
-4. In `kStopping`: wait for `kStopped`.
+3. In `kStarting` or `kRunning`: set the shutdown flag and `kStopping`. Post the stop request. Run the stop wait. The value change and the move of the object are in one locked section.
+4. In `kStopping`: run the stop wait. The object can still be in the controller, for example after a `shutdown()` from `WorkerInit`.
 5. In `kStopped`: return.
+
+The two overlap cases that the rules close:
+
+1. `init` fails while a `shutdown()` on thread B owns the join. `start` finds no object and waits for `kStopped`. B sets `kStopped` after its join. A third `shutdown()` also waits. No call returns before the worker exits.
+2. `WorkerInit` calls `shutdown()`, and `init` then succeeds. The value is `kStopping`, and the object is still in the controller. `start` or a `shutdown()` on another thread takes it, joins, and sets `kStopped`. The other one waits for `kStopped`.
 
 The worker shutdown steps, in ic4 stop order step 1. The worker does each gateway step, because only it may call the gateway (input 4):
 
@@ -209,6 +238,7 @@ Rules for the thread that runs shutdown:
 
 1. The destructor runs `shutdown()`. A request state is shared, so a caller that waits during destruction wakes with `kFeedClosed` and uses no freed memory.
 2. The controller must not be destroyed on the worker thread, or while another thread runs `start`. Each is a program error, and a debug assertion catches the first.
+3. `[A]` `WorkerInit` returns in bounded time. The phase 1 hook only binds the gateway thread. A `start` or a `shutdown()` that waits for the worker waits for `init` too.
 
 ### Subscription ownership
 

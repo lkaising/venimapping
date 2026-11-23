@@ -61,7 +61,7 @@ Exit check. The feed probe comes in step 8, so this check uses the CLI. It does 
 
 1. `colcon build --packages-select venimapping_bringup` succeeds.
 2. `colcon test --packages-select venimapping_bringup` passes.
-3. On the rig, do part A of the bring-up rig check, steps 1 to 13. The control launch log has the failed-load line. The part A readback before the reopen shows 10000.0 and 20.0. `grep -F 'Loading settings from file' driver_a.log driver_b.log` prints nothing.
+3. On the rig, do part A of the bring-up rig check, steps 1 to 16. Each init wait ends with status 0 before the `grep` or the CLI step that follows it. After its init wait, the control launch log has the failed-load line. The part A readback before the reopen shows 10000.0 and 20.0. After the init wait on `driver_b.log`, `grep -F 'Loading settings from file' driver_a.log driver_b.log` prints nothing.
 4. `ros2 param get /vimbax_camera/vimbax_camera use_ros_time` prints `True`.
 5. `ros2 param get /vimbax_camera/vimbax_camera settings_file` prints the installed path of `camera_settings.xml`. The file exists at that path.
 6. `ros2 param get /vimbax_camera/vimbax_camera image_raw.enable_pub_plugins` prints only `image_transport/raw`.
@@ -69,6 +69,8 @@ Exit check. The feed probe comes in step 8, so this check uses the CLI. It does 
 8. `ros2 topic list` shows no topic that starts with `/vimbax_camera/image_raw/`.
 9. CLI reads of the seven profile values match `acquisition_profile.yaml`. Write `TriggerSelector` `FrameStart` before the `TriggerMode` read. After part A, a match proves that the file set `ExposureTime` and `AcquisitionFrameRate`.
 10. `camera_gateway_probe` passes as before.
+
+Exit checks 4 to 10 run on the driver from part A step 13, after its init wait.
 
 `[F]` No project code reads image stamps today (facts 1.1.1), so `use_ros_time: true` breaks nothing.
 
@@ -130,13 +132,13 @@ Exit check:
 Files:
 
 - `include/venimapping_camera/acquisition_controller.hpp`, new: `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController`
-- `src/acquisition_controller.cpp`, new: the lifecycle value and the join rule, the worker queue, the request state and its check points before each gateway call, the lease set, `feed_open`, `Feed` with its move rules, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
+- `src/acquisition_controller.cpp`, new: the lifecycle value with its transition table, the join owner and its `kStopped` transition, the stop wait, the stop request in the queue, the worker queue, the request state and its check points before each gateway call, the lease set, `feed_open`, `Feed` with its move rules, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
 - `src/acquisition_support/lease_link.hpp`, new
 - `src/acquisition_support/profile_readback.hpp`, `.cpp`, new
 - `src/acquisition_support/stream_formats.hpp`, new
 - `test/fakes/fake_frame_source.hpp`, `.cpp`, new, with the take hooks and `on_open_admission`
-- `test/fakes/fake_camera_gateway.hpp`, `.cpp`, new
-- `test/acquisition_controller_test.cpp`, new
+- `test/fakes/fake_camera_gateway.hpp`, `.cpp`, new, with a call log entry at the start of each call
+- `test/acquisition_controller_test.cpp`, new, with `WorkerExitMark`
 - `test/installed_consumer/CMakeLists.txt`, `main.cpp`, new
 - `CMakeLists.txt`: the block for `venimapping_camera_acquisition`, which links only `venimapping_camera_gateway_api` and `venimapping_camera_frame_api`. The block has its own `install(TARGETS venimapping_camera_acquisition EXPORT export_${PROJECT_NAME} ...)` call and the target `test_acquisition_controller`
 
@@ -150,7 +152,7 @@ Exit check:
    1. Start sequence: `ColdFeedOrder`, `SelectorBeforeMode`, `RemoteDeviceModule`, `KeepsFramesBeforeReply`, `MatchTimeout`, `FormatRefusal`, `FormatCorrectionBits`, `WriteNeedsConfirmedStop`, `CorrectiveWriteOrder`, `WriteErrorReadbackDecides`, `ProfileMismatch`, and `FloatTolerance`.
    2. Leases and deadlines: `Busy` for feeds, `FeedOpenDeadline`, `ExpiredDuringReadback`, and `ExpiredBeforeStart`.
    3. Failure recovery: `StartFailReconciled`, `FirstErrorMinus15`, `WedgeOnStartTimeout`, and `WedgeOnStopFailure`.
-   4. Lifecycle and ownership: `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, and `FeedMoveAssignIntoLive`.
+   4. Lifecycle and ownership: `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, and `FeedMoveAssignIntoLive`.
 2. The acquisition target builds with no ROS include path. A configure-time check reads the `LINK_LIBRARIES` property of `venimapping_camera_acquisition` and fails on `rclcpp`.
 3. The suite passes under ThreadSanitizer and AddressSanitizer.
 4. After `colcon build`, source `install/setup.bash`. Then configure and build `test/installed_consumer` into a temporary build directory. The build links with no undefined symbol.
@@ -192,7 +194,7 @@ Files:
 
 Exit check, on the rig, with the driver on the default launch arguments:
 
-1. Do part A of the bring-up rig check. Then `mode:=bringup` passes all nine steps of part B.
+1. Do part A of the bring-up rig check, with each init wait. Then `mode:=bringup` passes all nine steps of part B.
 2. `mode:=feed` gives 29 to 31 Hz with the counters in the testing section.
 3. `mode:=load` gives 69 to 70.5 Hz.
 4. `mode:=get_image` passes the cold and warm limits.
@@ -204,7 +206,7 @@ Files: none. The v2 document gets a results table.
 
 Work, in this order:
 
-1. Run the unplug check and the settings load check, with host stamps.
+1. Run the unplug check and the settings load check, with host stamps. The settings load check runs the init wait before its `grep`.
 2. Relaunch the driver with `use_ros_time:=false`, with the console output in a file. Run the outside reader and `mode:=stamps` together, at 30 Hz and at 69.7 Hz.
 3. Relaunch the driver with the default arguments. Make sure that `use_ros_time` reads `True`.
 4. Run the wedge check last, with `mode:=wedge`.
