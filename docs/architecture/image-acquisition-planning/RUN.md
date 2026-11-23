@@ -2,17 +2,16 @@
 
 The runner writes this file. Do not edit it by hand.
 
-- Status: running
-- Updated: 2026-11-23T17:35:13-05:00
-- Last completed checkpoint: finish (this commit)
+- Status: complete
+- Updated: 2026-11-23T17:35:15-05:00
+- Last completed checkpoint: finish (93dd22dd866)
 - Push pending: False
 
 ## Next step
 
+The run is complete. Review the v2 design.
 
-If the workstation restarted, run this command from the worktree root. The runner resumes from the last checkpoint:
-
-    python3 docs/architecture/image-acquisition-planning/runner/run.py
+After this commit, the runner pushes and checks that the remote branch has it. If the push fails, the runner prints the retry command and writes it to final-status.txt in the run folder.
 
 ## Tools
 
@@ -39,7 +38,7 @@ If the workstation restarted, run this command from the worktree root. The runne
 | integrate-1 | claude | done | 1 | d8c43edaea |
 | prose | claude | done | 1 | c44a4e226b |
 | meaning-check | codex | done | 1 | 5e47a37348 |
-| finish | claude | done | 1 |  |
+| finish | claude | done | 1 | 93dd22dd86 |
 | camera-c1 | claude | done | 1 | 3ace405867 |
 | camera-c2 | claude | done | 1 | 25faa9d303 |
 | camera-c3 | codex | done | 1 | 44322da0e5 |
