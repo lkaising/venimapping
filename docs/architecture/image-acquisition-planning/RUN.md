@@ -2,15 +2,17 @@
 
 The runner writes this file. Do not edit it by hand.
 
-- Status: running
-- Updated: 2026-11-23T03:06:34-05:00
-- Last completed checkpoint: recheck-claude-r1 (this commit)
+- Status: stopped
+- Updated: 2026-11-23T03:25:50-05:00
+- Last completed checkpoint: recheck-claude-r1 (aacd6862323)
 - Push pending: False
+- Stop reason: fix-claude-r1 attempt 1 failed with an error the runner does not retry. Logs: /home/labuser/workspace/projects/venimapping-image-arch-run/attempts/fix-claude-r1/1
 
 ## Next step
 
+- Unfinished: fix-claude-r1 (claude), status failed, last outcome error.
 
-If the workstation restarted, run this command from the worktree root. The runner resumes from the last checkpoint:
+The run stopped. Read the stop reason and the errors below, fix the cause, then run this command from the worktree root:
 
     python3 docs/architecture/image-acquisition-planning/runner/run.py
 
@@ -46,7 +48,11 @@ If the workstation restarted, run this command from the worktree root. The runne
 | dispute-d20-judge-claude | claude | done | 1 | d9d572c36a |
 | dispute-d20-judge-codex | codex | done | 1 | f69916835d |
 | fix-codex-r1 | codex | done | 1 | 5bb39db002 |
-| recheck-claude-r1 | claude | done | 1 |  |
-| fix-claude-r1 | claude | pending | 0 |  |
+| recheck-claude-r1 | claude | done | 1 | aacd686232 |
+| fix-claude-r1 | claude | failed | 1 |  |
 | recheck-codex-r1 | codex | pending | 0 |  |
 | integrate-2 | claude | pending | 0 |  |
+
+## Errors
+
+- 2026-11-23T03:25:50-05:00 task fix-claude-r1: success: You've hit your monthly spend limit · raise it at https://claude.ai/settings/usage?from=cc_cli_limit_message · your 5-hour limit resets 6:10am (America/New_York)
