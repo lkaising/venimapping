@@ -3,12 +3,13 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T01:46:29-05:00
-- Last completed checkpoint: camera-c3 (this commit)
+- Updated: 2026-11-23T01:55:04-05:00
+- Last completed checkpoint: dispute-d20-position-claude (this commit)
 - Push pending: False
 
 ## Next step
 
+- Unfinished: dispute-d20-position-codex (codex), status held, last outcome ok.
 
 If the workstation restarted, run this command from the worktree root. The runner resumes from the last checkpoint:
 
@@ -40,8 +41,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | finish | claude | pending | 0 |  |
 | camera-c1 | claude | done | 1 | 3ace405867 |
 | camera-c2 | claude | done | 1 | 25faa9d303 |
-| camera-c3 | codex | done | 1 |  |
-| dispute-d20-position-claude | claude | pending | 0 |  |
-| dispute-d20-position-codex | codex | pending | 0 |  |
+| camera-c3 | codex | done | 1 | 44322da0e5 |
+| dispute-d20-position-claude | claude | done | 1 |  |
+| dispute-d20-position-codex | codex | held | 1 |  |
 | dispute-d20-judge-claude | claude | pending | 0 |  |
 | dispute-d20-judge-codex | codex | pending | 0 |  |
