@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T17:07:02-05:00
-- Last completed checkpoint: recheck-codex-r4 (this commit)
+- Updated: 2026-11-23T17:13:23-05:00
+- Last completed checkpoint: integrate-5 (this commit)
 - Push pending: False
 
 ## Next step
@@ -59,8 +59,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | recheck-codex-r3 | codex | done | 1 | d423658b9c |
 | integrate-4 | claude | done | 1 | 4cfbf03667 |
 | fix-claude-r4 | claude | done | 2 | ae32c74539 |
-| recheck-codex-r4 | codex | done | 1 |  |
-| integrate-5 | claude | pending | 0 |  |
+| recheck-codex-r4 | codex | done | 1 | 6a6dfb2eaa |
+| integrate-5 | claude | done | 1 |  |
 
 ## Errors
 

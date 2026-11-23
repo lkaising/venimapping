@@ -1,10 +1,10 @@
 # Issues for the image acquisition design
 
-Round 4. Checkpoint `d423658`. The coordinator wrote this file in task `integrate-4`. Round 1 wrote the first version at checkpoint `8d2c760`. Round 2 wrote the second version at checkpoint `ecba565`. Round 3 wrote the third version at checkpoint `fbebe85`.
+Round 5. Checkpoint `6a6dfb2`. The coordinator wrote this file in task `integrate-5`. Round 1 wrote the first version at checkpoint `8d2c760`. Round 2 wrote the second version at checkpoint `ecba565`. Round 3 wrote the third version at checkpoint `fbebe85`. Round 4 wrote the fourth version at checkpoint `d423658`.
 
 ## How to read this file
 
-1. Each issue has an id, `i1` to `i35`. An id is never reused.
+1. Each issue has an id, `i1` to `i36`. An id is never reused.
 2. Status values:
    - Open. The owner must fix the section or reject the issue with evidence. The other planner rechecks.
    - Closed. Both planners agree, or the evidence settles the issue.
@@ -16,30 +16,30 @@ Round 4. Checkpoint `d423658`. The coordinator wrote this file in task `integrat
    - "mismatch N" is item N in the interface mismatch list of the named review.
    - `N1` to `N9` are entries in `claude/draft-notes.md`. "Codex note" is an entry in `codex/draft-notes.md`.
    - "Verdicts" are the two files `claude/disputes/d20-verdict.md` and `codex/disputes/d20-verdict.md`.
-   - `fix-codex-r1` is `codex/fixes/round-1.md`. `fix-claude-rN` is `claude/fixes/round-N.md`, for N from 1 to 3.
-   - `recheck-claude-r1` is `claude/rechecks/round-1.md`. `recheck-codex-rN` is `codex/rechecks/round-N.md`, for N from 1 to 3.
-   - "integrate-2" to "integrate-4" mark a problem that the coordinator found while it built v2.
-5. Paths are relative to `docs/architecture/image-acquisition-planning/`, except `path:line` citations of project code, which are relative to the worktree root. Line numbers in the Claude and Codex sections are at checkpoint `d423658`, unless an entry names another checkpoint.
+   - `fix-codex-r1` is `codex/fixes/round-1.md`. `fix-claude-rN` is `claude/fixes/round-N.md`, for N from 1 to 4.
+   - `recheck-claude-r1` is `claude/rechecks/round-1.md`. `recheck-codex-rN` is `codex/rechecks/round-N.md`, for N from 1 to 4.
+   - "integrate-2" to "integrate-5" mark a problem that the coordinator found while it built v2.
+5. Paths are relative to `docs/architecture/image-acquisition-planning/`, except `path:line` citations of project code, which are relative to the worktree root. Line numbers in the Claude and Codex sections are at checkpoint `6a6dfb2`, unless an entry names another checkpoint.
 6. Where one finding appears in both reviews, this file keeps one issue and lists both sources.
 
 ## Neutrality check
 
-The coordinator runs on Claude. In round 4, the Codex recheck accepted the Claude fixes for i19 and i25 and reopened i15. The coordinator checked the reopen against the section text, and it checked the two accepts against the driver source.
+The coordinator runs on Claude. In round 5, the only input is a Claude fix that a Codex recheck accepts. An accept of a Claude fix is the case where a Claude coordinator could pass a defect with no check. So the coordinator checked the fix against the section text and the project code, and it did not rely on the recheck alone.
 
-Check of the Codex reopen of i15. The reopen holds:
+Check of the i15 fix:
 
-1. The transition table gives the move from `kStopping` to `kStopped` to the join owner alone, after its join returns (`claude/sections/control-plane.md:192`, `:198`).
-2. `start` step 2 waits for the init result. The worker records it and then sees the stop request at the top of its first loop (`claude/sections/control-plane.md:210`, `:214`).
-3. A `shutdown()` on thread B in `kStarting` sets `kStopping`, takes the thread object, and joins (`claude/sections/control-plane.md:220`). The worker can run its shutdown steps and exit before `start` reacquires the lifecycle mutex. B then sets `kStopped`.
-4. `start` steps 5 and 6 cover a successful `init` only with the value `kStarting` or `kStopping` (`claude/sections/control-plane.md:213-214`). No step covers `kStopped`. The init failure path does not have the gap, because step 4 runs the stop wait, and the stop wait returns at once in `kStopped` (`:203`, `:212`).
-5. `ShutdownFromInitWithWaiter` starts B only after `stream_stop` begins, and `start` usually wakes before that (`claude/sections/testing.md:300-311`). No test forces the order in item 3.
+1. `start` now reads the init result and the lifecycle value in one locked section, at the end of the step 3 wait (`claude/sections/control-plane.md:219`, `:221`).
+2. The table "`start` after the init result" has six rows, one for each init result and each value `kStarting`, `kStopping`, and `kStopped`. The row "Succeeded, `kStopped`" returns `kFeedClosed` (`claude/sections/control-plane.md:225-232`). This is expected change 1.
+3. The transition table allows no other value at step 5. Only `start` leaves `kStarting` for `kRunning`, a `shutdown()` or a failed `init` gives `kStopping`, and only the join owner gives `kStopped` (`claude/sections/control-plane.md:193-200`, `:236`). No transition goes back.
+4. In `kStopped`, the stop wait returns with no block, because the thread object is gone and the predicate is already true (`claude/sections/control-plane.md:211`). So the new row cannot hang.
+5. The worker completes each queued request with `kFeedClosed` before it exits (`claude/sections/control-plane.md:284`). So the `start` result matches the result of each queued caller.
+6. `Controller.ShutdownJoinedBeforeStartReads` holds `start` in the hook with no lock, lets thread B join and set `kStopped`, and checks `start_returned` false before it opens the gate (`claude/sections/testing.md:321-342`). This forces the order of the round 4 finding. It does not depend on the scheduler. This is expected change 2.
+7. Implementation step 5 exit check 1.4 and the coverage row for ic2 and ic4 name the test (`claude/sections/implementation-sequence.md:158`, `claude/sections/testing.md:483`). This is expected change 3.
+8. The hook header is under `src/acquisition_support/`. The package installs only `include/` (`src/venimapping_camera/CMakeLists.txt:58-63`). So the seam does not reach an installed consumer.
 
-Check of the Codex accepts:
+The coordinator found no new defect in the fix. The fix adds a test seam that no reviewer asked for. It is one private `std::function` member with one friend class, so it changes no public behavior. The coordinator records it as register text in i36 and opens no issue on it.
 
-1. i19. The driver logs `Initialization done!` at one place, `driver:vimbax_camera/src/vimbax_camera_node.cpp:134`. The coordinator found no other match in `driver:vimbax_camera/src/`. `initialize_camera` runs at `:97` and tries the load at `:390-400`, before that line. Part A runs the init wait after each launch and before each `grep` (`claude/sections/bring-up.md:111-119`, `:203-220`). Implementation step 1 exit check 3, step 8, and step 9 use the same wait (`claude/sections/implementation-sequence.md:64`, `:73`, `:197`, `:209`). Tier 4 check 2 also uses it (`claude/sections/testing.md:395`).
-2. i25. The scope text now reads the failed-load line after the init wait (`claude/sections/bring-up.md:121`). The scope items and the readback limit did not change from the accepted round 2 text (`:86-93`).
-
-The coordinator found no new defect in the Claude sections. The data-plane and error-vocabulary sections did not change in round 4. No finding was softened or dropped. Codex owns no open finding.
+The data-plane, error-vocabulary, and bring-up sections did not change in round 5. No finding was softened or dropped. Codex owns no open finding.
 
 ## Summary
 
@@ -59,7 +59,7 @@ The coordinator found no new defect in the Claude sections. The data-plane and e
 | i12 | r-codex-3 (register part), N1, r-claude-4, Codex note on d24 | coordinator | register d24 | Blocking | Closed | Round 1: closed with the N1 text. |
 | i13 | r-codex-4 | claude | control-plane, testing | Major | Closed | Round 1: opened. Round 2: fixed, Codex recheck accepted. |
 | i14 | r-codex-5, recheck-codex-r1 | claude | control-plane, error-vocabulary, testing | Major | Closed | Round 1: opened. Round 2: reopened. Round 3: fixed with the acceptance check, Codex recheck accepted. |
-| i15 | r-codex-6, recheck-codex-r1, recheck-codex-r2, recheck-codex-r3 | claude | control-plane, testing, implementation-sequence | Major | Open | Round 1: opened. Rounds 2 to 4: fixed, Codex recheck reopened. Round 4 gap: no `start` return rule for `kStopped` after a successful `init`. |
+| i15 | r-codex-6, recheck-codex-r1, recheck-codex-r2, recheck-codex-r3 | claude | control-plane, testing, implementation-sequence | Major | Closed | Round 1: opened. Rounds 2 to 4: fixed, Codex recheck reopened. Round 5: fixed with the `start` table and the start test hook, Codex recheck accepted. |
 | i16 | r-codex-7 | claude | control-plane, testing | Major | Closed | Round 1: opened. Round 2: fixed, Codex recheck accepted. |
 | i17 | r-codex-8, recheck-codex-r1 | claude | control-plane, testing | Major | Closed | Round 1: opened. Round 2: reopened. Round 3: fixed with the pending-epoch rule, Codex recheck accepted. |
 | i18 | r-codex-9, recheck-codex-r1 | claude | control-plane, error-vocabulary, testing | Major | Closed | Round 1: opened. Round 2: reopened. Round 3: fixed with one confirmation stop, Codex recheck accepted. |
@@ -74,20 +74,21 @@ The coordinator found no new defect in the Claude sections. The data-plane and e
 | i27 | N4 | claude | control-plane, error-vocabulary, testing | Minor | Closed | Round 1: opened. Round 2: adopted, Codex recheck accepted. |
 | i28 | N3, r-claude mismatch 10, r-codex mismatch 5 | coordinator | register ic5 | Minor | Closed | Round 1: closed. |
 | i29 | N8 | coordinator | register ic4 | Minor | Closed | Round 1: closed. |
-| i30 | Verdicts, register d20 | Logan | data-plane, bring-up, testing | Major | For Logan | Round 1: verdicts disagree, question L1. Rounds 2 to 4: no change. |
+| i30 | Verdicts, register d20 | Logan | data-plane, bring-up, testing | Major | For Logan | Round 1: verdicts disagree, question L1. Rounds 2 to 5: no change. |
 | i31 | integrate-2 | claude | implementation-sequence, testing | Minor | Closed | Round 2: opened by the coordinator. Round 3: fixed, Codex recheck accepted. |
 | i32 | recheck-claude-r1 register list | coordinator | register ic1, ic2, ic3, ic7, ic8, d24 | Minor | Closed | Round 2: opened and closed. v2 §4.4 records the text. |
 | i33 | fix-claude-r1 register list | coordinator | register d18, d22, d26, ic3, ic4, ic5 | Minor | Closed | Round 2: opened and closed for the accepted fixes. Round 3: i34 adopts two of the three waiting items. Round 4: i35 adopts the third. |
 | i34 | fix-claude-r2 register list | coordinator | register d19, d26, ic2, ic3, ic4, ic5 | Minor | Closed | Round 3: opened and closed for the accepted fixes. Round 4: i35 replaces the two waiting items. |
-| i35 | fix-claude-r3 register list | coordinator | register ic4, ic5, ic6 | Minor | Closed | Round 4: opened and closed for items 1, 2, and 4. Item 3 waits for i15. |
+| i35 | fix-claude-r3 register list | coordinator | register ic4, ic5, ic6 | Minor | Closed | Round 4: opened and closed for items 1, 2, and 4. Round 5: i36 item 1 replaces the waiting item 3. |
+| i36 | fix-claude-r4 register list | coordinator | register ic4, ic5, ic7 | Minor | Closed | Round 5: opened and closed. v2 §4.4 records both items. |
 
-Counts after round 4: 1 Open, 33 Closed, 1 For Logan. This round closed 3 issues: i19, i25, and the new register issue i35.
+Counts after round 5: 0 Open, 35 Closed, 1 For Logan. This round closed 2 issues: i15 and the new register issue i36.
 
-Open issues by severity: no Blocking, one Major (i15), and no Minor. The open issue is on the Claude sections.
+No issue is Open, so this round adds no task. The prose pass starts next.
 
 ## Issues on the data-plane section (owner codex)
 
-All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at checkpoint `5bb39db`. `recheck-claude-r1` accepted each one. The section did not change in rounds 3 and 4.
+All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at checkpoint `5bb39db`. `recheck-claude-r1` accepted each one. The section did not change in rounds 3 to 5.
 
 ### i1. `receive_seq` and `frames_received` need one atomic increment
 
@@ -139,12 +140,12 @@ All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at che
 ### i10. The reconnect fallback start skips the guarded start sequence
 
 - Round 1 finding: The fallback called `stream_start()` with no checks, and one `open_admission()` had no bit depth.
-- Resolution: Closed in round 2. The fallback calls `close_admission()` and runs the full start sequence. Each `open_admission` passes the bit depth (`claude/sections/control-plane.md:515-517`). `ReconnectNoRestart` asserts the order and epoch 3 (`claude/sections/testing.md`, controller tables).
+- Resolution: Closed in round 2. The fallback calls `close_admission()` and runs the full start sequence. Each `open_admission` passes the bit depth (`claude/sections/control-plane.md`, "Silence, outage, and reconnect"). `ReconnectNoRestart` asserts the order and epoch 3 (`claude/sections/testing.md`, controller tables).
 
 ### i11. `TriggerSelector` write during a stream conflicts with d18 item 7
 
 - Round 1 finding: The reconnect readback writes the selector while the driver can stream.
-- Resolution: Closed in round 2. The section adopts the amended d18 item 7 and cites c2 (`claude/sections/control-plane.md:376-382`). i33 records the register text.
+- Resolution: Closed in round 2. The section adopts the amended d18 item 7 and cites c2 (`claude/sections/control-plane.md`, "Configuration order and readback"). i33 records the register text.
 
 ### i12. d24 promises the first push, but the capacity-1 queue keeps the newest
 
@@ -153,46 +154,43 @@ All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at che
 ### i13. Requests during recovery states take the normal start path
 
 - Round 1 finding: New requests could start a stream in `kOutage` and write before a confirmed stop.
-- Resolution: Closed in round 2. The table "Stream states and new requests" gives one rule per state. Corrective writes need a confirmed stop (`claude/sections/control-plane.md:273-292`, `:316-319`).
+- Resolution: Closed in round 2. The table "Stream states and new requests" gives one rule per state. Corrective writes need a confirmed stop (`claude/sections/control-plane.md`, "Stream states and new requests" and "Configuration order and readback").
 
 ### i14. Get image cancellation is checked only after a pending call
 
 - Round 1 finding: The worker checked abandonment only after a pending gateway call.
 - Round 2 recheck finding: No check ran between the calls of one readback. The take loop could return a frame queued after the deadline. No rule closed admission after an expiry between `open_admission` and `stream_start`.
-- Round 3 fix (`fix-claude-r2`): A check point before each gateway call, under the outcome mutex (`claude/sections/control-plane.md:149-155`). `close_admission()` after an expiry before `stream_start` (`:157-162`). The take loop checks the deadline before each `take` and after each frame (`:416-423`).
+- Round 3 fix (`fix-claude-r2`): A check point before each gateway call, under the outcome mutex. `close_admission()` after an expiry before `stream_start`. The take loop checks the deadline before each `take` and after each frame (`claude/sections/control-plane.md:157-170`, and "Get image").
 - Resolution: Closed in round 3. `recheck-codex-r2` accepts each item. The fix adopts the acceptance check that the round 2 recheck asked for, so the disagreement on item 2 is settled and needs no dispute.
 
 ### i15. No completion rule for queued requests at init failure or shutdown
 
-- Location: `claude/sections/control-plane.md:170-241`. `claude/sections/testing.md:271-311`. `claude/sections/implementation-sequence.md:155`.
+- Location: `claude/sections/control-plane.md:178-288`. `claude/sections/testing.md:128-133`, `:273-344`. `claude/sections/implementation-sequence.md:131-158`.
 - Round 1 finding: Queued requests had no result at init failure or shutdown, and a worker call to `shutdown` would join its own thread.
 - Round 2 recheck finding: Shutdown before `start` had no path. No rule decided which thread joins when `start` and `shutdown` overlap.
 - Round 3 fix (`fix-claude-r2`): A lifecycle value under one mutex. Shutdown in `kCreated` completes the queue on the calling thread. A join rule: only the thread that moves the thread object out joins. `recheck-codex-r2` accepts the shutdown before `start`.
 - Round 3 recheck finding: `start` set `kStopped` while another thread still joined. After a `shutdown()` from `WorkerInit`, `start` could own the join and set no `kStopped`.
-- Round 4 fix (`fix-claude-r3`): A transition table. Only the join owner leaves `kStopping`, after its join returns. A shared stop wait for `start` and `shutdown()`. The worker never joins and never waits. The stop request is a queue flag. New tests `InitFailureWithShutdown` and `ShutdownFromInitWithWaiter` with `WorkerExitMark` (`claude/sections/control-plane.md:183-227`, `claude/sections/testing.md:113-127`, `:285-311`). `recheck-codex-r3` accepts the join owner rule and the worker rule.
-- Round 4 recheck finding, confirmed by the coordinator: After a successful `init`, `start` has return rules only for `kStarting` and `kStopping` (`claude/sections/control-plane.md:213-214`). A concurrent `shutdown()` can join the worker and set `kStopped` before `start` reacquires the lifecycle mutex (`:192`, `:220`). `start` then has no rule. No test forces this order (`claude/sections/testing.md:300-311`).
-- Expected change:
-  1. If `init` succeeded and `start` sees `kStopped`, return `kFeedClosed`.
-  2. Add a test with a successful `init` in which the join owner sets `kStopped` before `start` handles the init result.
-  3. Name the new test in implementation step 5 and in the coverage table.
-- Note: This is the fourth round on i15. The fix and the recheck do not disagree. Each recheck found a new gap in the same lifecycle rules, and each gap was smaller than the one before it. No dispute is needed.
+- Round 4 fix (`fix-claude-r3`): A transition table. Only the join owner leaves `kStopping`, after its join returns. A shared stop wait for `start` and `shutdown()`. The worker never joins and never waits. New tests `InitFailureWithShutdown` and `ShutdownFromInitWithWaiter`. `recheck-codex-r3` accepts the join owner rule and the worker rule.
+- Round 4 recheck finding: After a successful `init`, `start` had return rules only for `kStarting` and `kStopping`. A concurrent `shutdown()` could join the worker and set `kStopped` first. No test forced this order.
+- Round 5 fix (`fix-claude-r4`): `start` reads the init result and the lifecycle value in one locked section and acts by the table "`start` after the init result". The row "Succeeded, `kStopped`" returns `kFeedClosed`. A private start test hook, `detail::ControllerTestAccess::set_before_init_wait`, holds `start` with no lock. New test `ShutdownJoinedBeforeStartReads` in step 5 and in the coverage table (`claude/sections/control-plane.md:215-280`, `claude/sections/testing.md:321-342`, `:483`, `claude/sections/implementation-sequence.md:158`).
+- Resolution: Closed in round 5. `recheck-codex-r4` accepts each expected change. The coordinator check is in "Neutrality check". i36 records the register text.
 
 ### i16. Bit depth comes from the first readback, and feature calls omit the module
 
-- Resolution: Closed in round 2. The final readback decides the format check and the bit depth. Each feature call passes `FeatureModule::kRemoteDevice` (`claude/sections/control-plane.md:314-325`, `:358-369`).
+- Resolution: Closed in round 2. The final readback decides the format check and the bit depth. Each feature call passes `FeatureModule::kRemoteDevice` (`claude/sections/control-plane.md`, "Start sequence" and "Configuration order and readback").
 
 ### i17. A failed start leaves admission open, and the no-user stop has no failure path
 
 - Round 1 finding: A failed start left admission open, and the no-user stop had no failure path.
 - Round 2 recheck finding: The section promised that an open feed never gets a frame from a failed epoch. Admission opens before `stream_start`, so the promise was false.
-- Round 3 fix (`fix-claude-r2`): "Frames from an epoch whose start is pending" defines what a feed and a get image can see (`claude/sections/control-plane.md:335-352`). New test `ConsumerDuringFailingStart`.
+- Round 3 fix (`fix-claude-r2`): "Frames from an epoch whose start is pending" defines what a feed and a get image can see. New test `ConsumerDuringFailingStart`.
 - Resolution: Closed in round 3. `recheck-codex-r2` accepts it.
 
 ### i18. -15 can reach a caller, and a poll error can clear a live wedge
 
 - Round 1 finding: The first error and the reconciliation result were mixed, and a poll error could clear a live wedge.
 - Round 2 recheck finding: The confirmation stop was in the general failure recovery, which gave a different state from the wedge rule for the same failure.
-- Round 3 fix (`fix-claude-r2`): One confirmation stop for each change signal, outside the failure recovery. Any failure keeps `kWedged` (`claude/sections/control-plane.md:467`, `:477-491`). Tests `WedgePollErrorKeepsWedge` and `WedgeConfirmMinus3`.
+- Round 3 fix (`fix-claude-r2`): One confirmation stop for each change signal, outside the failure recovery. Any failure keeps `kWedged`. Tests `WedgePollErrorKeepsWedge` and `WedgeConfirmMinus3`.
 - Resolution: Closed in round 3. `recheck-codex-r2` accepts it.
 
 ### i19. The bring-up checks do not prove that the installed values applied
@@ -200,12 +198,12 @@ All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at che
 - Round 1 finding: The topic check and the settings check could pass when the file did not apply.
 - Round 2 recheck finding: Part A had no readback before the reopen. The log check matched only at the start of a line, so it could not fail.
 - Round 3 recheck finding: Part A ran `grep` on `driver_b.log` right after the launch. The driver tries the load before it logs `Initialization done!`, so the `grep` could miss a later failed-load line.
-- Round 4 fix (`fix-claude-r3`): "The init line" states the order of the load and the init line. The init wait runs `timeout 60` on a `grep -qF "Initialization done!"` loop. A status other than 0 fails the check. Part A runs it after each launch, before each `grep` or CLI step (`claude/sections/bring-up.md:102-121`, `:203-226`). Implementation steps 1, 8, and 9 and tier 4 check 2 use the same wait (`claude/sections/implementation-sequence.md:64`, `:73`, `:197`, `:209`, `claude/sections/testing.md:395`).
+- Round 4 fix (`fix-claude-r3`): "The init line" states the order of the load and the init line. The init wait runs `timeout 60` on a `grep -qF "Initialization done!"` loop. A status other than 0 fails the check. Part A runs it after each launch, before each `grep` or CLI step (`claude/sections/bring-up.md:102-121`, `:203-226`). Implementation steps 1, 8, and 9 and tier 4 check 2 use the same wait.
 - Resolution: Closed in round 4. `recheck-codex-r3` accepts it. The coordinator confirmed the one place that logs the init line (`driver:vimbax_camera/src/vimbax_camera_node.cpp:134`).
 
 ### i20. Step 9 leaves the driver on device stamps before the wedge check
 
-- Resolution: Closed in round 2. Tier 4 check 4 relaunches with host stamps and reads `use_ros_time`. The wedge check restores `Mono8` with the CLI and keeps one controller across the restart (`claude/sections/implementation-sequence.md:207-212`).
+- Resolution: Closed in round 2. Tier 4 check 4 relaunches with host stamps and reads `use_ros_time`. The wedge check restores `Mono8` with the CLI and keeps one controller across the restart (`claude/sections/implementation-sequence.md`, step 9).
 
 ### i21. The outside-reader check uses a `ros2 topic hz` option that does not exist
 
@@ -227,7 +225,7 @@ All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at che
 
 ### i24. The acquisition target is not installed or exported
 
-- Resolution: Closed in round 2. Step 5 installs and exports `venimapping_camera_acquisition` and links an installed consumer. "CMake layout" gives the join rule for steps 4 and 5 (`claude/sections/implementation-sequence.md:29-40`, `:143-160`).
+- Resolution: Closed in round 2. Step 5 installs and exports `venimapping_camera_acquisition` and links an installed consumer. "CMake layout" gives the join rule for steps 4 and 5 (`claude/sections/implementation-sequence.md:29-40`, step 5).
 
 ### i25. The settings file scope is not stated
 
@@ -241,18 +239,18 @@ All nine issues are Closed. Each fix is in `codex/sections/data-plane.md` at che
 
 - Round 1 finding: The section shared the subscription between the worker and `Feed`.
 - Round 2 recheck finding: An explicit close and the destructor posted two releases. A move assignment into a live `Feed` replaced its subscription with no close.
-- Round 3 fix (`fix-claude-r2`): A `released` flag under the link mutex, a lease set keyed by link, and a move assignment that closes the destination first (`claude/sections/control-plane.md:243-271`). Tests `FeedCloseThenDestroy` and `FeedMoveAssignIntoLive`.
+- Round 3 fix (`fix-claude-r2`): A `released` flag under the link mutex, a lease set keyed by link, and a move assignment that closes the destination first (`claude/sections/control-plane.md`, "Subscription ownership"). Tests `FeedCloseThenDestroy` and `FeedMoveAssignIntoLive`.
 - Resolution: Closed in round 3. `recheck-codex-r2` accepts it.
 
 ### i27. `feed_open` has no caller deadline
 
-- Resolution: Closed in round 2. `FeedOptions::deadline`, default 5000 ms, uses the same request state as `get_image` (`claude/sections/control-plane.md:47-50`, `:133-168`). The i14 check points apply to both calls.
+- Resolution: Closed in round 2. `FeedOptions::deadline`, default 5000 ms, uses the same request state as `get_image` (`claude/sections/control-plane.md`, "Public interface" and "Requests and deadlines"). The i14 check points apply to both calls.
 
 ### i31. Step 5 exit check needs the step 6 `get_image`
 
 - Source: integrate-2.
 - Round 2 finding: Four step 5 tests called `get_image`, which step 6 adds.
-- Round 3 fix (`fix-claude-r2`): A step column in the controller test tables. The four tests use `feed_open` only. `ShutdownWakesGetImage` moves to step 6 (`claude/sections/implementation-sequence.md:27`, `:151-155`).
+- Round 3 fix (`fix-claude-r2`): A step column in the controller test tables. The four tests use `feed_open` only. `ShutdownWakesGetImage` moves to step 6.
 - Resolution: Closed in round 3. `recheck-codex-r2` accepts it.
 
 ## Register amendments closed by the coordinator
@@ -281,12 +279,16 @@ Closed in round 1. See the round 1 text in v2 section 4.4.
 ### i35. Register text for the accepted Claude round 3 fixes
 
 - Source: `claude/fixes/round-3.md`, section "Register text that these fixes need", items 1 to 4.
-- Resolution: Closed in round 4 for items 1, 2, and 4. v2 section 4.4 records the text:
-  1. ic4 stop order step 1: the join owner rule. Only the join owner sets `kStopped`, and each other `start` or `shutdown()` waits for it (item 1, accepted part of i15).
-  2. ic4 stop order step 1: `shutdown()` on the worker sets the flag and `kStopping`, posts the stop request, and returns (item 2, accepted part of i15).
-  3. ic6 item 3: the part A control launch, the readback before the reopen, the `grep -F` match anywhere in the line, and the init wait with a 60 s limit before each log check (item 4, i19, i25).
-- Waiting item: item 3, "A `start` that fails in `init`, or that sees shutdown during `init`, returns only after the worker has exited." The open i15 adds a `start` return rule for `kStopped`. `integrate-5` adopts item 3 with that rule after the fix.
-- Limit: the coordinator did not rewrite `register.md` in this round. v2 section 4.4 is the record until the next register write.
+- Resolution: Closed in round 4 for items 1, 2, and 4. v2 section 4.4 records the text.
+- Waiting item 3: "A `start` that fails in `init`, or that sees shutdown during `init`, returns only after the worker has exited." In round 5, i36 item 1 replaces it with the form that adds the `kStopped` rule. No item of i35 waits now.
+
+### i36. Register text for the accepted Claude round 4 fix
+
+- Source: `claude/fixes/round-4.md`, section "Register text that this fix needs", items 1 and 2.
+- Resolution: Closed in round 5. v2 section 4.4, "Contract amendments from round 5", records both items:
+  1. ic4 and ic5: "A `start` that fails in `init`, or that sees a shutdown before it handles the init result, returns only after the worker has exited. After a successful `init`, `start` returns `kFeedClosed` if the lifecycle value is `kStopping` or `kStopped`, and success only if it is still `kStarting`." (i15)
+  2. ic7: "The controller has one test seam, `detail::ControllerTestAccess`, in a private header. It sets a hook that `start` runs with no lock held, before it waits for the init result. The hook is empty in production." (i15)
+- Limit: the coordinator did not rewrite `register.md` in this round. The file is still at the `register-final` text. v2 section 4.4 is the record of each amendment from i12 and i28 to i36.
 
 ## Issues for Logan
 
@@ -294,13 +296,14 @@ Closed in round 1. See the round 1 text in v2 section 4.4.
 
 - Source: `claude/disputes/d20-verdict.md`, `codex/disputes/d20-verdict.md`, register d20.
 - Finding: The Claude verdict keeps `use_ros_time: false` and fills `host_stamp_ns` from the DDS source timestamp, with an optional device stamp. The Codex verdict sets `use_ros_time: true` and fills one `host_stamp_ns` from the header.
-- Status: For Logan, question L1. The sections use the Codex verdict as a working assumption. The cost to reverse is low (register d20). Rounds 2 to 4 changed nothing.
+- Status: For Logan, question L1. The sections use the Codex verdict as a working assumption. The cost to reverse is low (register d20). Rounds 2 to 5 changed nothing.
 
 ## Notes for the prose pass
 
 These notes change no substance, so they are not issues.
 
-1. The data-plane section cites `claude/sections/testing.md:149-154` for the `rtt` mode (`codex/sections/data-plane.md:166`). The Claude fixes moved that text. The `rtt` row is now at `claude/sections/testing.md:343`.
+1. The data-plane section cites `claude/sections/testing.md:149-154` for the `rtt` mode (`codex/sections/data-plane.md:166`). The Claude fixes moved that text. The `rtt` row is now in the tier 3 table of `claude/sections/testing.md`, "Tier 3: driver and camera".
+2. `register.md` holds the `register-final` text. v2 section 4.4 lists the amendments of rounds 1 to 5. A reader of the register alone does not see them.
 
 ## Tasks emitted in round 1
 
@@ -336,10 +339,14 @@ These notes change no substance, so they are not issues.
 | `recheck-codex-r4` | recheck | codex | i15 | the same | `fix-claude-r4` |
 | `integrate-5` | integrate | claude | all | | the two tasks above. It blocks `prose`. |
 
-1. Codex owns no open issue, so this round emits no Codex fix and no Claude recheck.
-2. No dispute task. For i15, the fix accepted each finding, and the recheck found a smaller gap that remains. No planner rejects a finding, so no disagreement exists to dispute.
-3. i30 stays with Logan. A dispute already ran on d20.
+## Tasks emitted in round 5
+
+None. No issue is Open, so this round writes no emit file, and the prose pass starts next.
+
+1. No fix and no recheck task, because no issue is Open.
+2. No dispute task. Each fix and recheck pair ended in an accept. i30 stays with Logan, and a dispute already ran on d20.
+3. No `integrate-6` task, because this round adds no other task.
 
 ## Camera requests
 
-No draft, review, fix, or recheck task wrote a camera request. The files in `claude/camera-requests/` and `codex/camera-requests/` come from the trace and positions tasks, and c1 to c3 answered them. This round accepts no camera check. i15 is a rule inside the controller, so a camera check cannot answer it.
+No draft, review, fix, or recheck task wrote a camera request. The files in `claude/camera-requests/` and `codex/camera-requests/` come from the trace and positions tasks, and c1 to c3 answered them. This round accepts no camera check. i15 is a rule inside the controller, and a fake-based test checks it, so a camera check cannot change it.

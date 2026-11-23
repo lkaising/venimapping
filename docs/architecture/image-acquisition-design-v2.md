@@ -1,9 +1,9 @@
 # Image acquisition design v2
 
-- Status: integrated draft, round 4. Before the prose pass.
-- Worktree checkpoint: `d423658`. Planning folder: `docs/architecture/image-acquisition-planning/`.
+- Status: integrated draft, round 5. No issue is Open. The prose pass is next.
+- Worktree checkpoint: `6a6dfb2`. Planning folder: `docs/architecture/image-acquisition-planning/`.
 - Section owners: data plane by Codex. Control plane, error vocabulary, bring-up, testing, and implementation sequence by Claude. The coordinator wrote sections 1 to 4 and 9 to 14.
-- Open issues: `docs/architecture/image-acquisition-planning/issues.md`.
+- Issue list: `docs/architecture/image-acquisition-planning/issues.md`.
 
 ## 1. Summary
 
@@ -24,14 +24,14 @@ What v2 proposes:
 
 Phase 1 leaves out the software trigger, `CameraInfo` pairing, a ROS service for get image, device stamps, and driver patches. Each has a trigger to start it (section 10).
 
-State of the design after round 4:
+State of the design after round 5:
 
-1. 1 issue is Open, on the Claude sections. It is not Blocking.
-   - i15, Major. After a successful `init`, `start` has no return rule when a concurrent `shutdown()` already joined the worker and set `kStopped`. The join owner rule and the `kStopped` transition are accepted.
-2. Round 4 closed 3 issues: i19, i25, and the register issue i35. Each bring-up log check now waits for the driver line `Initialization done!` before its `grep`, so it sees the settings load result of that launch.
-3. The data-plane, error-vocabulary, and bring-up sections have no open issue.
-4. Nine decisions wait for Logan (section 13). The design runs on a stated working assumption for each one.
-5. The timestamp source, d20, is a working assumption. The two dispute verdicts disagree (section 14).
+1. No issue is Open. 35 issues are Closed, and 1 issue, i30, is For Logan.
+2. Round 5 closed 2 issues: i15 and the register issue i36.
+   - i15. After a successful `init`, `start` returns `kFeedClosed` if it reads `kStopping` or `kStopped`. One table gives the `start` result for each init result and each lifecycle value. A private start test hook forces the order in which a concurrent `shutdown()` sets `kStopped` first.
+   - i36. Section 4.4 records the register text for that fix.
+3. Nine decisions wait for Logan (section 13). The design runs on a stated working assumption for each one.
+4. The timestamp source, d20, is a working assumption. The two dispute verdicts disagree (section 14).
 
 ### Labels and citations
 
@@ -47,7 +47,7 @@ State of the design after round 4:
    - `facts 1.4.3` is section 1.4, item 3 of `coordinator/facts.md` in the planning folder. Facts ids such as `A28` and `X3` are in the same file.
    - `c1 §3.5` is section 3.5 of `claude/camera/c1.md`. `c2` is `claude/camera/c2.md`. `c3` is `codex/camera/c3.md`.
    - Lower-case ids such as `d17` and `ic3` are entries in `register.md` in the planning folder. `R1` to `R16` and `T1` to `T12` are requirements and technical unknowns. `L1` to `L9` are the decisions for Logan.
-   - `i1` to `i35` are issues in `issues.md`. `N1` to `N9` and `M1` to `M10` are entries in `claude/draft-notes.md`.
+   - `i1` to `i36` are issues in `issues.md`. `N1` to `N9` and `M1` to `M10` are entries in `claude/draft-notes.md`.
 
 ## 2. Current state
 
@@ -217,7 +217,7 @@ flowchart LR
 
 ### 4.2 Threads
 
-From register ic4, with the shutdown rules of rounds 2 to 4 (i33, i34, i35).
+From register ic4, with the shutdown rules of rounds 2 to 5 (i33, i34, i35, i36).
 
 | Thread | Started by | Runs | Never calls |
 |---|---|---|---|
@@ -229,9 +229,9 @@ From register ic4, with the shutdown rules of rounds 2 to 4 (i33, i34, i35).
 1. Start order: make the node, create the gateway, create the frame source, create the controller, start the executor thread, start the controller worker.
 2. Stop order: call the controller shutdown while the executor still spins. Then stop and join the executor. Then destroy the controller, the frame source, the gateway, and the node.
 3. `[A]` Phase 1 uses one node and one executor thread. The feed probe measures the gateway round-trip time while stopped and while streaming at 69.7 Hz. If streaming adds more than 5 ms, the composition root moves the subscription to a second node (d5, step 9a).
-4. A `shutdown()` before `start` runs on the calling thread. It completes each queued request with `kFeedClosed` and makes no gateway call (i15, accepted part).
-5. One thread moves the worker `std::thread` object out and joins. Only that thread sets `kStopped`, after its join returns. Each other `start` or `shutdown()` that needs the worker to exit waits for `kStopped`. The worker never joins and never waits (i15, accepted part).
-6. The `start` return rule for a successful `init` after a concurrent `shutdown()` already set `kStopped` is open in i15.
+4. A `shutdown()` before `start` runs on the calling thread. It completes each queued request with `kFeedClosed` and makes no gateway call (i15).
+5. One thread moves the worker `std::thread` object out and joins. Only that thread sets `kStopped`, after its join returns. Each other `start` or `shutdown()` that needs the worker to exit waits for `kStopped`. The worker never joins and never waits (i15).
+6. `start` reads the init result and the lifecycle value in one locked section. After a successful `init`, it returns success only in `kStarting`. In `kStopping` or `kStopped`, it returns `kFeedClosed` after the worker has exited (i15).
 
 ### 4.3 Build targets
 
@@ -248,7 +248,7 @@ From register ic8. All targets are in `venimapping_camera`. Each library has its
 
 ### 4.4 Decision register
 
-The register in the planning folder holds the full entries, the evidence, and the interface contracts ic0 to ic8. This table gives each decision in one line, with the amendments from rounds 1 to 4. The register file is at the `register-final` text. Until the next register write, this section is the record of the amendments (i32, i33, i34, i35).
+The register in the planning folder holds the full entries, the evidence, and the interface contracts ic0 to ic8. This table gives each decision in one line, with the amendments from rounds 1 to 5. The register file is at the `register-final` text. Until the next register write, this section is the record of the amendments (i32, i33, i34, i35, i36).
 
 | Id | Topic | Status | Decision |
 |---|---|---|---|
@@ -319,7 +319,7 @@ Contract amendments from round 3, for the accepted control-plane fixes (i34):
 6. ic3 item 4.3: `close_admission` also runs when a request expires after `open_admission` and before `stream_start` (i14).
 7. ic3: the rule for frames of an epoch whose start is pending (`claude/sections/control-plane.md:335-352`, i17).
 8. ic4 stop order step 1: a shutdown before `start` completes each queued request with `kFeedClosed` on the calling thread, with no gateway call (i15, accepted part).
-9. ic5: `kFeedClosed` adds `start` after shutdown started, and a shutdown before `start`. `kInvalidArgument` names a second `start` while the worker starts or runs (i15, accepted part). The codes do not depend on the open `start` return rule.
+9. ic5: `kFeedClosed` adds `start` after shutdown started, and a shutdown before `start`. `kInvalidArgument` names a second `start` while the worker starts or runs (i15, accepted part). Round 5 item 1 adds the `start` return rule.
 
 Contract amendments from round 4, for the accepted Claude round 3 fixes (i35):
 
@@ -327,11 +327,14 @@ Contract amendments from round 4, for the accepted Claude round 3 fixes (i35):
 2. ic4 stop order step 1, worker thread: "`shutdown()` on the worker sets the shutdown flag and `kStopping`, posts the stop request, and returns." (i15, accepted part)
 3. ic6 item 3: the bring-up rig check adds the part A control launch, the readback before the reopen, and the `grep -F` match anywhere in the line. Before each log check, it adds the init wait for `Initialization done!` with a 60 s limit. A missing line fails the check (i19, i25).
 
-Amendment that waits for an open issue: the ic4 or ic5 rule "A `start` that fails in `init`, or that sees shutdown during `init`, returns only after the worker has exited" (`claude/fixes/round-3.md` register item 3, i15). The open i15 fix adds a `start` return rule for `kStopped`. `integrate-5` adopts this item with that rule after the fix.
+Contract amendments from round 5, for the accepted Claude round 4 fix (i36). Item 1 replaces the waiting round 3 item 3 (`claude/fixes/round-3.md`, register item 3):
+
+1. ic4 and ic5, `start` return rule: "A `start` that fails in `init`, or that sees a shutdown before it handles the init result, returns only after the worker has exited. After a successful `init`, `start` returns `kFeedClosed` if the lifecycle value is `kStopping` or `kStopped`, and success only if it is still `kStarting`." (i15)
+2. ic7, controller test seam: "The controller has one test seam, `detail::ControllerTestAccess`, in a private header. It sets a hook that `start` runs with no lock held, before it waits for the init result. The hook is empty in production." (i15)
 
 ## 5. Data plane
 
-Source: `codex/sections/data-plane.md`, owner Codex. The coordinator changed only the heading levels. No issue on this section is open after round 4.
+Source: `codex/sections/data-plane.md`, owner Codex. The coordinator changed only the heading levels. No issue on this section is open after round 5.
 
 [F] The driver publishes `sensor_msgs/msg/Image` on `image_raw`. The project gateway uses services and binds blocking calls to one worker thread. (`driver:vimbax_camera/src/vimbax_camera_node.cpp:350-357,1620-1638`, `src/venimapping_camera/src/vimbax_camera_gateway.cpp:49-69`, `src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:45-64`)
 
@@ -500,7 +503,7 @@ The feed probe reads the callback duration fields from source stats. It measures
 
 ## 6. Control plane, policy layer, and error vocabulary
 
-Source: `claude/sections/control-plane.md` and `claude/sections/error-vocabulary.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label lines. v1 called the controller the policy layer. In v2, the control plane and the policy layer are one class, `AcquisitionController`. Open issue on 6.1: i15. No issue on 6.2 is open.
+Source: `claude/sections/control-plane.md` and `claude/sections/error-vocabulary.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label lines. v1 called the controller the policy layer. In v2, the control plane and the policy layer are one class, `AcquisitionController`. No issue on 6.1 or 6.2 is open after round 5.
 
 ### 6.1 Control plane
 
@@ -528,7 +531,10 @@ Header `include/venimapping_camera/acquisition_controller.hpp`, target `venimapp
 ```cpp
 namespace venimapping::camera {
 
-namespace detail { class LeaseLink; }       // private, src/acquisition_support/lease_link.hpp
+namespace detail {
+class LeaseLink;                            // private, src/acquisition_support/lease_link.hpp
+class ControllerTestAccess;                 // private, src/acquisition_support/controller_test_access.hpp
+}
 
 struct AcquisitionProfile {                 // d18, values from the bringup file
   std::string pixel_format;                 // "Mono8"
@@ -593,6 +599,7 @@ class AcquisitionController final {
 
   // Starts the worker. The worker runs init first. Returns the init result,
   // kInvalidArgument for a second call, or kFeedClosed after shutdown started.
+  // A shutdown() during init gives kFeedClosed also if init succeeded.
   // A failed or shut-down start returns only after the worker has exited.
   [[nodiscard]] Expected<void> start(WorkerInit init);
 
@@ -604,6 +611,9 @@ class AcquisitionController final {
   [[nodiscard]] Expected<Feed> feed_open(const FeedOptions& options);
   [[nodiscard]] Expected<ImageFrame> get_image(const GetImageOptions& options);
   [[nodiscard]] ControllerStatus status() const;
+
+ private:
+  friend class detail::ControllerTestAccess;  // test seam, start step 2
 };
 
 }  // namespace venimapping::camera
@@ -616,6 +626,7 @@ class AcquisitionController final {
 5. `Feed` keeps the ic2 rule: it owns its `FrameSubscription` alone. The `LeaseLink` gives the worker a safe close path. See "Subscription ownership".
 6. A `Feed` can outlive the controller. It then acts as a closed subscription (ic2 rule 7), and its lease release does nothing.
 7. `status()` is how a consumer sees an outage, a stall, a fault, or a wedge. `take` stays empty in those states (d22, R14).
+8. `detail::ControllerTestAccess` is the only test seam in the controller. Its header is private, so a consumer outside the package cannot reach it. See "Start test hook".
 
 #### Threads
 
@@ -702,18 +713,37 @@ Join rules:
 5. So `kStopped` means that the worker has exited, or that no worker was made. A `start` or `shutdown()` that waits for the worker returns only after `kStopped`.
 6. The worker never joins and never waits for `kStopped`.
 
-The stop wait is the step that `start` and `shutdown()` share. Under the lifecycle mutex, if the object is still in the controller, move it out. Then unlock, join, lock, set `kStopped`, and notify all. If the object is gone, wait for `kStopped`.
+The stop wait is the step that `start` and `shutdown()` share. Under the lifecycle mutex, if the object is still in the controller, move it out. Then unlock, join, lock, set `kStopped`, and notify all. If the object is gone, wait for `kStopped`. In `kStopped`, the object is gone and the predicate is already true, so the stop wait returns with no block.
 
 The stop request is a flag in the request queue. A thread sets it under the queue mutex and notifies the worker. The worker waits with a predicate that includes the flag, so no wake is lost. At the top of each loop, the worker checks the flag. If it is set, the worker runs the shutdown steps.
 
 `start(init)`:
 
-1. Under the lifecycle mutex: in `kCreated`, set `kStarting`, make the worker thread, and record its id. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither error case makes a thread.
-2. Wait on the lifecycle condition variable for the init result. The worker runs `init` first, records the result under the lifecycle mutex, and notifies.
-3. If `init` failed, the worker makes no gateway call, because the gateway is not bound. In one locked section of the queue mutex, it closes the queue and completes each queued request with `kFeedClosed`. Then it exits.
-4. After an `init` failure, `start` sets `kStopping` if the value is still `kStarting`. It runs the stop wait and returns the init error.
-5. If `init` succeeded and the value is still `kStarting`, `start` sets `kRunning` and returns success. The check and the set are in one locked section, so no `shutdown()` falls between them.
-6. If `init` succeeded and the value is `kStopping`, a `shutdown()` came during `init`. The worker sees the stop request at the top of its first loop and runs the shutdown steps. `start` runs the stop wait and returns `kFeedClosed`.
+1. Under the lifecycle mutex: in `kCreated`, set `kStarting`, make the worker thread, and record its id. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither error case makes a thread. Then unlock the lifecycle mutex.
+2. If a test set the start test hook, run it. In production, this step does nothing.
+3. Lock the lifecycle mutex again. Wait on the lifecycle condition variable until the init result is recorded. The wait uses that predicate, so a result recorded before the wait is not lost.
+4. The worker runs `init` first, records the result under the lifecycle mutex, and notifies. If `init` failed, the worker makes no gateway call, because the gateway is not bound. In one locked section of the queue mutex, it closes the queue and completes each queued request with `kFeedClosed`. Then it exits.
+5. When the step 3 wait ends, `start` still holds the lifecycle mutex. In that locked section, it reads the init result and the lifecycle value. It then acts by the table "`start` after the init result".
+
+`start` after the init result:
+
+| Init result | Lifecycle value | `start` does | `start` returns |
+|---|---|---|---|
+| Failed | `kStarting` | Sets `kStopping`, then runs the stop wait | The init error |
+| Failed | `kStopping` | Runs the stop wait | The init error |
+| Failed | `kStopped` | Runs the stop wait, which returns with no block | The init error |
+| Succeeded | `kStarting` | Sets `kRunning` | Success |
+| Succeeded | `kStopping` | Runs the stop wait | `kFeedClosed` |
+| Succeeded | `kStopped` | Runs the stop wait, which returns with no block | `kFeedClosed` |
+
+Rules for the table:
+
+1. The table covers each value that `start` can read in step 5. Step 1 set `kStarting`. Only `start` moves `kStarting` to `kRunning`, and it has not done that yet. A `shutdown()` moves `kStarting` to `kStopping`. Only the join owner moves `kStopping` to `kStopped`. No transition goes back to `kCreated` or `kStarting`.
+2. So the value in step 5 is `kStarting`, `kStopping`, or `kStopped`. A debug assertion checks this.
+3. The read of the value and the set of `kRunning` or `kStopping` are in one locked section, so no `shutdown()` falls between them.
+4. A `kStopping` or `kStopped` value means that a `shutdown()` came before step 5. After a successful `init`, `start` then returns `kFeedClosed` and not success, because the controller accepts no request after a shutdown starts.
+5. In `kStopped`, join rule 5 applies: the worker has exited. Its shutdown steps have already completed each queued request with `kFeedClosed`.
+6. Each row that does not return success runs the stop wait, and the stop wait ends only in `kStopped`. So a failed or shut-down `start` returns only after the worker has exited.
 
 `shutdown()`:
 
@@ -723,10 +753,36 @@ The stop request is a flag in the request queue. A thread sets it under the queu
 4. In `kStopping`: run the stop wait. The object can still be in the controller, for example after a `shutdown()` from `WorkerInit`.
 5. In `kStopped`: return.
 
-The two overlap cases that the rules close:
+The three overlap cases that the rules close:
 
 1. `init` fails while a `shutdown()` on thread B owns the join. `start` finds no object and waits for `kStopped`. B sets `kStopped` after its join. A third `shutdown()` also waits. No call returns before the worker exits.
 2. `WorkerInit` calls `shutdown()`, and `init` then succeeds. The value is `kStopping`, and the object is still in the controller. `start` or a `shutdown()` on another thread takes it, joins, and sets `kStopped`. The other one waits for `kStopped`.
+3. A `shutdown()` on thread B comes in `kStarting`, and `init` succeeds. B owns the join. The worker records the init result, sees the stop request, runs the shutdown steps, and exits. B sets `kStopped` before `start` gets the lifecycle mutex in step 3. `start` reads `kStopped`, the stop wait returns with no block, and `start` returns `kFeedClosed`.
+
+Start test hook:
+
+The step 1 unlock and the step 3 lock leave a point where `start` holds no lock. Case 3 needs `start` to stay at that point until B sets `kStopped`. Without a hook, a test cannot force that order, because `start` wakes when the worker records the init result. The hook makes the order exact.
+
+```cpp
+namespace venimapping::camera::detail {
+
+class ControllerTestAccess final {      // src/acquisition_support/controller_test_access.hpp
+ public:
+  // Runs on the start thread at start step 2, with no controller lock held.
+  // Call it before the thread that calls start is made.
+  static void set_before_init_wait(AcquisitionController& controller,
+                                   std::function<void()> hook);
+};
+
+}  // namespace venimapping::camera::detail
+```
+
+1. The controller keeps the hook in one private `std::function<void()>` member. `src/acquisition_controller.cpp` defines `set_before_init_wait`, because only a friend can set that member.
+2. The hook is empty in production. Step 2 then makes one check of an empty `std::function`.
+3. Only `start` reads the hook. The test sets it before it makes the thread that calls `start`. The thread start orders the write before the read, so the hook needs no lock.
+4. The hook runs with no controller lock held. A hook that blocks therefore blocks only `start`. The worker and each `shutdown()` caller keep running.
+5. `[F]` The header is under `src/acquisition_support/`, and the package installs only the headers under `include/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Only the package tests include it.
+6. `Controller.ShutdownJoinedBeforeStartReads` uses the hook (testing section).
 
 The worker shutdown steps, in ic4 stop order step 1. The worker does each gateway step, because only it may call the gateway (input 4):
 
@@ -1221,7 +1277,7 @@ A `feed_open` or `get_image` caller reads the result in this order:
 
 ## 7. Bring-up
 
-Source: `claude/sections/bring-up.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. No issue on this section is open after round 4.
+Source: `claude/sections/bring-up.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. No issue on this section is open after round 5.
 
 `venimapping_bringup` starts the driver with values that the acquisition code depends on. This section lists the parameter, launch, file, and namespace changes, and the checks that prove them (ic6, d8, d10, d15, d18, d20).
 
@@ -1483,7 +1539,7 @@ No code depends on these values (ic6 item 4, T11). v1 proposed a project `cyclon
 
 ## 8. Testing
 
-Source: `claude/sections/testing.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. Open issue on this section: i15.
+Source: `claude/sections/testing.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. No issue on this section is open after round 5.
 
 Tests come in four tiers. Each tier needs more of the system than the one before it. Each test names the old behavior that makes it fail and the new behavior that makes it pass (ic7).
 
@@ -1514,7 +1570,7 @@ All test files are in `src/venimapping_camera/test/`, except the bring-up test.
 | `acquisition_error_test.cpp` | Tier 1, error domain |
 | `image_frame_test.cpp` | Tier 1, `ImageFrame` |
 | `frame_fanout_test.cpp` | Tier 1, queues, admission, counters |
-| `acquisition_controller_test.cpp` | Tier 1, controller with both fakes. Also holds `WorkerExitMark` for the lifecycle tests |
+| `acquisition_controller_test.cpp` | Tier 1, controller with both fakes. Also holds `WorkerExitMark` for the lifecycle tests. One lifecycle test includes the private `controller_test_access.hpp` for the start test hook |
 | `vimbax_frame_source_test.cpp` | Tier 2, adapter over a test publisher |
 | `installed_consumer/CMakeLists.txt`, `main.cpp` | Step 5 exit check. A project outside the package that links the installed targets |
 | `src/venimapping_bringup/test/test_camera_config.py` | Tier 2, bring-up files (see the bring-up section) |
@@ -1607,6 +1663,13 @@ class WorkerExitMark final {
 1. `[F]` C++ destroys the `thread_local` objects of a thread when the thread exits. The completion of the thread synchronizes with the return of `join()` (C++17 [basic.start.term], [thread.thread.member]). So `exited` is true before any join of the worker returns.
 2. The delay widens the time between the end of the worker function and the thread exit. A call that returns before the worker exits then reads `exited` as false.
 3. The mark needs no hook in the controller.
+
+The start test hook holds `start` at a known point. `detail::ControllerTestAccess::set_before_init_wait` sets it (control-plane section, "Start test hook").
+
+1. The hook runs at `start` step 2, after the step 1 unlock and before the step 3 lock. `start` holds no controller lock there.
+2. The test sets the hook before it makes the thread that calls `start`.
+3. A test that does not set the hook runs `start` as in production.
+4. Only `Controller.ShutdownJoinedBeforeStartReads` sets it.
 
 `[A]` The controller tests run in real time. The thresholds are 250 ms and the tick is 100 ms, so a silence test takes about 0.5 s. The whole controller suite takes a few seconds. A fake worker clock is not needed in phase 1.
 
@@ -1757,6 +1820,7 @@ Lifecycle and ownership:
 | `Controller.StartShutdownOverlap` | 5 | `init` arms a `WorkerExitMark` with 20 ms and sleeps 50 ms. Thread A calls `start`. Threads B and C call `shutdown()` 10 ms later. Run it 20 times under ThreadSanitizer. Each call returns, and `exited` is true at each return. `start` returns `kFeedClosed`. No `std::system_error` from a second join, and no sanitizer report. | Both `start` and `shutdown` could join (i15) | Passes. One thread takes the thread object |
 | `Controller.InitFailureWithShutdown` | 5 | See the steps below the table | `start` set `kStopped` while a `shutdown()` still joined. `start` and a later `shutdown()` returned before the worker exited (i15) | Passes. Only the join owner sets `kStopped` |
 | `Controller.ShutdownFromInitWithWaiter` | 5 | See the steps below the table | `start` owned the join after a `shutdown()` from `WorkerInit` and set no `kStopped`. A second `shutdown()` waited with no end (i15) | Passes |
+| `Controller.ShutdownJoinedBeforeStartReads` | 5 | See the steps below the table | After a successful `init`, `start` had a rule only for `kStarting` and `kStopping`. In `kStopped`, no rule gave a result (i15) | Passes. `start` returns `kFeedClosed` in `kStopped` |
 | `Controller.Shutdown` | 5 | A thread waits in `Feed::take`. `shutdown()` makes it return `kFeedClosed`. The log ends with `close_admission` and `stream_stop`, all on the worker thread. A later `feed_open` returns `kFeedClosed`. | No controller | Passes (ic4) |
 | `Controller.ShutdownWakesGetImage` | 6 | A feed is open, and a warm `get_image` waits for a frame. `shutdown()` makes the `get_image` return `kFeedClosed`. | No controller | Passes (ic4) |
 | `Controller.DestroyWithPendingRequest` | 5 | `stream_start` blocks 1 s. A `feed_open` waits. The test destroys the controller. The `feed_open` returns `kFeedClosed`. No error under AddressSanitizer. | No destructor rule (i15) | Passes |
@@ -1791,9 +1855,32 @@ Step 4 makes B the join owner. B sets `kStopping` and moves the thread object ou
 7. Check that `shutdown()` on B returns within 1000 ms, with `exited` true.
 8. Run the test 20 times under ThreadSanitizer. No sanitizer report.
 
-Either A or B can own the join, and both orders must pass. In most runs, A owns it, because A wakes when `init` returns, before the worker reaches `stream_stop`. With the old rule, A then set no `kStopped`, and B waited with no end. At the step 7 limit, the test reports the failure and aborts, because the stuck thread cannot be joined.
+Either A or B can own the join, and both orders must pass. In most runs, A owns it, because A wakes when `init` returns, before the worker reaches `stream_stop`. With the old rule, A then set no `kStopped`, and B waited with no end. At the step 7 limit, the test reports the failure and aborts, because the stuck thread cannot be joined. This test leaves the order to the scheduler. `ShutdownJoinedBeforeStartReads` forces the order in which B sets `kStopped` before `start` reads the init result.
 
-`[A]` The three lifecycle tests with repeats take about 7 s together: 20 runs each of about 80 ms, 120 ms, and 130 ms. The step 7 exit check keeps the whole suite under 30 s. If the suite is too slow, lower the repeat counts first.
+`Controller.ShutdownJoinedBeforeStartReads` steps:
+
+1. Make `exited` false, `hook_ran` false, `start_returned` false, and a gate.
+2. Call `ControllerTestAccess::set_before_init_wait` with a hook. The hook sets `hook_ran` and waits for the gate with a 2 s limit. At the limit, it records a test failure and returns.
+3. `init` arms a `WorkerExitMark` with 20 ms and returns success.
+4. Thread A calls `start(init)`. After `start` returns, A sets `start_returned`.
+5. Wait until `hook_ran` is true, with a 1 s limit. A is now at `start` step 2 and holds no controller lock. The value is `kStarting`.
+6. Thread B calls `shutdown()`.
+7. When `shutdown()` on B returns, check that it returned within 1000 ms, that `exited` is true, and that `status().state` is `kShutDown`. Check that `start_returned` is false.
+8. Open the gate.
+9. Check that `start` on A returns `kFeedClosed` within 100 ms after the gate opens.
+10. Check that the fake log holds one `stream_stop` and no `stream_start`. A later `feed_open` returns `kFeedClosed`. A second `start` returns `kFeedClosed`, and its `init` does not run.
+11. Run the test 20 times under ThreadSanitizer. No sanitizer report, and no `std::system_error`.
+
+Why the order is exact:
+
+1. In step 6, B finds `kStarting`, because A cannot set `kRunning` while the hook holds it. B therefore sets `kStopping`, moves the thread object out, and joins (`shutdown()` step 3).
+2. The worker records the success result before it exits. B returns only after its join returns and it sets `kStopped`. So at step 7, the init result is success and the value is `kStopped`.
+3. After test step 8, A runs `start` step 3 and locks the lifecycle mutex. The init result is already recorded, so the wait ends at once. `start` reads the "Succeeded, `kStopped`" row.
+4. Step 7 also proves that the worker and the join owner need nothing from `start`. B returns while A is held.
+
+With the old rule, `start` had no row for a successful `init` in `kStopped`. A result other than `kFeedClosed` fails step 9. Success on a shut-down controller also fails it. If `start` does not return by the step 9 limit, the test reports the failure and aborts, because the stuck thread cannot be joined.
+
+`[A]` The four lifecycle tests with repeats take about 8 s together: 20 runs each of about 80 ms, 120 ms, 130 ms, and 30 ms. The step 7 exit check keeps the whole suite under 30 s. If the suite is too slow, lower the repeat counts first.
 
 ### Tier 2: adapter with ROS, no driver
 
@@ -1932,12 +2019,12 @@ Notes on the wedge check:
 | d19 | `Wedge*`, `StartFail*`, `FirstErrorMinus15`, `NoUserStopFails`, `ConsumerDuringFailingStart` | | `wedge` | Wedge |
 | d22 | `SilenceToOutage`, `RequestDuringOutage`, `Reconnect*`, `Stall`, `FaultedRetry` | | | Unplug |
 | d26, i27 | `DeadlinePassed`, `ExpiredInQueue`, `ExpiredDuringReadback`, `ExpiredDuringMatch`, `ExpiredBeforeStart`, `FrameAfterDeadlineRejected`, `FeedOpenDeadline`, `StopOutsideDeadline` | | `get_image` | |
-| ic2, ic4 | `Shutdown`, `ShutdownWakesGetImage`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `FeedMoveAssignIntoLive`, `FeedCloseThenDestroy`, `InitFailure` | | | |
+| ic2, ic4 | `Shutdown`, `ShutdownWakesGetImage`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `ShutdownJoinedBeforeStartReads`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `FeedMoveAssignIntoLive`, `FeedCloseThenDestroy`, `InitFailure` | | | |
 | ic6 | | `test_camera_config.py` | `bringup` | Settings load |
 
 ## 9. Proposed source tree
 
-Merged from `codex/source-tree.md` at checkpoint `5bb39db` and `claude/source-tree.md` at checkpoint `d423658`. All files stay in the two existing packages (d1). `[F]` `venimapping_camera` installs each header under `include/` and no header under `src/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Private headers therefore go under `src/frame_support/` and `src/acquisition_support/`, like the existing `src/gateway_support/`.
+Merged from `codex/source-tree.md` at checkpoint `5bb39db` and `claude/source-tree.md` at checkpoint `ae32c74`. All files stay in the two existing packages (d1). `[F]` `venimapping_camera` installs each header under `include/` and no header under `src/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Private headers therefore go under `src/frame_support/` and `src/acquisition_support/`, like the existing `src/gateway_support/`.
 
 ### 9.1 Tree
 
@@ -1965,16 +2052,17 @@ src/
     │   ├── image_frame.hpp                     new 3   ImageFrameFields, ImageFrame, friend FrameFanout, private stage
     │   ├── frame_source.hpp                    new 3   FrameSource, FrameSubscription, stats with callback duration
     │   ├── vimbax_frame_source.hpp             new 4   VimbaXFrameSource
-    │   └── acquisition_controller.hpp          new 5-6 AcquisitionController, Feed, options, status
+    │   └── acquisition_controller.hpp          new 5-6 AcquisitionController, Feed, options, status, test seam friend
     ├── src/
     │   ├── image_frame.cpp                     new 3   layout check, shared frame block
     │   ├── frame_support/
     │   │   ├── frame_fanout.hpp                new 3   FrameFanoutClock, FrameFanout, shared state, queue block
     │   │   └── frame_fanout.cpp                new 3   queues, admission, counters, deferred releases
     │   ├── vimbax_frame_source.cpp             new 4   clock and FrameFanout by value, subscription, conversion
-    │   ├── acquisition_controller.cpp          new 5-7 worker, requests, leases, start sequence, get image, recovery
+    │   ├── acquisition_controller.cpp          new 5-7 worker, start table, requests, leases, start sequence, get image, recovery
     │   ├── acquisition_support/
     │   │   ├── lease_link.hpp                  new 5   LeaseLink and the request state
+    │   │   ├── controller_test_access.hpp      new 5   private test seam, start test hook
     │   │   ├── profile_readback.hpp            new 5   readback, comparison, corrective writes
     │   │   ├── profile_readback.cpp            new 5   eight readback calls, five write groups
     │   │   └── stream_formats.hpp              new 5   Mono8 and Mono12 with significant_bits
@@ -2010,9 +2098,10 @@ Paths in `venimapping_camera` are relative to `src/venimapping_camera/`.
 | `package.xml` | Change | 4 | data-plane | Add `sensor_msgs` |
 | `include/venimapping_camera/types/error.hpp` | Change | 2 | error-vocabulary | `ErrorDomain::kAcquisition = 2` and `Error::from_acquisition` |
 | `include/venimapping_camera/types/acquisition_error.hpp` | New | 2 | error-vocabulary | `AcquisitionCode` 1 to 11, `acquisition_error`, `is_acquisition`, `to_string` |
-| `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | control-plane | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `GetImageOptions`, `StreamState` with `kFaulted`, `ControllerStatus` with `last_reconciliation`, `Feed`, `AcquisitionController` |
-| `src/acquisition_controller.cpp` | New | 5, 6, 7 | control-plane | The lifecycle value and its transitions, the join owner that alone sets `kStopped`, the stop wait, the worker queue with its stop request, the request state with a check before each gateway call, the lease set, the `Feed` move rules, the start sequence, get image with the acceptance check, d19 recovery, the wedge confirmation stop, the state rules for new requests, silence and outage, `start`, and `shutdown` |
+| `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | control-plane | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `GetImageOptions`, `StreamState` with `kFaulted`, `ControllerStatus` with `last_reconciliation`, `Feed`, and `AcquisitionController` with its friend `detail::ControllerTestAccess` |
+| `src/acquisition_controller.cpp` | New | 5, 6, 7 | control-plane | The lifecycle value and its transitions, the join owner that alone sets `kStopped`, the stop wait, the `start` table for each init result and lifecycle value, the start test hook and `set_before_init_wait`, the worker queue with its stop request, the request state with a check before each gateway call, the lease set, the `Feed` move rules, the start sequence, get image with the acceptance check, d19 recovery, the wedge confirmation stop, the state rules for new requests, silence and outage, `start`, and `shutdown` |
 | `src/acquisition_support/lease_link.hpp` | New | 5 | control-plane | Private. `LeaseLink` with the mutex, the non-owning subscription pointer, the `released` flag, and the shared request queue. The request state with its outcome and deadline |
+| `src/acquisition_support/controller_test_access.hpp` | New | 5 | control-plane | Private test seam. `ControllerTestAccess::set_before_init_wait`, which sets the hook that `start` runs at step 2 with no lock held |
 | `src/acquisition_support/profile_readback.hpp`, `.cpp` | New | 5 | control-plane | Readback, comparison, and corrective writes in the d18 order, each with `FeatureModule::kRemoteDevice` and a check callback before each call |
 | `src/acquisition_support/stream_formats.hpp` | New | 5 | control-plane | Driver gate formats that this camera offers, `Mono8` and `Mono12`, and their `significant_bits` |
 | `src/camera_feed_probe.cpp` | New | 8 | testing | Temporary. The phase 1 composition root and the rig check modes, also `wedge` |
@@ -2023,7 +2112,7 @@ Paths in `venimapping_camera` are relative to `src/venimapping_camera/`.
 | `test/image_frame_test.cpp` | New | 3 | testing | Layout checks, shared ownership, lifetime |
 | `test/frame_fanout_test.cpp` | New | 3 | testing | Sequence, admission, epoch, queue, close, hold, duration, and thread rules |
 | `test/vimbax_frame_source_test.cpp` | New | 4 | testing | Adapter over a RELIABLE test publisher, with no driver. One intra-process case for the pixel address |
-| `test/acquisition_controller_test.cpp` | New | 5, 6, 7 | testing | Controller cases against both fakes. The testing section gives the step of each case. Also `WorkerExitMark`, a `thread_local` guard that shows when the worker thread has exited |
+| `test/acquisition_controller_test.cpp` | New | 5, 6, 7 | testing | Controller cases against both fakes. The testing section gives the step of each case. Also `WorkerExitMark`, a `thread_local` guard that shows when the worker thread has exited. `ShutdownJoinedBeforeStartReads` uses the start test hook |
 | `test/installed_consumer/CMakeLists.txt`, `main.cpp` | New | 5 | implementation-sequence | A separate project that finds the installed package and links `venimapping_camera::venimapping_camera_acquisition` |
 | `CMakeLists.txt` | Change | 2 to 5, 8 | data-plane, control-plane, testing | See 9.3 |
 | bring-up files in 9.1 | New or change | 1 | bring-up | See section 7 |
@@ -2036,13 +2125,13 @@ Both planners edit this file. The register gives each part one owner (ic0). The 
 
 | Part | Owner | Step |
 |---|---|---|
-| `if(BUILD_TESTING)` lines, `find_package(ament_cmake_gtest)` once, test targets | testing, through the step that adds each test | 2 to 5 |
+| `if(BUILD_TESTING)` lines, `find_package(ament_cmake_gtest)` once, test targets. `src/` on the private include path of `test_acquisition_controller` | testing, through the step that adds each test | 2 to 5 |
 | `venimapping_camera_frame_api` library over `venimapping_camera_gateway_api`, with its own install and export call | data-plane | 3 |
 | `find_package(sensor_msgs)`, `venimapping_camera_vimbax_frame_source` with `rclcpp` and `sensor_msgs` and its own install and export call, `ament_export_dependencies(sensor_msgs)` | data-plane | 4 |
 | `venimapping_camera_acquisition` library, links only the two ROS-free API targets, with its own install and export call | control-plane | 5 |
 | `camera_feed_probe` executable and its install line | testing | 8 |
 
-1. `src/frame_support/` stays private. Test targets reach it through the package include path `src/` (Codex source tree, Claude note M8).
+1. `src/frame_support/` and `src/acquisition_support/` stay private. Test targets reach them through the package include path `src/` (Codex source tree, Claude note M8, Claude source tree).
 2. The shared `install(TARGETS ...)` call and the `ament_export_targets` line do not change (i24).
 3. Steps 4 and 5 can merge in either order. The step that merges second rebases. The only conflict is the insertion point of the two blocks.
 
@@ -2058,7 +2147,7 @@ Both planners edit this file. The register gives each part one owner (ic0). The 
 
 ## 10. Implementation sequence
 
-Source: `claude/sections/implementation-sequence.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. Open issue on this section: i15.
+Source: `claude/sections/implementation-sequence.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. No issue on this section is open after round 5.
 
 The work lands in nine steps and one conditional step. Each step builds alone, passes its own exit check, and leaves no code that a later step must repair. The order follows the build rules in ic8.
 
@@ -2189,9 +2278,10 @@ Exit check:
 
 Files:
 
-- `include/venimapping_camera/acquisition_controller.hpp`, new: `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController`
-- `src/acquisition_controller.cpp`, new: the lifecycle value with its transition table, the join owner and its `kStopped` transition, the stop wait, the stop request in the queue, the worker queue, the request state and its check points before each gateway call, the lease set, `feed_open`, `Feed` with its move rules, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
+- `include/venimapping_camera/acquisition_controller.hpp`, new: `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController` with its friend `detail::ControllerTestAccess`
+- `src/acquisition_controller.cpp`, new: the lifecycle value with its transition table, the join owner and its `kStopped` transition, the stop wait, the stop request in the queue, the `start` table for each init result and lifecycle value, the start test hook, the worker queue, the request state and its check points before each gateway call, the lease set, `feed_open`, `Feed` with its move rules, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
 - `src/acquisition_support/lease_link.hpp`, new
+- `src/acquisition_support/controller_test_access.hpp`, new
 - `src/acquisition_support/profile_readback.hpp`, `.cpp`, new
 - `src/acquisition_support/stream_formats.hpp`, new
 - `test/fakes/fake_frame_source.hpp`, `.cpp`, new, with the take hooks and `on_open_admission`
@@ -2204,13 +2294,15 @@ In this step, the header has no `get_image` and no `GetImageOptions`. Step 6 add
 
 `test/installed_consumer/` is a separate CMake project. It is not part of the package build. Its `CMakeLists.txt` calls `find_package(venimapping_camera REQUIRED)` and links `venimapping_camera::venimapping_camera_acquisition`. Its `main.cpp` calls `AcquisitionController::create` with a stub gateway and a stub source, so the link needs the library symbols.
 
+`test_acquisition_controller` adds `src/` to its private include path, so it can include `acquisition_support/controller_test_access.hpp`. The installed consumer does not include that header. `[F]` The package installs only the headers under `include/` (`src/venimapping_camera/CMakeLists.txt:58-63`).
+
 Exit check:
 
 1. `test_acquisition_controller` passes these cases, each with `feed_open` only:
    1. Start sequence: `ColdFeedOrder`, `SelectorBeforeMode`, `RemoteDeviceModule`, `KeepsFramesBeforeReply`, `MatchTimeout`, `FormatRefusal`, `FormatCorrectionBits`, `WriteNeedsConfirmedStop`, `CorrectiveWriteOrder`, `WriteErrorReadbackDecides`, `ProfileMismatch`, and `FloatTolerance`.
    2. Leases and deadlines: `Busy` for feeds, `FeedOpenDeadline`, `ExpiredDuringReadback`, and `ExpiredBeforeStart`.
    3. Failure recovery: `StartFailReconciled`, `FirstErrorMinus15`, `WedgeOnStartTimeout`, and `WedgeOnStopFailure`.
-   4. Lifecycle and ownership: `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, and `FeedMoveAssignIntoLive`.
+   4. Lifecycle and ownership: `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `ShutdownJoinedBeforeStartReads`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, and `FeedMoveAssignIntoLive`.
 2. The acquisition target builds with no ROS include path. A configure-time check reads the `LINK_LIBRARIES` property of `venimapping_camera_acquisition` and fails on `rclcpp`.
 3. The suite passes under ThreadSanitizer and AddressSanitizer.
 4. After `colcon build`, source `install/setup.bash`. Then configure and build `test/installed_consumer` into a temporary build directory. The build links with no undefined symbol.
@@ -2301,7 +2393,7 @@ Exit check:
 
 ## 11. Camera findings
 
-Three short checks ran on the Alvium G1-130 VSWIR, device `DEV_000A471E3D7C`, over PoE at `/vimbax_camera` with `autostream` 0. `camera-log.md` records that the runner stopped the stream, restored and verified each listed feature, and left no driver process after each check. No draft, review, fix, or recheck task asked for a new check in rounds 1 to 4.
+Three short checks ran on the Alvium G1-130 VSWIR, device `DEV_000A471E3D7C`, over PoE at `/vimbax_camera` with `autostream` 0. `camera-log.md` records that the runner stopped the stream, restored and verified each listed feature, and left no driver process after each check. No draft, review, fix, or recheck task asked for a new check in rounds 1 to 5.
 
 ### 11.1 c1: formats, size, rate, stamps, start latency, access modes
 
@@ -2349,7 +2441,7 @@ Design effects: the phase 1 profile at 30 Hz (R4, d18), the write order with the
 4. `[Q]` The device stamp origin and its exposure event (T4).
 5. `[Q]` Whether the camera keeps service writes across a driver restart without a power cycle (P11). The bring-up part A check depends on it. The section gives a fallback if it does not.
 
-No open issue needs a camera check. i15 is a rule inside the controller. The i19 and i25 fixes use the order in the driver source: the settings load runs in `initialize_camera`, and the driver logs `Initialization done!` after it (`driver:vimbax_camera/src/vimbax_camera_node.cpp:97`, `:134`, `:390-400`). The part A control launch checks the log capture on the rig.
+No issue needed a camera check. i15 is a rule inside the controller, and a fake-based test checks it. The i19 and i25 fixes use the order in the driver source: the settings load runs in `initialize_camera`, and the driver logs `Initialization done!` after it (`driver:vimbax_camera/src/vimbax_camera_node.cpp:97`, `:134`, `:390-400`). The part A control launch checks the log capture on the rig.
 
 ## 12. Changes from v1
 
@@ -2398,7 +2490,7 @@ v1 is `docs/architecture/image-acquisition-design-v1.md`. "Keep" means v2 uses t
 
 ## 13. Decisions for Logan
 
-Each question changes an interface, an owner, or a package. A question that changes only one profile value is not in this list. The recommended default is the working assumption that v2 uses now. Rounds 2 to 4 add no question.
+Each question changes an interface, an owner, or a package. A question that changes only one profile value is not in this list. The recommended default is the working assumption that v2 uses now. Rounds 2 to 5 add no question.
 
 ### L1. Host header stamp or camera-side loss count
 
@@ -2490,7 +2582,7 @@ Each question changes an interface, an owner, or a package. A question that chan
 
 ## 14. Recorded disagreements
 
-These disagreements remain after the register, the drafts, the reviews, and the fix and recheck rounds 1 to 3. The design follows the column "v2 uses". Findings that are still open are in `issues.md`. After round 4, no open issue has a fix and a recheck that take opposite positions.
+These disagreements remain after the register, the drafts, the reviews, and the fix and recheck rounds 1 to 4. The design follows the column "v2 uses". After round 5, no issue is Open. No fix and recheck pair ended with opposite positions, so the run added no dispute after d20.
 
 | Entry | Claude position | Codex position | Evidence | v2 uses | State |
 |---|---|---|---|---|---|
@@ -2513,3 +2605,4 @@ Disagreements that the drafts or the fixes withdrew:
 6. d18 item 7, the selector write during a stream. The Codex review asked for a confirmed stop before the reconnect readback or a register change. The Codex recheck accepts the narrow exception (i11).
 7. ic2 `Feed` ownership. The Claude draft shared the subscription with the worker. The Claude round 1 fix keeps sole ownership in `Feed`. The round 2 fix adds the `released` flag and the move assignment rule, and the Codex recheck accepts it (i26).
 8. d26 and i14, a frame that `take` returns after the deadline. The Claude round 1 fix let the `take` result decide. The Codex round 1 recheck asked for a deadline check when the caller accepts a frame. The Claude round 2 fix adopts that check, and the Codex round 2 recheck accepts it (i14). No dispute was needed.
+9. i15, the `start` and `shutdown()` lifecycle. The Codex rechecks of rounds 1 to 3 each found a smaller gap. The Claude fix accepted each finding. The Codex round 4 recheck accepts the `start` table and the start test hook (i15). No position was rejected, so no dispute was needed.
