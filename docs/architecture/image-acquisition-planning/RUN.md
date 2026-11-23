@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T06:53:56-05:00
-- Last completed checkpoint: fix-claude-r1 (this commit)
+- Updated: 2026-11-23T06:59:13-05:00
+- Last completed checkpoint: recheck-codex-r1 (this commit)
 - Push pending: False
 
 ## Next step
@@ -47,8 +47,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | dispute-d20-judge-codex | codex | done | 1 | f69916835d |
 | fix-codex-r1 | codex | done | 1 | 5bb39db002 |
 | recheck-claude-r1 | claude | done | 1 | aacd686232 |
-| fix-claude-r1 | claude | done | 2 |  |
-| recheck-codex-r1 | codex | pending | 0 |  |
+| fix-claude-r1 | claude | done | 2 | e58d00a8f7 |
+| recheck-codex-r1 | codex | done | 1 |  |
 | integrate-2 | claude | pending | 0 |  |
 
 ## Errors
