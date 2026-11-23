@@ -45,7 +45,8 @@ QUOTA_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in (
         r"usage limit",
-        r"hit your (?:\w+ )?limit",
+        r"hit your (?:\w+ ){0,3}limit",
+        r"spend limit",
         r"usage_limit_reached",
         r"UsageLimitReached",
         r"limit reached\|\d{10}",

@@ -270,6 +270,11 @@ def classifier_checks(c: Checks) -> None:
         "claude reset clock": (
             "You've hit your session limit · resets 3am (America/Chicago)",
             "quota", "future"),
+        "claude spend limit": (
+            "You've hit your monthly spend limit · raise it at "
+            "https://claude.ai/settings/usage?from=cc_cli_limit_message · "
+            "your 5-hour limit resets 6:10am (America/New_York)",
+            "quota", "future"),
         "codex try again": (
             "You've hit your usage limit. ... or try again at "
             "Nov 23rd, 2026 3:45 AM.", "quota", "future-or-now"),
