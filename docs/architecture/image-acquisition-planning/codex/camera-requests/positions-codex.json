@@ -1,0 +1,20 @@
+{
+  "question": "With full-sensor Mono8 in free run, does enabling AcquisitionFrameRateEnable while stopped make AcquisitionFrameRate writable, and does a 30 Hz setting deliver 29 to 31 Hz?",
+  "why": "D18 uses a 30 Hz profile only if the rate write works and the reader measures 29 to 31 Hz. Otherwise, D9 and D10 use the measured 69.7 Hz test setting until Logan decides the rate requirement.",
+  "features": [
+    {
+      "name": "TriggerSelector",
+      "type": "enum"
+    },
+    {
+      "name": "AcquisitionFrameRateEnable",
+      "type": "bool"
+    },
+    {
+      "name": "AcquisitionFrameRate",
+      "type": "float"
+    }
+  ],
+  "steps": "Use the /vimbax_camera service prefix.\n1. Call stream_stop.\n2. Read PixelFormat and AcquisitionMode with features/enum_get.\n3. Read Width and Height with features/int_get.\n4. Read both original rate settings with features/bool_get and features/float_get.\n5. Call status to verify that every reported TriggerMode is Off.\nThe status call moves TriggerSelector.\n6. If the baseline differs from full-sensor Mono8 continuous free run, end the check.\n7. Call features/bool_set {feature_name: AcquisitionFrameRateEnable, value: true}.\n8. Call features/access_mode_get {feature_name: AcquisitionFrameRate}.\n9. If the rate is writable, call features/float_info_get {feature_name: AcquisitionFrameRate}.\n10. If the range admits 30 Hz, call features/float_set {feature_name: AcquisitionFrameRate, value: 30.0}.\n11. If the write succeeds, read both settings back.\n12. If readback confirms the settings, start timeout 20s ros2 topic hz /vimbax_camera/image_raw in the background.\n13. After the reader matches, call stream_start.\n14. Record the last reported rate, sample count, and interval range.\n15. Call stream_stop.\n16. While stopped, restore the original rate, then restore the enable flag.\n17. If the rate restore fails and the flag was false, disable it before reading the effective rate.\n18. If a rate step fails before streaming, record the error and restore the original settings while stopped.\n19. Let the runner restore TriggerSelector and verify all saved values.",
+  "stream_seconds": 20
+}
