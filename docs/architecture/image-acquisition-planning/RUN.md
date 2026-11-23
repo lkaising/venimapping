@@ -2,17 +2,15 @@
 
 The runner writes this file. Do not edit it by hand.
 
-- Status: stopped
-- Updated: 2026-11-23T03:25:50-05:00
-- Last completed checkpoint: recheck-claude-r1 (aacd6862323)
+- Status: running
+- Updated: 2026-11-23T06:53:56-05:00
+- Last completed checkpoint: fix-claude-r1 (this commit)
 - Push pending: False
-- Stop reason: fix-claude-r1 attempt 1 failed with an error the runner does not retry. Logs: /home/labuser/workspace/projects/venimapping-image-arch-run/attempts/fix-claude-r1/1
 
 ## Next step
 
-- Unfinished: fix-claude-r1 (claude), status failed, last outcome error.
 
-The run stopped. Read the stop reason and the errors below, fix the cause, then run this command from the worktree root:
+If the workstation restarted, run this command from the worktree root. The runner resumes from the last checkpoint:
 
     python3 docs/architecture/image-acquisition-planning/runner/run.py
 
@@ -49,7 +47,7 @@ The run stopped. Read the stop reason and the errors below, fix the cause, then 
 | dispute-d20-judge-codex | codex | done | 1 | f69916835d |
 | fix-codex-r1 | codex | done | 1 | 5bb39db002 |
 | recheck-claude-r1 | claude | done | 1 | aacd686232 |
-| fix-claude-r1 | claude | failed | 1 |  |
+| fix-claude-r1 | claude | done | 2 |  |
 | recheck-codex-r1 | codex | pending | 0 |  |
 | integrate-2 | claude | pending | 0 |  |
 

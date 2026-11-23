@@ -4,35 +4,42 @@ This list covers the files that the control-plane, error-vocabulary, bring-up, t
 
 `[F]` `venimapping_camera` installs each header under `include/` and no header under `src/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Private headers for the controller therefore go under `src/acquisition_support/`, like the existing `src/gateway_support/`.
 
+`[F]` The package installs and exports only the targets that an `install(TARGETS ... EXPORT export_${PROJECT_NAME})` call names (`src/venimapping_camera/CMakeLists.txt:65-74`). Each new library block therefore has its own install call. The implementation sequence gives the CMake layout.
+
 ### `src/venimapping_camera`
 
 | File | Change | Step | Purpose |
 |---|---|---|---|
 | `include/venimapping_camera/types/error.hpp` | Change | 2 | Add `ErrorDomain::kAcquisition = 2` and `Error::from_acquisition` |
 | `include/venimapping_camera/types/acquisition_error.hpp` | New | 2 | `AcquisitionCode` 1 to 11, `acquisition_error`, `is_acquisition`, and `to_string` |
-| `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions`, `GetImageOptions`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController` |
-| `src/acquisition_controller.cpp` | New | 5, 6, 7 | The worker queue, leases, start sequence, get image, d19 recovery, silence and outage handling, and shutdown |
+| `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `GetImageOptions`, `StreamState` with `kFaulted`, `ControllerStatus` with `last_reconciliation`, `Feed`, and `AcquisitionController` |
+| `src/acquisition_controller.cpp` | New | 5, 6, 7 | The worker queue, the request state, leases, the start sequence, get image, d19 recovery, the state rules for new requests, silence and outage handling, `start`, and `shutdown` |
+| `src/acquisition_support/lease_link.hpp` | New | 5 | Private. `LeaseLink`: the mutex, the non-owning subscription pointer, and the shared request queue. The request state with its outcome and deadline |
 | `src/acquisition_support/profile_readback.hpp` | New | 5 | Private. Declares the readback, the comparison, and the corrective writes |
-| `src/acquisition_support/profile_readback.cpp` | New | 5 | The eight readback calls and the five write groups in the d18 order |
+| `src/acquisition_support/profile_readback.cpp` | New | 5 | The eight readback calls and the five write groups in the d18 order, each with `FeatureModule::kRemoteDevice` |
 | `src/acquisition_support/stream_formats.hpp` | New | 5 | Private. The driver gate formats that this camera offers, `Mono8` and `Mono12`, and their `significant_bits` |
-| `src/camera_feed_probe.cpp` | New | 8 | Temporary. The phase 1 composition root and the rig check modes |
-| `test/fakes/fake_frame_source.hpp` | New | 5 | `FakeFrameSource` over `FrameFanout`, with `inject` and `set_matched_publishers` |
-| `test/fakes/fake_frame_source.cpp` | New | 5 | Mono8 test frames for `inject` |
+| `src/camera_feed_probe.cpp` | New | 8 | Temporary. The phase 1 composition root and the rig check modes, also `wedge` |
+| `test/fakes/test_clock.hpp` | New | 3 | `TestClock`: real steady time, manual realtime, and a hold point in `steady_now()` |
+| `test/fakes/test_clock.cpp` | New | 3 | The hold and release logic |
+| `test/fakes/fake_frame_source.hpp` | New | 5 | `FakeFrameSource` over `FrameFanout`, with `inject`, `set_matched_publishers`, `subscriptions_opened`, and `subscription_stats` |
+| `test/fakes/fake_frame_source.cpp` | New | 5 | Mono8 test frames for `inject`, and the stats decorator for subscriptions |
 | `test/fakes/fake_camera_gateway.hpp` | New | 5 | `FakeCameraGateway`, a scripted `CameraGateway` with a call log |
-| `test/fakes/fake_camera_gateway.cpp` | New | 5 | The feature map, per-selector `TriggerMode`, stream state, and locks during a stream |
+| `test/fakes/fake_camera_gateway.cpp` | New | 5 | The feature map, per-selector `TriggerMode`, the four stream states, the module check, and locks during a stream |
 | `test/acquisition_error_test.cpp` | New | 2 | Fixed code numbers and the factory |
 | `test/image_frame_test.cpp` | New | 3 | Layout checks, shared ownership, and lifetime |
-| `test/frame_fanout_test.cpp` | New | 3 | Sequence, admission, epoch, queue, close, and thread rules |
+| `test/frame_fanout_test.cpp` | New | 3 | Sequence, admission, epoch, queue, close, hold, duration, and thread rules |
 | `test/acquisition_controller_test.cpp` | New | 5, 6, 7 | Controller cases against both fakes |
-| `test/vimbax_frame_source_test.cpp` | New | 4 | Adapter over a RELIABLE test publisher, with no driver |
-| `CMakeLists.txt` | Change | 2, 5, 8 | The `BUILD_TESTING` block and test targets, the `venimapping_camera_acquisition` library, and the `camera_feed_probe` executable |
+| `test/vimbax_frame_source_test.cpp` | New | 4 | Adapter over a RELIABLE test publisher, with no driver. One intra-process case for the pixel address |
+| `test/installed_consumer/CMakeLists.txt` | New | 5 | A separate project that finds the installed package and links `venimapping_camera::venimapping_camera_acquisition` |
+| `test/installed_consumer/main.cpp` | New | 5 | Calls `AcquisitionController::create` with stubs, so the link needs the library |
+| `CMakeLists.txt` | Change | 2, 5, 8 | The `BUILD_TESTING` lines and test targets, the `venimapping_camera_acquisition` block with its own install and export call, and the `camera_feed_probe` executable |
 
 ### `src/venimapping_bringup`
 
 | File | Change | Step | Purpose |
 |---|---|---|---|
 | `config/camera.yaml` | Change | 1 | Add `buffer_count`, `use_ros_time`, `use_sim_time`, and `image_raw.enable_pub_plugins` |
-| `config/camera_settings.xml` | New | 1 | The phase 1 camera profile, saved on the rig, loaded by the driver on each open |
+| `config/camera_settings.xml` | New | 1 | The phase 1 camera profile, saved on the rig with no-LUT persistence for the remote device, local device, and stream modules. The driver loads it on each open |
 | `config/acquisition_profile.yaml` | New | 1 | The values that the controller reads back, as parameters of the application node |
 | `launch/camera.launch.py` | Change | 1 | Add the `use_ros_time` and `settings_file` launch arguments and pass them after `params_file` |
 | `CMakeLists.txt` | Change | 1 | Add the pytest test under `BUILD_TESTING` |

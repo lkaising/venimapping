@@ -2,7 +2,7 @@
 
 `venimapping_bringup` starts the driver with values that the acquisition code depends on. This section lists the parameter, launch, file, and namespace changes, and the checks that prove them (ic6, d8, d10, d15, d18, d20).
 
-Labels: `[F]` is a fact with a citation. `[A]` is a working assumption. `[Q]` is an open question.
+Labels: `[F]` is a fact with a citation. `[A]` is a working assumption. `[Q]` is an open question. `ros:path:line` is from the ROS source root. `vimbax:path:line` is from `/opt/vimbax`.
 
 ### What exists today
 
@@ -39,8 +39,9 @@ New `camera.yaml`:
 | `settings_file` | set by the launch file | See "Camera settings file". | d18 |
 
 1. `[F]` The parameter name for the plugin filter is the topic name relative to the node namespace, with `/` changed to `.`, plus `.enable_pub_plugins` (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:114-128`). For `image_raw`, it is `image_raw.enable_pub_plugins`.
-2. `[F]` The driver reads `use_ros_time` on each frame, so a change during a stream changes the time basis between two frames (facts 1.6.4). No project code changes it while acquisition runs (d20 decided item 2).
-3. `[F]` `camera_info` still publishes, because the driver uses a `CameraPublisher` (facts 1.3.1). It carries only width and height (facts 1.8.2). The filter does not affect it.
+2. `[F]` `image_transport` declares that parameter on the driver node, with all installed plugins as the default (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:127-128`). A wrong key in `camera.yaml` therefore leaves the default, and a read of the live parameter shows it.
+3. `[F]` The driver reads `use_ros_time` on each frame, so a change during a stream changes the time basis between two frames (facts 1.6.4). No project code changes it while acquisition runs (d20 decided item 2).
+4. `[F]` `camera_info` still publishes, because the driver uses a `CameraPublisher` (facts 1.3.1). It carries only width and height (facts 1.8.2). The filter does not affect it.
 
 ### Launch file
 
@@ -75,7 +76,7 @@ Node(
 ```
 
 1. `[F]` `launch_ros` reads a substituted parameter value as YAML, so `"true"` becomes a boolean (`ros:ros2/launch_ros/launch_ros/launch_ros/utilities/evaluate_parameters.py:71-79`).
-2. `[A]` A later entry in `parameters` overrides an earlier one for the same name. The bring-up check reads the value back, so a wrong order fails the check.
+2. `[A]` A later entry in `parameters` overrides an earlier one for the same name. The rig check reads both values back, so a wrong order fails the check.
 3. `settings_file` must be an absolute installed path. A YAML file cannot use `FindPackageShare`, so the launch file sets it (d18 item 1).
 4. The `use_ros_time` argument exists only for the device stamp probe run (d20 item 6). That run uses `use_ros_time:=false` and never uses the controller.
 
@@ -84,8 +85,15 @@ Node(
 New file `config/camera_settings.xml`. The driver loads it on each open and reopen (d18 item 1).
 
 1. `[F]` The driver loads `settings_file` inside `initialize_camera`. On a reconnect, it sets the restart flag only after that function returns (`driver:vimbax_camera/src/vimbax_camera_node.cpp:390-400`, `:561-566`). The file is therefore the only way to apply the profile before the driver restarts the stream.
-2. `[F]` The load saves and restores the remote device, local device, and stream modules (`driver:vimbax_camera/src/vimbax_camera.cpp:1358-1367`). The save service accepts only a `.xml` name (`driver:vimbax_camera/src/vimbax_camera.cpp:1335-1337`).
-3. `[F]` A missing file or a failed load only logs an error. The driver continues (`driver:vimbax_camera/src/vimbax_camera.cpp:1312-1314`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`). The controller readback catches this (d18).
+2. `[F]` The driver saves and loads with one fixed setting: persistence type `VmbFeaturePersistNoLUT`, module flags `RemoteDevice | LocalDevice | Streams`, and 10 load iterations (`driver:vimbax_camera/src/vimbax_camera.cpp:1358-1367`).
+3. `[F]` `VmbFeaturePersistNoLUT` means all features except look-up tables (`vimbax:api/include/VmbC/VmbCTypeDefinitions.h:473-475`). The SDK repeats the load up to the iteration count, because one write can change a feature that it set before (`vimbax:doc/VimbaX_Documentation/cAPIManual.html:1470-1479`).
+4. Scope: the file can hold features of the camera, the local device module, and the stream module. It holds no system or interface feature. `[A]` The SDK saves each feature of those modules that it can read. The module flags alone do not prove that each feature is in the file. Review the saved file to see its content.
+5. `[F]` The save service accepts only a `.xml` name (`driver:vimbax_camera/src/vimbax_camera.cpp:1335-1337`).
+6. `[F]` A missing file returns -3, and the driver only logs a failed load. The driver continues (`driver:vimbax_camera/src/vimbax_camera.cpp:1312-1314`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`). The log line starts with `Loading settings from file`.
+
+The controller readback is a check of the seven listed profile values and the selector write only (d18 item 3). It does not check any other feature in the file. It also cannot see a failed load when the camera already holds the listed values. The rig check below uses the driver log and a controlled reopen to see the load result.
+
+`[A]` A change to a feature outside the profile enters through the file with no readback (N7). Review the file diff in each change to `camera_settings.xml`.
 
 Make the file on the rig. Do these steps with the stream stopped and the driver started without `settings_file`:
 
@@ -97,7 +105,7 @@ Make the file on the rig. Do these steps with the stream stopped and the driver 
 6. Do not call the `status` service between steps 2 and 6. It moves `TriggerSelector` (facts 1.5.7).
 7. Call `settings/save` with an absolute `.xml` path.
 8. Copy the file to `src/venimapping_bringup/config/camera_settings.xml`.
-9. Run the bring-up check in this section.
+9. Run the bring-up checks in this section.
 
 `[F]` c3 wrote steps 3 and 4 on this camera while stopped. The read back was 30.000001907348633 Hz, and the stream gave 30.010 Hz (c3 §3 items 2 to 4).
 
@@ -124,7 +132,7 @@ New file `config/acquisition_profile.yaml`. It holds the values that the control
 
 1. The file goes only to the application node through `--params-file`. The key `/**` therefore reaches no other node.
 2. `use_sim_time: false` on the application node keeps its clock on `CLOCK_REALTIME` (d20 decided item 1).
-3. `[A]` P2: the settings file and this file describe the same values. The bring-up check proves it on the rig.
+3. `[A]` P2: the settings file and this file describe the same values. The rig check proves it.
 4. In phase 1, the application node is the feed probe, `camera_feed_probe`. It declares `camera_namespace` with the default `/vimbax_camera`, as `camera_gateway_probe` does (`src/venimapping_camera/src/camera_gateway_probe.cpp:136`).
 
 ### Namespace
@@ -157,15 +165,38 @@ Configuration test without a camera, `test/test_camera_config.py`:
 3. Call `generate_launch_description()`. Check that the arguments `use_ros_time` and `settings_file` exist with their defaults.
 4. Old behavior: `camera.yaml` has no `use_ros_time` key and the launch file has no `settings_file` argument, so the test fails. New behavior: it passes.
 
-Bring-up check on the rig, `camera_feed_probe` with `mode:=bringup` (ic6 item 3, d18 item 8, d20 items 7 and 8):
+The rig check has two parts. The operator does part A, and `camera_feed_probe` with `mode:=bringup` does part B (ic6 item 3, d18 item 8, d20 items 7 and 8). Part A makes a controlled reopen from known different values, so a pass proves that the installed file applied.
 
-1. Read the driver parameter `use_ros_time` before any `stream_start`. Fail on `false`.
-2. List the topics under the namespace. Fail if a topic name starts with `<namespace>/image_raw/`.
-3. Read back the profile through the controller readback code. Fail on any difference.
-4. Start the stream through the controller. Read the first frame on a raw subscription. Fail if `header.stamp` differs from the receipt time on `CLOCK_REALTIME` by more than 1 s.
-5. Stop the stream.
+Part A, the controlled reopen:
 
-Old behavior: step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 4 also fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
+1. Launch the driver with the default arguments. Write its console output to `driver_a.log`.
+2. With the stream stopped, write `ExposureTime` 10000.0 with the CLI.
+3. Write `AcquisitionFrameRate` 20.0 with the CLI.
+4. Stop the driver.
+5. Launch the driver again with the default arguments. Write its console output to `driver_b.log`.
+6. If `driver_b.log` has a line that starts with `Loading settings from file`, the check fails.
+
+`[A]` The camera keeps written values across a driver restart without a power cycle. If it does not, the camera returns to its own defaults. c1 read 69.7 Hz with the enable false as the default (c1 §3.6 item 2), so part B still fails on a failed load.
+
+Part B, `camera_feed_probe` with `mode:=bringup`, before any `stream_start`:
+
+1. Read the driver parameter `use_ros_time`. Fail on `false`.
+2. Read the driver parameter `settings_file`. Fail if it is not the installed path of `camera_settings.xml`, or if no file exists at that path.
+3. Read the driver parameter `image_raw.enable_pub_plugins`. Fail if it is not `["image_transport/raw"]`.
+4. Read the publishers of `<namespace>/image_raw` from the graph. Fail if the count is not 1.
+5. List the topics under the namespace. Fail if a topic name starts with `<namespace>/image_raw/`.
+6. Read back the profile through the controller readback code, with no corrective write. Fail on any difference. After part A, this proves that the file set `ExposureTime` and `AcquisitionFrameRate`.
+7. Start the stream through the controller. Wait at most 2000 ms for the first frame on a raw subscription. Fail at the limit.
+8. Fail if the first `header.stamp` differs from the receipt time on `CLOCK_REALTIME` by more than 1 s.
+9. Stop the stream.
+
+Notes on part B:
+
+1. The prefix rule in step 5 finds each plugin topic, because each extra image topic from a plugin is a subtopic of `image_raw` (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:142-147`). This replaces the ic6 item 3.2 wording (N6).
+2. Step 4 makes step 5 fail when `image_raw` has no publisher. An empty topic list cannot pass.
+3. The 2000 ms limit is about 18 times the measured 110 ms from `stream_start` to the first frame (c1 §3.5 items 1 and 2).
+
+Old behavior: step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 2 fails, because `settings_file` is empty. Step 6 fails, because the camera keeps 10000.0 and 20.0 from part A. Step 8 fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
 
 ### Host check
 
