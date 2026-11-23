@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T02:02:41-05:00
-- Last completed checkpoint: dispute-d20-judge-codex (this commit)
+- Updated: 2026-11-23T02:13:11-05:00
+- Last completed checkpoint: register-final (this commit)
 - Push pending: False
 
 ## Next step
@@ -29,7 +29,7 @@ If the workstation restarted, run this command from the worktree root. The runne
 | positions-claude | claude | done | 1 | 4115d3e945 |
 | positions-codex | codex | done | 1 | 589fea708e |
 | register | claude | done | 1 | bc6f68fd5f |
-| register-final | claude | pending | 0 |  |
+| register-final | claude | done | 1 |  |
 | draft-codex | codex | pending | 0 |  |
 | draft-claude | claude | pending | 0 |  |
 | review-claude | claude | pending | 0 |  |
@@ -44,4 +44,4 @@ If the workstation restarted, run this command from the worktree root. The runne
 | dispute-d20-position-claude | claude | done | 1 | 01b7a287f1 |
 | dispute-d20-position-codex | codex | done | 1 | 2c00d88db5 |
 | dispute-d20-judge-claude | claude | done | 1 | d9d572c36a |
-| dispute-d20-judge-codex | codex | done | 1 |  |
+| dispute-d20-judge-codex | codex | done | 1 | f69916835d |
