@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T02:19:39-05:00
-- Last completed checkpoint: draft-codex (this commit)
+- Updated: 2026-11-23T02:31:08-05:00
+- Last completed checkpoint: draft-claude (this commit)
 - Push pending: False
 
 ## Next step
@@ -30,8 +30,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | positions-codex | codex | done | 1 | 589fea708e |
 | register | claude | done | 1 | bc6f68fd5f |
 | register-final | claude | done | 1 | 34e5b6e3b0 |
-| draft-codex | codex | done | 1 |  |
-| draft-claude | claude | pending | 0 |  |
+| draft-codex | codex | done | 1 | 16b49e8373 |
+| draft-claude | claude | done | 1 |  |
 | review-claude | claude | pending | 0 |  |
 | review-codex | codex | pending | 0 |  |
 | integrate-1 | claude | pending | 0 |  |
