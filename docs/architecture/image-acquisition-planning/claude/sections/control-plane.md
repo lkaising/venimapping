@@ -26,7 +26,10 @@ Header `include/venimapping_camera/acquisition_controller.hpp`, target `venimapp
 ```cpp
 namespace venimapping::camera {
 
-namespace detail { class LeaseLink; }       // private, src/acquisition_support/lease_link.hpp
+namespace detail {
+class LeaseLink;                            // private, src/acquisition_support/lease_link.hpp
+class ControllerTestAccess;                 // private, src/acquisition_support/controller_test_access.hpp
+}
 
 struct AcquisitionProfile {                 // d18, values from the bringup file
   std::string pixel_format;                 // "Mono8"
@@ -91,6 +94,7 @@ class AcquisitionController final {
 
   // Starts the worker. The worker runs init first. Returns the init result,
   // kInvalidArgument for a second call, or kFeedClosed after shutdown started.
+  // A shutdown() during init gives kFeedClosed also if init succeeded.
   // A failed or shut-down start returns only after the worker has exited.
   [[nodiscard]] Expected<void> start(WorkerInit init);
 
@@ -102,6 +106,9 @@ class AcquisitionController final {
   [[nodiscard]] Expected<Feed> feed_open(const FeedOptions& options);
   [[nodiscard]] Expected<ImageFrame> get_image(const GetImageOptions& options);
   [[nodiscard]] ControllerStatus status() const;
+
+ private:
+  friend class detail::ControllerTestAccess;  // test seam, start step 2
 };
 
 }  // namespace venimapping::camera
@@ -114,6 +121,7 @@ class AcquisitionController final {
 5. `Feed` keeps the ic2 rule: it owns its `FrameSubscription` alone. The `LeaseLink` gives the worker a safe close path. See "Subscription ownership".
 6. A `Feed` can outlive the controller. It then acts as a closed subscription (ic2 rule 7), and its lease release does nothing.
 7. `status()` is how a consumer sees an outage, a stall, a fault, or a wedge. `take` stays empty in those states (d22, R14).
+8. `detail::ControllerTestAccess` is the only test seam in the controller. Its header is private, so a consumer outside the package cannot reach it. See "Start test hook".
 
 ### Threads
 
@@ -200,18 +208,37 @@ Join rules:
 5. So `kStopped` means that the worker has exited, or that no worker was made. A `start` or `shutdown()` that waits for the worker returns only after `kStopped`.
 6. The worker never joins and never waits for `kStopped`.
 
-The stop wait is the step that `start` and `shutdown()` share. Under the lifecycle mutex, if the object is still in the controller, move it out. Then unlock, join, lock, set `kStopped`, and notify all. If the object is gone, wait for `kStopped`.
+The stop wait is the step that `start` and `shutdown()` share. Under the lifecycle mutex, if the object is still in the controller, move it out. Then unlock, join, lock, set `kStopped`, and notify all. If the object is gone, wait for `kStopped`. In `kStopped`, the object is gone and the predicate is already true, so the stop wait returns with no block.
 
 The stop request is a flag in the request queue. A thread sets it under the queue mutex and notifies the worker. The worker waits with a predicate that includes the flag, so no wake is lost. At the top of each loop, the worker checks the flag. If it is set, the worker runs the shutdown steps.
 
 `start(init)`:
 
-1. Under the lifecycle mutex: in `kCreated`, set `kStarting`, make the worker thread, and record its id. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither error case makes a thread.
-2. Wait on the lifecycle condition variable for the init result. The worker runs `init` first, records the result under the lifecycle mutex, and notifies.
-3. If `init` failed, the worker makes no gateway call, because the gateway is not bound. In one locked section of the queue mutex, it closes the queue and completes each queued request with `kFeedClosed`. Then it exits.
-4. After an `init` failure, `start` sets `kStopping` if the value is still `kStarting`. It runs the stop wait and returns the init error.
-5. If `init` succeeded and the value is still `kStarting`, `start` sets `kRunning` and returns success. The check and the set are in one locked section, so no `shutdown()` falls between them.
-6. If `init` succeeded and the value is `kStopping`, a `shutdown()` came during `init`. The worker sees the stop request at the top of its first loop and runs the shutdown steps. `start` runs the stop wait and returns `kFeedClosed`.
+1. Under the lifecycle mutex: in `kCreated`, set `kStarting`, make the worker thread, and record its id. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither error case makes a thread. Then unlock the lifecycle mutex.
+2. If a test set the start test hook, run it. In production, this step does nothing.
+3. Lock the lifecycle mutex again. Wait on the lifecycle condition variable until the init result is recorded. The wait uses that predicate, so a result recorded before the wait is not lost.
+4. The worker runs `init` first, records the result under the lifecycle mutex, and notifies. If `init` failed, the worker makes no gateway call, because the gateway is not bound. In one locked section of the queue mutex, it closes the queue and completes each queued request with `kFeedClosed`. Then it exits.
+5. When the step 3 wait ends, `start` still holds the lifecycle mutex. In that locked section, it reads the init result and the lifecycle value. It then acts by the table "`start` after the init result".
+
+`start` after the init result:
+
+| Init result | Lifecycle value | `start` does | `start` returns |
+|---|---|---|---|
+| Failed | `kStarting` | Sets `kStopping`, then runs the stop wait | The init error |
+| Failed | `kStopping` | Runs the stop wait | The init error |
+| Failed | `kStopped` | Runs the stop wait, which returns with no block | The init error |
+| Succeeded | `kStarting` | Sets `kRunning` | Success |
+| Succeeded | `kStopping` | Runs the stop wait | `kFeedClosed` |
+| Succeeded | `kStopped` | Runs the stop wait, which returns with no block | `kFeedClosed` |
+
+Rules for the table:
+
+1. The table covers each value that `start` can read in step 5. Step 1 set `kStarting`. Only `start` moves `kStarting` to `kRunning`, and it has not done that yet. A `shutdown()` moves `kStarting` to `kStopping`. Only the join owner moves `kStopping` to `kStopped`. No transition goes back to `kCreated` or `kStarting`.
+2. So the value in step 5 is `kStarting`, `kStopping`, or `kStopped`. A debug assertion checks this.
+3. The read of the value and the set of `kRunning` or `kStopping` are in one locked section, so no `shutdown()` falls between them.
+4. A `kStopping` or `kStopped` value means that a `shutdown()` came before step 5. After a successful `init`, `start` then returns `kFeedClosed` and not success, because the controller accepts no request after a shutdown starts.
+5. In `kStopped`, join rule 5 applies: the worker has exited. Its shutdown steps have already completed each queued request with `kFeedClosed`.
+6. Each row that does not return success runs the stop wait, and the stop wait ends only in `kStopped`. So a failed or shut-down `start` returns only after the worker has exited.
 
 `shutdown()`:
 
@@ -221,10 +248,36 @@ The stop request is a flag in the request queue. A thread sets it under the queu
 4. In `kStopping`: run the stop wait. The object can still be in the controller, for example after a `shutdown()` from `WorkerInit`.
 5. In `kStopped`: return.
 
-The two overlap cases that the rules close:
+The three overlap cases that the rules close:
 
 1. `init` fails while a `shutdown()` on thread B owns the join. `start` finds no object and waits for `kStopped`. B sets `kStopped` after its join. A third `shutdown()` also waits. No call returns before the worker exits.
 2. `WorkerInit` calls `shutdown()`, and `init` then succeeds. The value is `kStopping`, and the object is still in the controller. `start` or a `shutdown()` on another thread takes it, joins, and sets `kStopped`. The other one waits for `kStopped`.
+3. A `shutdown()` on thread B comes in `kStarting`, and `init` succeeds. B owns the join. The worker records the init result, sees the stop request, runs the shutdown steps, and exits. B sets `kStopped` before `start` gets the lifecycle mutex in step 3. `start` reads `kStopped`, the stop wait returns with no block, and `start` returns `kFeedClosed`.
+
+Start test hook:
+
+The step 1 unlock and the step 3 lock leave a point where `start` holds no lock. Case 3 needs `start` to stay at that point until B sets `kStopped`. Without a hook, a test cannot force that order, because `start` wakes when the worker records the init result. The hook makes the order exact.
+
+```cpp
+namespace venimapping::camera::detail {
+
+class ControllerTestAccess final {      // src/acquisition_support/controller_test_access.hpp
+ public:
+  // Runs on the start thread at start step 2, with no controller lock held.
+  // Call it before the thread that calls start is made.
+  static void set_before_init_wait(AcquisitionController& controller,
+                                   std::function<void()> hook);
+};
+
+}  // namespace venimapping::camera::detail
+```
+
+1. The controller keeps the hook in one private `std::function<void()>` member. `src/acquisition_controller.cpp` defines `set_before_init_wait`, because only a friend can set that member.
+2. The hook is empty in production. Step 2 then makes one check of an empty `std::function`.
+3. Only `start` reads the hook. The test sets it before it makes the thread that calls `start`. The thread start orders the write before the read, so the hook needs no lock.
+4. The hook runs with no controller lock held. A hook that blocks therefore blocks only `start`. The worker and each `shutdown()` caller keep running.
+5. `[F]` The header is under `src/acquisition_support/`, and the package installs only the headers under `include/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Only the package tests include it.
+6. `Controller.ShutdownJoinedBeforeStartReads` uses the hook (testing section).
 
 The worker shutdown steps, in ic4 stop order step 1. The worker does each gateway step, because only it may call the gateway (input 4):
 

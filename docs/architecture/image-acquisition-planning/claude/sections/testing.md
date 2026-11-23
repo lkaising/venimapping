@@ -31,7 +31,7 @@ All test files are in `src/venimapping_camera/test/`, except the bring-up test.
 | `acquisition_error_test.cpp` | Tier 1, error domain |
 | `image_frame_test.cpp` | Tier 1, `ImageFrame` |
 | `frame_fanout_test.cpp` | Tier 1, queues, admission, counters |
-| `acquisition_controller_test.cpp` | Tier 1, controller with both fakes. Also holds `WorkerExitMark` for the lifecycle tests |
+| `acquisition_controller_test.cpp` | Tier 1, controller with both fakes. Also holds `WorkerExitMark` for the lifecycle tests. One lifecycle test includes the private `controller_test_access.hpp` for the start test hook |
 | `vimbax_frame_source_test.cpp` | Tier 2, adapter over a test publisher |
 | `installed_consumer/CMakeLists.txt`, `main.cpp` | Step 5 exit check. A project outside the package that links the installed targets |
 | `src/venimapping_bringup/test/test_camera_config.py` | Tier 2, bring-up files (see the bring-up section) |
@@ -124,6 +124,13 @@ class WorkerExitMark final {
 1. `[F]` C++ destroys the `thread_local` objects of a thread when the thread exits. The completion of the thread synchronizes with the return of `join()` (C++17 [basic.start.term], [thread.thread.member]). So `exited` is true before any join of the worker returns.
 2. The delay widens the time between the end of the worker function and the thread exit. A call that returns before the worker exits then reads `exited` as false.
 3. The mark needs no hook in the controller.
+
+The start test hook holds `start` at a known point. `detail::ControllerTestAccess::set_before_init_wait` sets it (control-plane section, "Start test hook").
+
+1. The hook runs at `start` step 2, after the step 1 unlock and before the step 3 lock. `start` holds no controller lock there.
+2. The test sets the hook before it makes the thread that calls `start`.
+3. A test that does not set the hook runs `start` as in production.
+4. Only `Controller.ShutdownJoinedBeforeStartReads` sets it.
 
 `[A]` The controller tests run in real time. The thresholds are 250 ms and the tick is 100 ms, so a silence test takes about 0.5 s. The whole controller suite takes a few seconds. A fake worker clock is not needed in phase 1.
 
@@ -274,6 +281,7 @@ Lifecycle and ownership:
 | `Controller.StartShutdownOverlap` | 5 | `init` arms a `WorkerExitMark` with 20 ms and sleeps 50 ms. Thread A calls `start`. Threads B and C call `shutdown()` 10 ms later. Run it 20 times under ThreadSanitizer. Each call returns, and `exited` is true at each return. `start` returns `kFeedClosed`. No `std::system_error` from a second join, and no sanitizer report. | Both `start` and `shutdown` could join (i15) | Passes. One thread takes the thread object |
 | `Controller.InitFailureWithShutdown` | 5 | See the steps below the table | `start` set `kStopped` while a `shutdown()` still joined. `start` and a later `shutdown()` returned before the worker exited (i15) | Passes. Only the join owner sets `kStopped` |
 | `Controller.ShutdownFromInitWithWaiter` | 5 | See the steps below the table | `start` owned the join after a `shutdown()` from `WorkerInit` and set no `kStopped`. A second `shutdown()` waited with no end (i15) | Passes |
+| `Controller.ShutdownJoinedBeforeStartReads` | 5 | See the steps below the table | After a successful `init`, `start` had a rule only for `kStarting` and `kStopping`. In `kStopped`, no rule gave a result (i15) | Passes. `start` returns `kFeedClosed` in `kStopped` |
 | `Controller.Shutdown` | 5 | A thread waits in `Feed::take`. `shutdown()` makes it return `kFeedClosed`. The log ends with `close_admission` and `stream_stop`, all on the worker thread. A later `feed_open` returns `kFeedClosed`. | No controller | Passes (ic4) |
 | `Controller.ShutdownWakesGetImage` | 6 | A feed is open, and a warm `get_image` waits for a frame. `shutdown()` makes the `get_image` return `kFeedClosed`. | No controller | Passes (ic4) |
 | `Controller.DestroyWithPendingRequest` | 5 | `stream_start` blocks 1 s. A `feed_open` waits. The test destroys the controller. The `feed_open` returns `kFeedClosed`. No error under AddressSanitizer. | No destructor rule (i15) | Passes |
@@ -308,9 +316,32 @@ Step 4 makes B the join owner. B sets `kStopping` and moves the thread object ou
 7. Check that `shutdown()` on B returns within 1000 ms, with `exited` true.
 8. Run the test 20 times under ThreadSanitizer. No sanitizer report.
 
-Either A or B can own the join, and both orders must pass. In most runs, A owns it, because A wakes when `init` returns, before the worker reaches `stream_stop`. With the old rule, A then set no `kStopped`, and B waited with no end. At the step 7 limit, the test reports the failure and aborts, because the stuck thread cannot be joined.
+Either A or B can own the join, and both orders must pass. In most runs, A owns it, because A wakes when `init` returns, before the worker reaches `stream_stop`. With the old rule, A then set no `kStopped`, and B waited with no end. At the step 7 limit, the test reports the failure and aborts, because the stuck thread cannot be joined. This test leaves the order to the scheduler. `ShutdownJoinedBeforeStartReads` forces the order in which B sets `kStopped` before `start` reads the init result.
 
-`[A]` The three lifecycle tests with repeats take about 7 s together: 20 runs each of about 80 ms, 120 ms, and 130 ms. The step 7 exit check keeps the whole suite under 30 s. If the suite is too slow, lower the repeat counts first.
+`Controller.ShutdownJoinedBeforeStartReads` steps:
+
+1. Make `exited` false, `hook_ran` false, `start_returned` false, and a gate.
+2. Call `ControllerTestAccess::set_before_init_wait` with a hook. The hook sets `hook_ran` and waits for the gate with a 2 s limit. At the limit, it records a test failure and returns.
+3. `init` arms a `WorkerExitMark` with 20 ms and returns success.
+4. Thread A calls `start(init)`. After `start` returns, A sets `start_returned`.
+5. Wait until `hook_ran` is true, with a 1 s limit. A is now at `start` step 2 and holds no controller lock. The value is `kStarting`.
+6. Thread B calls `shutdown()`.
+7. When `shutdown()` on B returns, check that it returned within 1000 ms, that `exited` is true, and that `status().state` is `kShutDown`. Check that `start_returned` is false.
+8. Open the gate.
+9. Check that `start` on A returns `kFeedClosed` within 100 ms after the gate opens.
+10. Check that the fake log holds one `stream_stop` and no `stream_start`. A later `feed_open` returns `kFeedClosed`. A second `start` returns `kFeedClosed`, and its `init` does not run.
+11. Run the test 20 times under ThreadSanitizer. No sanitizer report, and no `std::system_error`.
+
+Why the order is exact:
+
+1. In step 6, B finds `kStarting`, because A cannot set `kRunning` while the hook holds it. B therefore sets `kStopping`, moves the thread object out, and joins (`shutdown()` step 3).
+2. The worker records the success result before it exits. B returns only after its join returns and it sets `kStopped`. So at step 7, the init result is success and the value is `kStopped`.
+3. After test step 8, A runs `start` step 3 and locks the lifecycle mutex. The init result is already recorded, so the wait ends at once. `start` reads the "Succeeded, `kStopped`" row.
+4. Step 7 also proves that the worker and the join owner need nothing from `start`. B returns while A is held.
+
+With the old rule, `start` had no row for a successful `init` in `kStopped`. A result other than `kFeedClosed` fails step 9. Success on a shut-down controller also fails it. If `start` does not return by the step 9 limit, the test reports the failure and aborts, because the stuck thread cannot be joined.
+
+`[A]` The four lifecycle tests with repeats take about 8 s together: 20 runs each of about 80 ms, 120 ms, 130 ms, and 30 ms. The step 7 exit check keeps the whole suite under 30 s. If the suite is too slow, lower the repeat counts first.
 
 ### Tier 2: adapter with ROS, no driver
 
@@ -449,5 +480,5 @@ Notes on the wedge check:
 | d19 | `Wedge*`, `StartFail*`, `FirstErrorMinus15`, `NoUserStopFails`, `ConsumerDuringFailingStart` | | `wedge` | Wedge |
 | d22 | `SilenceToOutage`, `RequestDuringOutage`, `Reconnect*`, `Stall`, `FaultedRetry` | | | Unplug |
 | d26, i27 | `DeadlinePassed`, `ExpiredInQueue`, `ExpiredDuringReadback`, `ExpiredDuringMatch`, `ExpiredBeforeStart`, `FrameAfterDeadlineRejected`, `FeedOpenDeadline`, `StopOutsideDeadline` | | `get_image` | |
-| ic2, ic4 | `Shutdown`, `ShutdownWakesGetImage`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `FeedMoveAssignIntoLive`, `FeedCloseThenDestroy`, `InitFailure` | | | |
+| ic2, ic4 | `Shutdown`, `ShutdownWakesGetImage`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `InitFailureWithShutdown`, `ShutdownFromInitWithWaiter`, `ShutdownJoinedBeforeStartReads`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `FeedMoveAssignIntoLive`, `FeedCloseThenDestroy`, `InitFailure` | | | |
 | ic6 | | `test_camera_config.py` | `bringup` | Settings load |
