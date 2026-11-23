@@ -805,6 +805,11 @@ class Runner:
         if self.env_cache is None:
             self.env_cache = ros_env(
                 self.worktree / self.settings["env_script"])
+            # A rehearsal without the camera puts the fake ros2 first.
+            prepend = self.settings.get("env_path_prepend") or []
+            if prepend:
+                self.env_cache["PATH"] = ":".join(
+                    [*prepend, self.env_cache.get("PATH", "")])
             defaults = self.worktree / ".devcontainer/colcon-defaults.yaml"
             if defaults.is_file():
                 self.env_cache.setdefault("COLCON_DEFAULTS_FILE",

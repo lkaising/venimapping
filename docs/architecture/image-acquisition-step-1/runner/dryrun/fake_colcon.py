@@ -17,6 +17,8 @@ import shutil
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 PKG = Path("src/venimapping_bringup")
 SHARE = Path("install/venimapping_bringup/share/venimapping_bringup")
 RESULTS = Path("build/venimapping_bringup/test_results/venimapping_bringup")
