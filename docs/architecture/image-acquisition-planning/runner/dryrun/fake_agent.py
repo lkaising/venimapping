@@ -147,7 +147,8 @@ def main() -> int:
     run_dir = Path(os.environ["PLANRUN_FAKE_RUN_DIR"])
     behavior = next_behavior(state_dir, scenario, task)
     with open(state_dir / "calls.log", "a") as log:
-        log.write(f"{time.time():.3f} {tool} {task} {behavior}\n")
+        log.write(f"{time.time():.3f} {tool} {task} {behavior} "
+                  f"{os.environ.get('CLAUDE_CONFIG_DIR', '-')}\n")
     if behavior.startswith("sleep:"):
         (state_dir / f"{task}.sleeping").write_text(str(os.getpid()))
         time.sleep(float(behavior.split(":")[1]))

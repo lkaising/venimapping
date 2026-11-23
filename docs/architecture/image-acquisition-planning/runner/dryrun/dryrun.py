@@ -124,6 +124,21 @@ def scenario() -> dict:
     }
 
 
+def accounts_scenario() -> dict:
+    return {"tasks": {
+        "positions-claude": {"attempts": ["sleep:60", "ok"]},
+        "draft-claude": {"attempts": ["quota-epoch:20", "ok"]},
+        "integrate-1": {"attempts": ["quota-epoch:60", "ok"]},
+    }}
+
+
+def migration_scenario() -> dict:
+    return {"tasks": {
+        "trace-claude": {"attempts": ["quota-epoch:600", "ok"]},
+        "trace-codex": {"attempts": ["sleep:60", "ok"]},
+    }}
+
+
 # --- Setup --------------------------------------------------------------------
 
 
@@ -132,7 +147,7 @@ def git(*args: str, cwd: Path) -> str:
                           capture_output=True, text=True).stdout
 
 
-def setup(root: Path) -> dict:
+def setup(root: Path, plan: dict, faults: bool = True) -> dict:
     remote = root / "remote.git"
     work = root / "work"
     driver = root / "driver"
@@ -146,8 +161,9 @@ def setup(root: Path) -> dict:
     git("init", "--quiet", "-b", BRANCH, cwd=work)
     git("config", "user.name", "Dry Run", cwd=work)
     git("config", "user.email", "dryrun@localhost", cwd=work)
-    shutil.copytree(RUNNER_DIR.parent, work / PLANNING_REL,
-                    ignore=shutil.ignore_patterns("__pycache__", "RUN.md"))
+    for name in ("runner", "prompts"):
+        shutil.copytree(RUNNER_DIR.parent / name, work / PLANNING_REL / name,
+                        ignore=shutil.ignore_patterns("__pycache__"))
     (work / V1_REL).write_text("# v1 stand-in\n")
     git("add", ".", cwd=work)
     git("commit", "--quiet", "-m", "dry run base", cwd=work)
@@ -170,7 +186,10 @@ def setup(root: Path) -> dict:
     env_script = root / "camera-env.sh"
     env_script.write_text("true\n")
     scenario_file = root / "scenario.json"
-    scenario_file.write_text(json.dumps(scenario(), indent=2))
+    scenario_file.write_text(json.dumps(plan, indent=2))
+    if not faults:
+        for marker in ("push-failed", "crashed", "final-push-failed"):
+            (state / marker).touch()
 
     agent = ["python3", str(DRYRUN_DIR / "fake_agent.py")]
     settings = {
@@ -204,7 +223,18 @@ def setup(root: Path) -> dict:
                PLANRUN_PUSH_FAIL_TASK=PUSH_FAIL_TASK)
     return {"work": work, "remote": remote, "run_dir": run_dir,
             "state": state, "settings": settings_file, "env": env,
-            "driver": driver}
+            "driver": driver, "root": root}
+
+
+def enable_accounts(ctx: dict) -> None:
+    work_dir = ctx["root"] / "claude-work"
+    work_dir.mkdir(exist_ok=True)
+    settings = json.loads(ctx["settings"].read_text())
+    settings["claude"]["accounts"] = [
+        {"name": "personal", "config_dir": None},
+        {"name": "work", "config_dir": str(work_dir)}]
+    ctx["settings"].write_text(json.dumps(settings, indent=2))
+    ctx["env"]["CLAUDE_CONFIG_DIR"] = str(ctx["root"] / "stray-config")
 
 
 # --- Checks -------------------------------------------------------------------
@@ -249,6 +279,39 @@ def committed_file(ctx: dict, rel: str, ref: str = "HEAD") -> str:
     return git("show", f"{ref}:{rel}", cwd=ctx["work"])
 
 
+def claude_launches(state: dict) -> list[tuple[str, dict]]:
+    found = [(t["id"], a) for t in state["tasks"].values()
+             if t["tool"] == "claude" for a in t["attempts"]]
+    return sorted(found, key=lambda item: item[1]["started"])
+
+
+def config_dirs(ctx: dict) -> list[str]:
+    lines = (ctx["state"] / "calls.log").read_text().splitlines()
+    return [line.split()[4] for line in lines if line.split()[1] == "claude"]
+
+
+def one_commit_per_task(ctx: dict) -> bool:
+    trailers = git("log", "--format=%(trailers:key=Planning-Task,valueonly)",
+                   cwd=ctx["work"]).split()
+    return len(trailers) == len(set(trailers))
+
+
+def interrupt(ctx: dict, task: str) -> tuple[int, int]:
+    """Starts the runner, waits for the task's sleeping agent, sends Ctrl-C."""
+    process = subprocess.Popen(
+        ["python3", str(ctx["work"] / PLANNING_REL / "runner" / "run.py"),
+         "--settings", str(ctx["settings"])],
+        cwd=ctx["work"], env=ctx["env"], stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL)
+    marker = ctx["state"] / f"{task}.sleeping"
+    deadline = time.time() + 30
+    while not marker.exists() and time.time() < deadline:
+        time.sleep(0.2)
+    orphan = int(marker.read_text())
+    process.send_signal(2)
+    return process.wait(timeout=30), orphan
+
+
 def run_once(ctx: dict, label: str) -> int:
     print(f"\n=== {label} ===", flush=True)
     result = subprocess.run(
@@ -265,8 +328,8 @@ def run_once(ctx: dict, label: str) -> int:
 def classifier_checks(c: Checks) -> None:
     base = time.time()
     samples = {
-        "claude epoch": ("Claude AI usage limit reached|1795421110",
-                         "quota", 1795421110.0),
+        "claude epoch": (f"Claude AI usage limit reached|{int(base) + 3600}",
+                         "quota", float(int(base) + 3600)),
         "claude reset clock": (
             "You've hit your session limit · resets 3am (America/Chicago)",
             "quota", "future"),
@@ -310,23 +373,27 @@ def main() -> int:
     if root.exists() and any(root.iterdir()):
         sys.exit(f"{root} must be empty")
     root.mkdir(parents=True, exist_ok=True)
-    ctx = setup(root)
     c = Checks()
     classifier_checks(c)
+    main_scenario(root, c)
+    accounts_checks(root / "accounts", c)
+    migration_checks(root / "migration", c)
+
+    failed = [r for r in c.results if not r[0]]
+    summary = root / "dryrun-report.md"
+    summary.write_text("\n".join(
+        f"- {'PASS' if ok else 'FAIL'} {name}" + (f" ({d})" if d else "")
+        for ok, name, d in c.results) + "\n")
+    print(f"\n{len(c.results) - len(failed)}/{len(c.results)} checks passed. "
+          f"Report: {summary}")
+    return 1 if failed else 0
+
+
+def main_scenario(root: Path, c: Checks) -> None:
+    ctx = setup(root, scenario())
 
     print("\n=== run0 (Ctrl-C while trace-claude runs) ===", flush=True)
-    process = subprocess.Popen(
-        ["python3", str(ctx["work"] / PLANNING_REL / "runner" / "run.py"),
-         "--settings", str(ctx["settings"])],
-        cwd=ctx["work"], env=ctx["env"], stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL)
-    marker = ctx["state"] / "trace-claude.sleeping"
-    deadline = time.time() + 30
-    while not marker.exists() and time.time() < deadline:
-        time.sleep(0.2)
-    orphan = int(marker.read_text())
-    process.send_signal(2)
-    code = process.wait(timeout=30)
+    code, orphan = interrupt(ctx, "trace-claude")
     state = load_state(ctx)
     c.check(code != 0 and state["tasks"]["trace-claude"]["status"] == "running"
             and Path(f"/proc/{orphan}").exists(),
@@ -530,22 +597,129 @@ def main() -> int:
     c.check(touched and not outside,
             "runner commits touch only planning paths and v2",
             f"{len(touched)} paths, outside: {outside}")
-    trailers = git("log", "--format=%(trailers:key=Planning-Task,valueonly)",
-                   cwd=ctx["work"]).split()
-    c.check(len(trailers) == len(set(trailers)),
-            "each task has exactly one checkpoint commit",
-            f"{len(trailers)} task commits")
+    c.check(one_commit_per_task(ctx),
+            "each task has exactly one checkpoint commit")
     c.check(all(t["status"] == "done" for t in state["tasks"].values()),
             "all tasks are done", f"{len(state['tasks'])} tasks")
+    c.check("accounts" not in state and "account_next" not in state
+            and not any("account" in a for _, a in claude_launches(state)),
+            "without accounts the state has no account fields")
 
-    failed = [r for r in c.results if not r[0]]
-    summary = root / "dryrun-report.md"
-    summary.write_text("\n".join(
-        f"- {'PASS' if ok else 'FAIL'} {name}" + (f" ({d})" if d else "")
-        for ok, name, d in c.results) + "\n")
-    print(f"\n{len(c.results) - len(failed)}/{len(c.results)} checks passed. "
-          f"Report: {summary}")
-    return 1 if failed else 0
+
+# --- Claude accounts ----------------------------------------------------------
+
+
+def accounts_checks(root: Path, c: Checks) -> None:
+    root.mkdir()
+    ctx = setup(root, accounts_scenario(), faults=False)
+    enable_accounts(ctx)
+
+    print("\n=== accounts0 (Ctrl-C while positions-claude runs) ===",
+          flush=True)
+    _, orphan = interrupt(ctx, "positions-claude")
+    code = run_once(ctx, "accounts1 (to completion)")
+    state = load_state(ctx)
+    launches = claude_launches(state)
+    names = [a["account"] for _, a in launches]
+    c.check(code == 0 and all(t["status"] == "done"
+                              for t in state["tasks"].values()),
+            "accounts: the run completes", f"exit {code}")
+    c.check(names[:7] == ["personal", "work"] * 3 + ["personal"],
+            "accounts: Claude launches alternate between the accounts",
+            " ".join(names))
+    positions = state["tasks"]["positions-claude"]["attempts"]
+    c.check(not Path(f"/proc/{orphan}").exists()
+            and [a["outcome"] for a in positions] == ["interrupted", "ok"]
+            and [a["account"] for a in positions] == ["personal", "work"],
+            "accounts: a restart kills the agent and continues the rotation")
+    draft = state["tasks"]["draft-claude"]["attempts"]
+    c.check([a["outcome"] for a in draft] == ["quota", "ok"]
+            and [a["account"] for a in draft] == ["personal", "work"]
+            and draft[1]["started"] < draft[0]["resume_at"],
+            "accounts: a quota task retries at once on the other account",
+            f"retried {draft[1]['started'] - draft[0]['ended']:.1f} s later")
+    review = state["tasks"]["review-claude"]["attempts"][-1]
+    c.check(review["account"] == "work"
+            and review["started"] < draft[0]["resume_at"],
+            "accounts: the rotation skips the paused account")
+    integrate = state["tasks"]["integrate-1"]["attempts"]
+    c.check([a["account"] for a in integrate] == ["work", "personal"]
+            and draft[0]["resume_at"] <= integrate[1]["started"]
+            < integrate[0]["resume_at"],
+            "accounts: with both paused the task waits for the earliest reset",
+            f"personal reset {runner.stamp(draft[0]['resume_at'])}, "
+            f"resumed {runner.stamp(integrate[1]['started'])}, "
+            f"work reset {runner.stamp(integrate[0]['resume_at'])}")
+    events = (ctx["run_dir"] / "events.log").read_text()
+    c.check("waiting until" in events
+            and "claude (work) paused on quota" in events
+            and "start integrate-1 (claude) attempt 2 on personal" in events,
+            "accounts: events name the account")
+    pause = [line.split()[0] for line in git(
+        "log", "--format=%H %s", cwd=ctx["work"]).splitlines()
+        if "record the claude (work) quota pause" in line]
+    pause_md = (committed_file(ctx, f"{PLANNING_REL}/RUN.md", pause[0])
+                if pause else "")
+    c.check("- claude: paused until" in pause_md
+            and "- claude (personal): paused until" in pause_md
+            and "- claude (work): paused until" in pause_md
+            and "- codex: available" in pause_md,
+            "accounts: RUN.md shows the pause of each account")
+    work_dir = str(ctx["root"] / "claude-work")
+    expected = ["-" if n == "personal" else work_dir for n in names]
+    c.check(config_dirs(ctx) == expected,
+            "accounts: each launch gets the CLAUDE_CONFIG_DIR of its account",
+            " ".join(Path(d).name for d in config_dirs(ctx)))
+    c.check("Planning-Account: work" in head_message(
+                ctx, commits_for(ctx, "draft-claude")[0]),
+            "accounts: checkpoint commits carry the account")
+    c.check(state["tasks"]["integrate-1"]["tool"] == "claude"
+            and state["tasks"]["draft-claude"]["tool"] == "claude",
+            "accounts: tasks that hit quota stay with Claude")
+    c.check(one_commit_per_task(ctx),
+            "accounts: each task has exactly one checkpoint commit")
+
+
+def migration_checks(root: Path, c: Checks) -> None:
+    root.mkdir()
+    ctx = setup(root, migration_scenario(), faults=False)
+
+    print("\n=== migration0 (no accounts, Ctrl-C while trace-codex runs) ===",
+          flush=True)
+    _, orphan = interrupt(ctx, "trace-codex")
+    old = load_state(ctx)
+    paused = dict(old["tools"]["claude"])
+    c.check("accounts" not in old and paused["paused_until"] > time.time()
+            and old["tasks"]["trace-claude"]["not_before"]
+            == paused["paused_until"]
+            and old["tasks"]["trace-codex"]["status"] == "running",
+            "migration: the old state has a Claude pause and a running task",
+            paused["reason"])
+
+    enable_accounts(ctx)
+    code = run_once(ctx, "migration1 (accounts on, to completion)")
+    state = load_state(ctx)
+    c.check(code == 0 and all(t["status"] == "done"
+                              for t in state["tasks"].values()),
+            "migration: the old state loads and the run completes",
+            f"exit {code}")
+    c.check(state["accounts"]["personal"] == paused,
+            "migration: the old Claude pause becomes the personal pause")
+    trace = state["tasks"]["trace-claude"]["attempts"]
+    c.check(trace[1]["account"] == "work"
+            and trace[1]["started"] < paused["paused_until"],
+            "migration: the paused task runs at once on the work account")
+    c.check(not Path(f"/proc/{orphan}").exists()
+            and [a["outcome"] for a in
+                 state["tasks"]["trace-codex"]["attempts"]]
+            == ["interrupted", "ok"],
+            "migration: the running task is killed and run again")
+    names = [a.get("account") for _, a in claude_launches(state)]
+    c.check(names[0] is None and set(names[1:]) == {"work"},
+            "migration: every later launch skips the paused account",
+            " ".join(str(n) for n in names))
+    c.check(one_commit_per_task(ctx),
+            "migration: each task has exactly one checkpoint commit")
 
 
 if __name__ == "__main__":

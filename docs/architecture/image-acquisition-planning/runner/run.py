@@ -346,12 +346,13 @@ class Runner:
         except BlockingIOError:
             sys.exit("another runner holds " + str(self.run_dir))
         self.state = self.load_state()
+        self.sync_claude_pause()
 
     # --- State ----------------------------------------------------------------
 
     def load_state(self) -> dict:
         if self.state_path.exists():
-            return json.loads(self.state_path.read_text())
+            return self.migrate(json.loads(self.state_path.read_text()))
         state = {
             "status": "running", "tasks": {}, "order": [], "errors": [],
             "events": [], "rounds": {}, "camera": None,
@@ -362,7 +363,36 @@ class Runner:
         }
         for spec in self.plan["initial"]:
             self.add_task(state, spec, emitted_by=None)
+        return self.migrate(state)
+
+    def migrate(self, state: dict) -> dict:
+        accounts = self.accounts()
+        if not accounts:
+            return state
+        if "accounts" not in state:
+            state["accounts"] = {accounts[0]["name"]:
+                                 dict(state["tools"]["claude"])}
+            state["account_next"] = 0
+            for task in state["tasks"].values():
+                if (task["tool"] == "claude" and task["attempts"]
+                        and task["attempts"][-1]["outcome"] == "quota"):
+                    task["not_before"] = 0
+        for account in accounts:
+            state["accounts"].setdefault(
+                account["name"],
+                {"paused_until": 0, "quota_hits": 0, "reason": ""})
         return state
+
+    def accounts(self) -> list[dict]:
+        return self.settings["claude"].get("accounts") or []
+
+    def sync_claude_pause(self) -> None:
+        accounts = self.accounts()
+        if accounts:
+            self.state["tools"]["claude"].update(
+                paused_until=min(self.state["accounts"][a["name"]]
+                                 ["paused_until"] for a in accounts),
+                reason="every Claude account is paused")
 
     def add_task(self, state: dict, spec: dict, emitted_by: str | None) -> None:
         state["tasks"][spec["id"]] = {
@@ -711,13 +741,16 @@ class Runner:
                    "ended": None, "pid": None, "outcome": None, "detail": ""}
         task["attempts"].append(attempt)
 
+        if task["tool"] == "claude" and self.accounts():
+            attempt["account"] = self.pick_account()
         attempt["start_commit"] = self.head()
         before = self.guard_snapshot()
         prompt = self.render_prompt(task, attempt_dir, out_dir)
         atomic_write(attempt_dir / "prompt.md", prompt)
         task["status"] = "running"
         self.save()
-        self.event(f"start {task['id']} ({task['tool']}) attempt {number}")
+        on = f" on {attempt['account']}" if attempt.get("account") else ""
+        self.event(f"start {task['id']} ({task['tool']}) attempt {number}{on}")
 
         camera = bool(self.template(task).get("camera"))
         try:
@@ -770,6 +803,12 @@ class Runner:
         env = dict(self.camera_env() if camera else os.environ)
         env["ROS_LOG_DIR"] = str(Path("/tmp") / f"planrun-roslog-{task['id']}")
         env["PLANRUN_TASK"] = task["id"]
+        if attempt.get("account"):
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            config_dir = next(a["config_dir"] for a in self.accounts()
+                              if a["name"] == attempt["account"])
+            if config_dir:
+                env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(config_dir)
         if tool == "claude":
             command = [*config["command"], "-p", "--output-format", "json",
                        "--permission-mode", "acceptEdits",
@@ -809,6 +848,17 @@ class Runner:
                         (attempt_dir / "stdout.log").read_text(),
                         (attempt_dir / "stderr.log").read_text(),
                         timed_out, timeout_s)
+
+    def pick_account(self) -> str:
+        accounts = self.accounts()
+        start = self.state["account_next"] % len(accounts)
+        order = accounts[start:] + accounts[:start]
+        at = now()
+        chosen = next((a for a in order if self.state["accounts"][a["name"]]
+                       ["paused_until"] <= at), order[0])
+        self.state["account_next"] = (accounts.index(chosen) + 1) % len(
+            accounts)
+        return chosen["name"]
 
     def wait_for_agent(self, process: subprocess.Popen, attempt: dict,
                        timeout_s: int, camera: bool) -> bool:
@@ -902,9 +952,15 @@ class Runner:
 
     # --- Success, retry, and pause --------------------------------------------
 
+    def pause_record(self, task: dict, attempt: dict) -> dict:
+        if attempt.get("account"):
+            return self.state["accounts"][attempt["account"]]
+        return self.state["tools"][task["tool"]]
+
     def succeed(self, task: dict, attempt: dict) -> None:
-        tool_state = self.state["tools"][task["tool"]]
+        tool_state = self.pause_record(task, attempt)
         tool_state.update(quota_hits=0, paused_until=0, reason="")
+        self.sync_claude_pause()
         task["transient_failures"] = 0
         group = self.blind_group(task)
         if group:
@@ -944,7 +1000,7 @@ class Runner:
     def pause_on_quota(self, task: dict, attempt: dict, detail: str) -> None:
         shutil.rmtree(Path(attempt["dir"]) / "out", ignore_errors=True)
         tool = task["tool"]
-        tool_state = self.state["tools"][tool]
+        tool_state = self.pause_record(task, attempt)
         tool_state["quota_hits"] += 1
         reset = parse_reset(detail, now())
         if reset is not None:
@@ -956,13 +1012,20 @@ class Runner:
             how = "no reset time reported; backing off"
         tool_state["paused_until"] = until
         tool_state["reason"] = f"quota on {task['id']}: {how}"
+        self.sync_claude_pause()
+        label = tool
+        if attempt.get("account"):
+            label = f"{tool} ({attempt['account']})"
+            until = self.state["tools"][tool]["paused_until"]
         task["status"] = "pending"
         task["not_before"] = until
-        attempt["resume_at"] = until
-        self.event(f"{tool} paused on quota until {stamp(until)} ({how}); "
+        attempt["resume_at"] = tool_state["paused_until"]
+        self.event(f"{label} paused on quota until "
+                   f"{stamp(tool_state['paused_until'])} ({how}); "
                    f"{task['id']} resumes with {tool}")
         self.save()
-        self.checkpoint_run_md(f"docs(planning): record the {tool} quota pause")
+        self.checkpoint_run_md(
+            f"docs(planning): record the {label} quota pause")
 
     # --- Import and checkpoint ------------------------------------------------
 
@@ -994,9 +1057,12 @@ class Runner:
 
         subject = "docs(planning): " + fill(self.template(task)["commit"],
                                             self.values(task))
-        found = self.commit(imported, subject, {
-            "Planning-Task": task["id"], "Planning-Attempt": str(attempt["n"]),
-            "Planning-Tool": task["tool"]})
+        trailers = {"Planning-Task": task["id"],
+                    "Planning-Attempt": str(attempt["n"]),
+                    "Planning-Tool": task["tool"]}
+        if attempt.get("account"):
+            trailers["Planning-Account"] = attempt["account"]
+        found = self.commit(imported, subject, trailers)
         self.finish_import(task, found)
 
     def finish_import(self, task: dict, commit: str) -> None:
@@ -1404,7 +1470,11 @@ class Runner:
         lines += ["", "## Next step", ""]
         lines += self.next_step_lines(state, waiting)
         lines += ["", "## Tools", ""]
-        for tool, info in state["tools"].items():
+        pauses = [("claude", state["tools"]["claude"])]
+        pauses += [(f"claude ({name})", info)
+                   for name, info in state.get("accounts", {}).items()]
+        pauses.append(("codex", state["tools"]["codex"]))
+        for tool, info in pauses:
             if info["paused_until"] > now():
                 lines.append(f"- {tool}: paused until "
                              f"{stamp(info['paused_until'])}. {info['reason']}")

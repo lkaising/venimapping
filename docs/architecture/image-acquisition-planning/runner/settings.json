@@ -11,7 +11,11 @@
   "claude": {
     "command": ["claude"],
     "model": null,
-    "timeout_s": 5400
+    "timeout_s": 5400,
+    "accounts": [
+      {"name": "personal", "config_dir": null},
+      {"name": "work", "config_dir": "~/.claude-work"}
+    ]
   },
   "codex": {
     "command": ["codex"],
