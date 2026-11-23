@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T17:13:23-05:00
-- Last completed checkpoint: integrate-5 (this commit)
+- Updated: 2026-11-23T17:25:00-05:00
+- Last completed checkpoint: prose (this commit)
 - Push pending: False
 
 ## Next step
@@ -37,7 +37,7 @@ If the workstation restarted, run this command from the worktree root. The runne
 | review-claude | claude | done | 1 | d8a57a5a0f |
 | review-codex | codex | done | 1 | 8d2c7604b0 |
 | integrate-1 | claude | done | 1 | d8c43edaea |
-| prose | claude | pending | 0 |  |
+| prose | claude | done | 1 |  |
 | meaning-check | codex | pending | 0 |  |
 | finish | claude | pending | 0 |  |
 | camera-c1 | claude | done | 1 | 3ace405867 |
@@ -60,7 +60,7 @@ If the workstation restarted, run this command from the worktree root. The runne
 | integrate-4 | claude | done | 1 | 4cfbf03667 |
 | fix-claude-r4 | claude | done | 2 | ae32c74539 |
 | recheck-codex-r4 | codex | done | 1 | 6a6dfb2eaa |
-| integrate-5 | claude | done | 1 |  |
+| integrate-5 | claude | done | 1 | d78ca2babe |
 
 ## Errors
 
