@@ -1,0 +1,54 @@
+{
+  "run_dir": "/home/labuser/workspace/projects/venimapping-image-acq-step-1-run",
+  "remote": "origin",
+  "branch": "feat/image-acquisition-step-1",
+  "env_script": "scripts/env.sh",
+  "read_roots": [
+    "/home/labuser/workspace/upstream/vimbax-ros2-driver/src/vimbax_ros2_driver",
+    "/home/labuser/workspace/upstream/ros2-jazzy/src",
+    "/opt/vimbax/doc"
+  ],
+  "driver_source": "/home/labuser/workspace/upstream/vimbax-ros2-driver/src/vimbax_ros2_driver",
+  "claude": {
+    "command": ["claude"],
+    "model": null,
+    "timeout_s": 3600,
+    "accounts": [
+      {"name": "personal", "config_dir": null},
+      {"name": "work", "config_dir": "~/.claude-work"}
+    ]
+  },
+  "codex": {
+    "command": ["codex"],
+    "timeout_s": 3600
+  },
+  "build": {
+    "colcon": ["colcon"],
+    "timeout_s": 1800
+  },
+  "transient_backoff_s": [30, 90, 270],
+  "quota_backoff_s": [900, 1800, 3600],
+  "quota_margin_s": 300,
+  "max_sleep_chunk_s": 600,
+  "max_build_repairs": 2,
+  "max_rig_repairs": 1,
+  "camera": {
+    "namespace": "/vimbax_camera",
+    "camera_id": "0GPF3",
+    "driver_process": "vimbax_camera_node",
+    "init_wait_s": 60,
+    "service_timeout_s": 20,
+    "graph_retry_s": 15,
+    "stop_grace_s": 10,
+    "probe_timeout_s": 180,
+    "xml_denied_policy": "stop",
+    "xml_denied_patterns": [
+      "^Gev.*(IP|Ip|Address|Subnet|Gateway|DHCP|LLA|Persistent)",
+      "IPConfiguration",
+      "^UserSet",
+      "Firmware",
+      "^DeviceReset$",
+      "^DeviceUserID$"
+    ]
+  }
+}

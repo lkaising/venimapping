@@ -1,0 +1,80 @@
+# ------------------------------------------------------------------------------
+#  Filename: vimbax_camera_node
+#
+#  Purpose:  Fake camera driver for the dry run. It loads the settings file
+#            like the real driver, prints the failed-load line and the init
+#            line, records its parameters, and waits for a signal. The name
+#            matches the real driver process. With STEP1_DECOY set, it plays
+#            a driver that the runner did not start.
+#
+#  Usage:    python3 vimbax_camera_node --params <json> [--prefix <text>]
+#
+#  Copyright (C) 2026 Logan Kaising.  All rights reserved.
+# ------------------------------------------------------------------------------
+
+import argparse
+import json
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fakelib  # noqa: E402
+
+
+def say(prefix: str, severity: str, text: str) -> None:
+    print(f"{prefix}[{severity}] [{time.time():.6f}] "
+          f"[vimbax_camera.vimbax_camera]: {text}", file=sys.stderr,
+          flush=True)
+
+
+def main() -> None:
+    if os.environ.get("STEP1_DECOY"):
+        (fakelib.STATE / "decoy.pid").write_text(str(os.getpid()))
+        signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+        while True:
+            time.sleep(0.2)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--params")
+    parser.add_argument("--prefix", default="")
+    args = parser.parse_args()
+    params = json.loads(Path(args.params).read_text())
+    scenario = fakelib.scenario()
+    record = fakelib.STATE / "driver.json"
+
+    def leave(signum, frame):
+        record.unlink(missing_ok=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, leave)
+    signal.signal(signal.SIGTERM, leave)
+    fakelib.log("launches.log", json.dumps(params))
+    say(args.prefix, "INFO", "Initializing camera ...")
+    with fakelib.camera() as cam:
+        if scenario.get("p11_resets"):
+            cam["features"] = dict(fakelib.DEFAULTS)
+        cam["streaming"] = False
+        cam["mode_written"] = False
+        settings_file = params.get("settings_file", "")
+        if settings_file:
+            if Path(settings_file).is_file():
+                fakelib.load_xml(Path(settings_file), cam["features"])
+            else:
+                say(args.prefix, "ERROR",
+                    f"Loading settings from file {settings_file} failed with "
+                    f"error -3 (VmbErrorNotFound)")
+    say(args.prefix, "INFO", "Initializing publisher ...")
+    ready = not scenario.get("init_never")
+    record.write_text(json.dumps({"pid": os.getpid(), "params": params,
+                                  "ready": ready}))
+    if ready:
+        say(args.prefix, "INFO", "Initialization done!")
+    while True:
+        time.sleep(0.2)
+
+
+if __name__ == "__main__":
+    main()
