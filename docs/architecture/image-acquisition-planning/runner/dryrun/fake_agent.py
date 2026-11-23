@@ -148,6 +148,10 @@ def main() -> int:
     behavior = next_behavior(state_dir, scenario, task)
     with open(state_dir / "calls.log", "a") as log:
         log.write(f"{time.time():.3f} {tool} {task} {behavior}\n")
+    if behavior.startswith("sleep:"):
+        (state_dir / f"{task}.sleeping").write_text(str(os.getpid()))
+        time.sleep(float(behavior.split(":")[1]))
+        behavior = "ok"
     if behavior.startswith("stream:"):
         streaming = state_dir / "streaming"
         (state_dir / "stream-started.log").open("a").write(

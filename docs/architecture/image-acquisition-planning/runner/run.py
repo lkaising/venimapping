@@ -380,6 +380,8 @@ class Runner:
     def event(self, text: str) -> None:
         self.state["events"].append(f"{stamp(now())} {text}")
         self.state["events"] = self.state["events"][-200:]
+        with open(self.run_dir / "events.log", "a", encoding="utf-8") as log:
+            log.write(f"{stamp(now())} {text}\n")
         print(f"[runner] {text}", flush=True)
 
     # --- Git ------------------------------------------------------------------

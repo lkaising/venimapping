@@ -99,6 +99,7 @@ def scenario() -> dict:
     return {
         "fail_restore_calls": [2],
         "tasks": {
+            "trace-claude": {"attempts": ["sleep:60", "ok"]},
             "trace-codex": {"attempts": ["transient-codex", "transient-codex",
                                          "ok"]},
             "reconcile": {"emit": {"tasks": [
@@ -308,8 +309,34 @@ def main() -> int:
     c = Checks()
     classifier_checks(c)
 
+    print("\n=== run0 (Ctrl-C while trace-claude runs) ===", flush=True)
+    process = subprocess.Popen(
+        ["python3", str(ctx["work"] / PLANNING_REL / "runner" / "run.py"),
+         "--settings", str(ctx["settings"])],
+        cwd=ctx["work"], env=ctx["env"], stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL)
+    marker = ctx["state"] / "trace-claude.sleeping"
+    deadline = time.time() + 30
+    while not marker.exists() and time.time() < deadline:
+        time.sleep(0.2)
+    orphan = int(marker.read_text())
+    process.send_signal(2)
+    code = process.wait(timeout=30)
+    state = load_state(ctx)
+    c.check(code != 0 and state["tasks"]["trace-claude"]["status"] == "running"
+            and Path(f"/proc/{orphan}").exists(),
+            "Ctrl-C stops the runner and leaves its agent behind",
+            f"exit {code}, agent {orphan} alive")
+
     code = run_once(ctx, "run1 (until the unrecognized error)")
     state = load_state(ctx)
+    c.check(not Path(f"/proc/{orphan}").exists()
+            and outcomes(state, "trace-claude") == ["interrupted", "ok"],
+            "the restart stops the old agent and runs the task again",
+            str(outcomes(state, "trace-claude")))
+    events = (ctx["run_dir"] / "events.log").read_text()
+    c.check("checkpoint" in events and "start trace-claude" in events,
+            "the runner writes its events to events.log")
     c.check(code == 2 and state["status"] == "stopped",
             "unrecognized error stops the run", f"exit {code}")
     c.check(outcomes(state, "dispute-judge-claude-d1") == ["error"],
