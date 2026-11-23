@@ -1,0 +1,32 @@
+# ------------------------------------------------------------------------------
+#  Filename: vimbax_camera_node
+#
+#  Purpose:  Stub camera driver for the dry run. It records its process id and
+#            waits for a signal. The name matches the real driver process.
+#            With PLANRUN_DECOY set, it plays a driver the runner did not start.
+#
+#  Usage:    python3 vimbax_camera_node
+#
+#  Copyright (C) 2026 Logan Kaising.  All rights reserved.
+# ------------------------------------------------------------------------------
+
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+name = "decoy.pid" if os.environ.get("PLANRUN_DECOY") else "driver.pid"
+pid_file = Path(os.environ["PLANRUN_FAKE_STATE"]) / name
+pid_file.write_text(str(os.getpid()))
+
+
+def leave(signum, frame):
+    pid_file.unlink(missing_ok=True)
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, leave)
+signal.signal(signal.SIGTERM, leave)
+while True:
+    time.sleep(0.2)

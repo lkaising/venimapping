@@ -1,0 +1,37 @@
+{
+  "run_dir": "/home/labuser/workspace/projects/venimapping-image-arch-run",
+  "remote": "origin",
+  "branch": "plans/image-arch-planning-army",
+  "read_roots": [
+    "/home/labuser/workspace/upstream/vimbax-ros2-driver/src/vimbax_ros2_driver",
+    "/home/labuser/workspace/upstream/ros2-jazzy/src",
+    "/opt/vimbax/doc"
+  ],
+  "driver_source": "/home/labuser/workspace/upstream/vimbax-ros2-driver/src/vimbax_ros2_driver",
+  "claude": {
+    "command": ["claude"],
+    "model": null,
+    "timeout_s": 5400
+  },
+  "codex": {
+    "command": ["codex"],
+    "timeout_s": 5400
+  },
+  "transient_backoff_s": [30, 90, 270],
+  "quota_backoff_s": [900, 1800, 3600],
+  "quota_margin_s": 300,
+  "max_sleep_chunk_s": 600,
+  "max_integrate_rounds": 8,
+  "camera": {
+    "env_script": "/home/labuser/workspace/projects/venimapping/scripts/env.sh",
+    "namespace": "/vimbax_camera",
+    "launch": ["ros2", "launch", "venimapping_bringup", "camera.launch.py"],
+    "guard": ["python3", "{runner}/camera_guard.py"],
+    "driver_process": "vimbax_camera_node",
+    "ready_timeout_s": 90,
+    "task_timeout_s": 1800,
+    "max_stream_s": 120,
+    "stream_poll_s": 3,
+    "stream_stop_margin_s": 3
+  }
+}

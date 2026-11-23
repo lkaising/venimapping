@@ -1,0 +1,174 @@
+{
+  "planning_dir": "docs/architecture/image-acquisition-planning",
+  "v1_path": "docs/architecture/image-acquisition-design-v1.md",
+  "v2_path": "docs/architecture/image-acquisition-design-v2.md",
+  "coordinator": "claude",
+  "sections": {
+    "data-plane": "codex",
+    "control-plane": "claude",
+    "error-vocabulary": "claude",
+    "bring-up": "claude",
+    "testing": "claude",
+    "implementation-sequence": "claude"
+  },
+  "templates": {
+    "trace": {
+      "tools": ["claude", "codex"],
+      "prompt": "trace.md",
+      "blind": "trace",
+      "required": ["{P}/{tool}/trace.md"],
+      "optional": ["{P}/{tool}/camera-requests/{id}.json"],
+      "commit": "add the {tool} trace of the acquisition path"
+    },
+    "reconcile": {
+      "tools": ["claude"],
+      "prompt": "reconcile.md",
+      "required": ["{P}/coordinator/facts.md"],
+      "optional": ["{P}/coordinator/emits/{id}.json"],
+      "emits": ["camera-check"],
+      "may_block": ["positions-claude", "positions-codex"],
+      "commit": "reconcile the independent traces into shared facts"
+    },
+    "positions": {
+      "tools": ["claude", "codex"],
+      "prompt": "positions.md",
+      "blind": "positions",
+      "required": ["{P}/{tool}/positions.md"],
+      "optional": ["{P}/{tool}/camera-requests/{id}.json"],
+      "commit": "add the {tool} positions on the design choices"
+    },
+    "register": {
+      "tools": ["claude"],
+      "prompt": "register.md",
+      "required": ["{P}/register.md"],
+      "optional": ["{P}/coordinator/emits/{id}.json"],
+      "emits": ["dispute-position", "dispute-judge", "camera-check"],
+      "may_block": ["register-final"],
+      "commit": "build the decision register from both positions"
+    },
+    "dispute-position": {
+      "tools": ["claude", "codex"],
+      "prompt": "dispute-position.md",
+      "params": ["issue"],
+      "blind": "dispute-{issue}",
+      "required": ["{P}/{tool}/disputes/{issue}-position.md"],
+      "optional": ["{P}/{tool}/camera-requests/{id}.json"],
+      "commit": "add the {tool} position on dispute {issue}"
+    },
+    "dispute-judge": {
+      "tools": ["claude", "codex"],
+      "prompt": "dispute-judge.md",
+      "params": ["issue"],
+      "blind": "judge-{issue}",
+      "required": ["{P}/{tool}/disputes/{issue}-verdict.md"],
+      "commit": "add the {tool} verdict on dispute {issue}"
+    },
+    "register-final": {
+      "tools": ["claude"],
+      "prompt": "register-final.md",
+      "required": ["{P}/register.md"],
+      "optional": ["{P}/coordinator/emits/{id}.json"],
+      "emits": ["camera-check"],
+      "may_block": ["draft-claude", "draft-codex"],
+      "commit": "settle the interface decisions for drafting"
+    },
+    "draft": {
+      "tools": ["claude", "codex"],
+      "prompt": "draft.md",
+      "required": ["@own-sections", "{P}/{tool}/source-tree.md",
+                   "{P}/{tool}/draft-notes.md"],
+      "optional": ["{P}/{tool}/camera-requests/{id}.json"],
+      "commit": "draft the {tool} sections of v2"
+    },
+    "review": {
+      "tools": ["claude", "codex"],
+      "prompt": "review.md",
+      "required": ["{P}/{tool}/review-of-{other}.md"],
+      "optional": ["{P}/{tool}/camera-requests/{id}.json"],
+      "commit": "add the {tool} review of the {other} sections"
+    },
+    "integrate": {
+      "tools": ["claude"],
+      "prompt": "integrate.md",
+      "params": ["round"],
+      "required": ["{V2}", "{P}/issues.md"],
+      "optional": ["{P}/register.md", "{P}/coordinator/emits/{id}.json"],
+      "emits": ["fix", "recheck", "dispute-position", "dispute-judge",
+                "camera-check", "integrate"],
+      "may_block": ["prose"],
+      "commit": "integrate v2, round {round}"
+    },
+    "fix": {
+      "tools": ["claude", "codex"],
+      "prompt": "fix.md",
+      "params": ["round", "issues", "sections"],
+      "required": ["{P}/{tool}/fixes/round-{round}.md"],
+      "optional": ["@own-sections", "{P}/{tool}/source-tree.md",
+                   "{P}/{tool}/camera-requests/{id}.json"],
+      "commit": "answer the round {round} issues on the {tool} sections"
+    },
+    "recheck": {
+      "tools": ["claude", "codex"],
+      "prompt": "recheck.md",
+      "params": ["round", "issues", "sections"],
+      "required": ["{P}/{tool}/rechecks/round-{round}.md"],
+      "commit": "recheck the round {round} fixes to the {other} sections"
+    },
+    "camera-check": {
+      "tools": ["claude", "codex"],
+      "prompt": "camera-check.md",
+      "params": ["check"],
+      "camera": true,
+      "required": ["{P}/{tool}/camera/{check}.md"],
+      "commit": "record camera check {check}"
+    },
+    "prose": {
+      "tools": ["claude"],
+      "prompt": "prose.md",
+      "required": ["{V2}", "{P}/coordinator/prose-pass.md"],
+      "commit": "apply the prose pass to v2"
+    },
+    "meaning-check": {
+      "tools": ["codex"],
+      "prompt": "meaning-check.md",
+      "required": ["{P}/codex/meaning-check.md"],
+      "commit": "check that the prose pass kept the meaning of v2"
+    },
+    "finish": {
+      "tools": ["claude"],
+      "prompt": "finish.md",
+      "required": ["{V2}", "{P}/coordinator/summary.md"],
+      "commit": "finish v2 for review"
+    }
+  },
+  "initial": [
+    {"id": "trace-claude", "template": "trace", "tool": "claude"},
+    {"id": "trace-codex", "template": "trace", "tool": "codex"},
+    {"id": "reconcile", "template": "reconcile", "tool": "claude",
+     "deps": ["trace-claude", "trace-codex"]},
+    {"id": "positions-claude", "template": "positions", "tool": "claude",
+     "deps": ["reconcile"]},
+    {"id": "positions-codex", "template": "positions", "tool": "codex",
+     "deps": ["reconcile"]},
+    {"id": "register", "template": "register", "tool": "claude",
+     "deps": ["positions-claude", "positions-codex"]},
+    {"id": "register-final", "template": "register-final", "tool": "claude",
+     "deps": ["register"]},
+    {"id": "draft-codex", "template": "draft", "tool": "codex",
+     "deps": ["register-final"]},
+    {"id": "draft-claude", "template": "draft", "tool": "claude",
+     "deps": ["register-final"]},
+    {"id": "review-claude", "template": "review", "tool": "claude",
+     "deps": ["draft-claude", "draft-codex"]},
+    {"id": "review-codex", "template": "review", "tool": "codex",
+     "deps": ["draft-claude", "draft-codex"]},
+    {"id": "integrate-1", "template": "integrate", "tool": "claude",
+     "params": {"round": "1"}, "deps": ["review-claude", "review-codex"]},
+    {"id": "prose", "template": "prose", "tool": "claude",
+     "deps": ["integrate-1"]},
+    {"id": "meaning-check", "template": "meaning-check", "tool": "codex",
+     "deps": ["prose"]},
+    {"id": "finish", "template": "finish", "tool": "claude",
+     "deps": ["meaning-check"]}
+  ]
+}
