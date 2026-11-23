@@ -90,6 +90,8 @@ into the owning design section or open decisions. Then remove:
 1. Keep `[F]`, `[A]`, and `[Q]` where they help readers distinguish evidence,
    assumptions, and open questions. Place the tag where a finding, assumption,
    or open question is defined, and do not repeat it on every later reference.
+   For this final document, this supersedes the per-claim labeling rule in
+   `common.md`.
 2. Keep stable, searchable IDs that readers will use to cross-reference the
    design, such as `L1` to `L9` and useful `R` or `T` IDs. State each rule or
    finding in full where it is defined so the reader can understand it without

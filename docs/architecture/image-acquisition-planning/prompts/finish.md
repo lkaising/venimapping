@@ -8,7 +8,7 @@ last `integrate-*` task in the completed tasks list.
 
 ### Resolve meaning-check findings
 
-For each finding in `{P}/codex/meaning-check.md`:
+For each finding in the table in `{P}/codex/meaning-check.md`:
 
 1. If the finding identifies lost or altered technical substance (a contract,
    number, name, interface, locking/threading rule, recovery step, measurement,
@@ -20,7 +20,8 @@ For each finding in `{P}/codex/meaning-check.md`:
    on the 20- and 25-word limits when keeping a condition with its exception
    makes a rule clearer, place `[F]`/`[A]`/`[Q]` where findings or decisions
    are defined, and keep searchable IDs such as `L1` to `L9` and useful `R`/`T`
-   IDs.
+   IDs. For this final document, the tag placement rule supersedes the
+   per-claim labeling rule in `common.md`.
 3. **Do not restore removed planning history.** Never re-introduce draft-status
    banners, section-owner labels, integration-round recaps, register-amendment
    logs, `Changes from v1` tables, or settled/withdrawn disagreement logs. If a
@@ -30,6 +31,18 @@ For each finding in `{P}/codex/meaning-check.md`:
 4. Review any unclear passages listed in `{P}/coordinator/prose-pass.md`.
    Clarify wording only where the project code, driver source, or pre-prose
    `{V2}` settles it without inventing behavior.
+5. **Handle `### Pre-existing inconsistencies` separately.** If
+   `{P}/codex/meaning-check.md` lists items under
+   `### Pre-existing inconsistencies`, check each against `{P}/issues.md`,
+   `{P}/register.md`, and the code/driver sources. If pre-prose `{V2}`
+   reflects an accepted fix or integration decision, leave `{V2}` unchanged
+   and note why in `{P}/coordinator/summary.md`. If it is a genuine
+   unintended inconsistency, fix it only where the register or source code
+   settles it unambiguously; otherwise list it under open questions in `{V2}`
+   and note it in `{P}/coordinator/summary.md`.
+6. **Preserve unaffected sections verbatim.** Keep all sections of post-prose
+   `{V2}` that are not implicated by a valid finding or an item 4
+   clarification intact without re-summarizing or abridging them.
 
 ### Final completeness check on `{V2}`
 
@@ -60,7 +73,8 @@ abridgment and contains:
    - The camera checks that ran (from `{P}/camera-log.md`).
    - The issues closed and left (from `{P}/issues.md`).
    - Disposition of `{P}/codex/meaning-check.md` findings (count applied, plus
-     each rejected finding with a brief reason).
+     each rejected finding with a brief reason, and how each pre-existing
+     inconsistency was handled).
    - The location of each planning file, noting that planning history, v1
      comparisons, and settled disagreements remain archived in the planning
      folder rather than in `{V2}`.
