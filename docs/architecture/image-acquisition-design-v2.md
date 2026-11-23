@@ -1,7 +1,7 @@
 # Image acquisition design v2
 
-- Status: integrated draft, round 1. Before the prose pass.
-- Worktree checkpoint: `8d2c760`. Planning folder: `docs/architecture/image-acquisition-planning/`.
+- Status: integrated draft, round 2. Before the prose pass.
+- Worktree checkpoint: `ecba565`. Planning folder: `docs/architecture/image-acquisition-planning/`.
 - Section owners: data plane by Codex. Control plane, error vocabulary, bring-up, testing, and implementation sequence by Claude. The coordinator wrote sections 1 to 4 and 9 to 14.
 - Open issues: `docs/architecture/image-acquisition-planning/issues.md`.
 
@@ -11,24 +11,25 @@ v2 adds image acquisition to `venimapping_camera` for one in-process C++ consume
 
 What v2 proposes:
 
-1. A ROS-free data plane. `ImageFrame` holds the received message through a shared owner, so no pixel copy occurs. `FrameSource` keeps one subscription on `<namespace>/image_raw` with BEST_EFFORT, KEEP_LAST 2. Each `FrameSubscription` has its own bounded queue, default capacity 1, drop oldest.
-2. Frame identity. Each frame carries `receive_seq`, a count per source, and `stream_epoch`, which only the controller starts. An admission gate discards frames with a stamp at or below the epoch boundary.
-3. A ROS-free `AcquisitionController` on one worker thread. The worker is the only gateway caller. Counted leases decide when the stream starts and stops.
-4. A start sequence. The worker reads back the camera profile, corrects it while stopped, checks the format against the driver gate, waits for a matched reader, opens admission, and then calls `stream_start`.
-5. Recovery rules. One reconciliation stop separates a wedged driver from a transient failure. A 250 ms silence threshold leads to a connection check, an outage state, and a new epoch after a reconnect.
-6. Get image. It samples a running stream, or it starts free run when idle. It returns the first queued frame received after the request, inside one deadline of 2000 ms.
+1. A ROS-free data plane. `ImageFrame` holds the received message through a shared owner, so no pixel copy occurs. `FrameSource` keeps one subscription on `<namespace>/image_raw` with BEST_EFFORT, KEEP_LAST 2. Each `FrameSubscription` has its own bounded queue, default capacity 1, drop oldest. A subscription can outlive its source, because it holds its own queue block and lock state.
+2. Frame identity. Each frame carries `receive_seq`, a count per source from 1, and `stream_epoch`, which only the controller starts. An admission gate discards frames with a stamp at or below the epoch boundary.
+3. A ROS-free `AcquisitionController` on one worker thread. The worker is the only gateway caller. Counted leases decide when the stream starts and stops. Each `Feed` owns its subscription alone.
+4. A start sequence. The worker reads back the camera profile, corrects it only after a confirmed stop, checks the final format against the driver gate, waits for a matched reader, opens admission, and then calls `stream_start`.
+5. Recovery rules. One reconciliation stop separates a wedged driver from a transient failure. A 250 ms silence threshold leads to a connection check, an outage state, and a new epoch after a reconnect. Each stream state has a rule for new requests.
+6. Get image. It samples a running stream, or it starts free run when idle. It returns a frame received after the request, inside one deadline of 2000 ms. `feed_open` has its own deadline of 5000 ms.
 7. A contractual error domain, `kAcquisition`, with 11 fixed codes. Driver errors pass unchanged.
 8. Bring-up. The driver loads a 30 Hz Mono8 profile from a settings file on each open. `camera.yaml` pins `autostream: 0`, `buffer_count: 7`, `use_ros_time: true`, and a raw-only plugin filter.
-9. Four test tiers. Unit tests run without ROS on fakes that share the real admission code. A temporary feed probe and four hardware checks run on the rig.
+9. Four test tiers. Unit tests run without ROS on fakes that share the real admission code. A temporary feed probe and five hardware checks run on the rig.
 10. Nine implementation steps and one conditional step. Each step builds alone and has an exit check.
 
 Phase 1 leaves out the software trigger, `CameraInfo` pairing, a ROS service for get image, device stamps, and driver patches. Each has a trigger to start it (section 10).
 
-State of the design after round 1:
+State of the design after round 2:
 
-1. 26 issues are Open. Three of them are Blocking: i10, i11, and i26, all on the control plane. Most other open issues are interface details at the boundary between the two planners.
-2. Nine decisions wait for Logan (section 13). The design runs on a stated working assumption for each one.
-3. The timestamp source, d20, is a working assumption. The two dispute verdicts disagree (section 14).
+1. 10 issues are Open, all on the Claude sections. One is Blocking: i26, a lease that a `Feed` can release twice. Seven are Major and concern deadlines, shutdown before `start`, the wedge confirmation stop, and rig and test checks.
+2. The data-plane section has no open issue. Round 2 closed all nine data-plane issues and eight control-plane issues.
+3. Nine decisions wait for Logan (section 13). The design runs on a stated working assumption for each one.
+4. The timestamp source, d20, is a working assumption. The two dispute verdicts disagree (section 14).
 
 ### Labels and citations
 
@@ -40,10 +41,11 @@ State of the design after round 1:
    - `path:line` is a path from the project worktree root.
    - `driver:path:line` is a path from the driver root `vimbax_ros2_driver/`.
    - `ros:path:line` is a path from the ROS 2 Jazzy source root `ros2-jazzy/src/`.
+   - `vimbax:path:line` is a path from `/opt/vimbax`.
    - `facts 1.4.3` is section 1.4, item 3 of `coordinator/facts.md` in the planning folder. Facts ids such as `A28` and `X3` are in the same file.
    - `c1 §3.5` is section 3.5 of `claude/camera/c1.md`. `c2` is `claude/camera/c2.md`. `c3` is `codex/camera/c3.md`.
    - Lower-case ids such as `d17` and `ic3` are entries in `register.md` in the planning folder. `R1` to `R16` and `T1` to `T12` are requirements and technical unknowns. `L1` to `L9` are the decisions for Logan.
-   - `i1` to `i30` are issues in `issues.md`.
+   - `i1` to `i33` are issues in `issues.md`. `N1` to `N9` and `M1` to `M10` are entries in `claude/draft-notes.md`.
 
 ## 2. Current state
 
@@ -78,6 +80,7 @@ This section gives the acquisition path at the checkpoint. Each item comes from 
 4. `[F]` With `autostream: 0`, only `stream_start` and the reconnect restart start the stream (`driver:vimbax_camera/src/vimbax_camera_node.cpp:588-593`).
 5. `[F]` After a reopen, the driver restarts a stream that was active or starting at the disconnect, and it ignores the result (facts 1.9.7, X3).
 6. `[F]` A `buffer_count` change while the camera is disconnected calls `is_streaming()` on a null pointer (facts 1.10.1).
+7. `[F]` The driver starts its frame processing thread before `CaptureStart` and `AcquisitionStart`, which can still fail (`driver:vimbax_camera/src/vimbax_camera.cpp:458-510`).
 
 ### 2.3 Image publishing
 
@@ -112,7 +115,8 @@ This section gives the acquisition path at the checkpoint. Each item comes from 
 2. `[F]` `status` writes each `TriggerSelector` value to read the trigger state, and it leaves the selector at the last value (`driver:vimbax_camera/src/vimbax_camera.cpp:1452-1473`).
 3. `[F]` No ROS event exists for frames, stream state, or connection. While the camera is unavailable, each camera service returns -3 (facts 1.9.2, 1.9.5).
 4. `[F]` On a reconnect, a detached thread reopens the camera and loads `settings_file`. A failed load only logs an error (`driver:vimbax_camera/src/vimbax_camera_node.cpp:390-400`, `:556-568`).
-5. `[F]` If the first open fails, the driver calls `rclcpp::shutdown()` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:375-382`).
+5. `[F]` The `connected` service returns `camera_ != nullptr` only (`driver:vimbax_camera/src/vimbax_camera_node.cpp:1520-1527`).
+6. `[F]` If the first open fails, the driver calls `rclcpp::shutdown()` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:375-382`).
 
 ## 3. Requirements and working assumptions
 
@@ -159,6 +163,8 @@ No requirement below has an answer from Logan. Each row is a working assumption 
 | P7 | `get_publisher_count()` is safe from the worker while the executor spins. | d17, ic2 | Low |
 | P8 | `std::chrono::system_clock` reads `CLOCK_REALTIME` on the project toolchain. | ic3 | Low |
 | P9 | A 1 s limit between the header stamp and the receipt time catches a device-clock stamp and never rejects a host stamp. | ic3, ic6 | Low |
+| P10 | Each in-process gateway call takes a few milliseconds, so the cold path is less than 500 ms. The `rtt` probe mode measures it. | d26, `FeedOptions::deadline` | Low |
+| P11 | The camera keeps service writes across a driver restart without a power cycle. The bring-up part A check uses it. | ic6 | Low |
 
 T1, T2, T5, T6, and T8 are closed by the camera checks (section 11).
 
@@ -199,21 +205,22 @@ flowchart LR
 |---|---|---|
 | `ImageFrame` | Immutable frame value. Shares the received message. No ROS type. | data plane (5) |
 | `FrameSource`, `FrameSubscription` | Port. One subscription per source. One bounded queue per `FrameSubscription`. Admission and epochs. | data plane (5) |
-| `FrameFanout` | Private ROS-free core of the source: queues, fan-out lock, admission, counters. The adapter and the test fake share it. | data plane (5) |
+| `FrameFanout`, `FrameFanoutClock` | Private ROS-free core of the source: queues, fan-out lock, admission, counters, and an injectable clock. The adapter and the test fake each hold one by value. | data plane (5) |
 | `VimbaXFrameSource` | Adapter. One rclcpp subscription on `<namespace>/image_raw`. | data plane (5) |
-| `AcquisitionController`, `Feed` | Policy. Leases, start sequence, profile readback, recovery, get image. | control plane (6) |
+| `AcquisitionController`, `Feed` | Policy. Leases, request deadlines, start sequence, profile readback, recovery, get image. | control plane (6) |
+| `LeaseLink` | Private shared block between a `Feed` and the worker. Gives the worker a close path and lets a release outlive the controller. | control plane (6) |
 | `AcquisitionCode` | Contractual error codes in the `kAcquisition` domain | error vocabulary (6) |
 | `camera.yaml`, `camera_settings.xml`, `acquisition_profile.yaml`, `camera.launch.py` | Driver parameters, camera profile, expected values | bring-up (7) |
 | `camera_feed_probe` | Temporary composition root and rig check tool | testing (8) |
 
 ### 4.2 Threads
 
-From register ic4.
+From register ic4, with the round 2 shutdown rule (i33).
 
 | Thread | Started by | Runs | Never calls |
 |---|---|---|---|
 | Executor thread | composition root | `SingleThreadedExecutor::spin` on the one node: gateway replies, the image callback, the `message_lost` callback | the gateway, the controller, consumer code |
-| Controller worker | `AcquisitionController::start` | The bind hook first, then gateway calls, the 100 ms tick, and lease changes | `FrameSubscription::take` or `try_take` |
+| Controller worker | `AcquisitionController::start` | The bind hook first, then gateway calls, the 100 ms tick, lease changes, and each gateway call of the shutdown | `FrameSubscription::take` or `try_take`, `shutdown()` with a join |
 | Consumer thread, one per `Feed` and one per `get_image` call | application | `Feed::take`, `Feed::try_take`, and the `get_image` wait | the gateway, `FrameSource` |
 | Any thread | | `close()`, `stats()`, `status()`, `shutdown()` | |
 
@@ -223,7 +230,7 @@ From register ic4.
 
 ### 4.3 Build targets
 
-From register ic8. All targets are in `venimapping_camera`.
+From register ic8. All targets are in `venimapping_camera`. Each library has its own `install(TARGETS ... EXPORT export_${PROJECT_NAME})` call (i24).
 
 | Target | Kind | Links | Owner |
 |---|---|---|---|
@@ -236,7 +243,7 @@ From register ic8. All targets are in `venimapping_camera`.
 
 ### 4.4 Decision register
 
-The register in the planning folder holds the full entries, the evidence, and the interface contracts ic0 to ic8. This table gives each decision in one line, with the round 1 amendments.
+The register in the planning folder holds the full entries, the evidence, and the interface contracts ic0 to ic8. This table gives each decision in one line, with the amendments from rounds 1 and 2. The register file is at the `register-final` text. Until the next register write, this section is the record of the amendments (i32, i33).
 
 | Id | Topic | Status | Decision |
 |---|---|---|---|
@@ -250,44 +257,70 @@ The register in the planning folder holds the full entries, the evidence, and th
 | d8 | Transport | Agreed | Plain rclcpp subscription on `<namespace>/image_raw`. Raw plugin only. |
 | d9 | Subscriber QoS | Settled | BEST_EFFORT, KEEP_LAST 2, VOLATILE, fixed in the adapter. |
 | d10 | Queue and `buffer_count` | Settled | Capacity per subscription, default 1, range 1 to 4, drop oldest. `buffer_count` 7 in `camera.yaml`. |
-| d11 | Frame identity | Agreed | `receive_seq` per source plus a stream epoch. Only the controller starts an epoch. |
+| d11 | Frame identity | Agreed | `receive_seq` per source from 1, plus a stream epoch. Only the controller starts an epoch. |
 | d12 | Loss reporting | Settled | Counters per loss site. No `stamp_gap_frames` in phase 1. |
 | d13 | Several consumers | Settled | One subscription, one queue per `FrameSubscription`. One feed and one get image at a time. |
-| d14 | Pixel interpretation | Settled | Pass pixels unchanged. Add `significant_bits` from the `PixelFormat` readback. |
+| d14 | Pixel interpretation | Settled | Pass pixels unchanged. Add `significant_bits` from the final `PixelFormat` readback. |
 | d15 | Calibration | Agreed | No `CameraInfo` in phase 1. |
 | d16 | Stream ownership | Agreed | The controller worker owns stream calls and feature writes through counted leases. |
 | d17 | Feed start | Agreed | Match before start. The last release stops the stream. |
-| d18 | Configuration | Settled | `settings_file` applies the 30 Hz Mono8 profile at each open. The controller reads it back. Item 7 amendment proposed in i11. |
-| d19 | Start and stop failure | Settled | Format check, one reconciliation stop, then `kWedged`. |
+| d18 | Configuration | Settled, amended (i11, i13) | `settings_file` applies the 30 Hz Mono8 profile at each open. The controller reads it back and corrects only after a confirmed stop. Item 7 allows the `TriggerSelector` write before a `TriggerMode` read during a stream. |
+| d19 | Start and stop failure | Settled | Format check, one reconciliation stop, then `kWedged`. The item 5 amendment waits for i18. |
 | d20 | Timestamp source | Working assumption | `use_ros_time: true`. `host_stamp_ns` from `header.stamp`. Logan question L1. |
 | d21 | Driver changes | Agreed | No patch in phase 1. Four candidate patches go to Logan. |
-| d22 | Outage | Settled | 250 ms floor, close admission, check connection, read back profile, new epoch. |
+| d22 | Outage | Settled, amended (i10, i13) | 250 ms floor, close admission, check connection, read back profile, new epoch. The fallback start runs the full start sequence. |
 | d23 | Get image source | Agreed | Sample a running stream, or start free run when idle. No trigger in phase 1. |
 | d24 | Freshness | Agreed, amended (i12) | A frame pushed to the get image subscription after it opened, with `receive_seq` greater than `frames_received` at the request. |
 | d25 | Idle behavior | Agreed | One subscription for the source lifetime. Cold calls start the stream. |
-| d26 | Deadline | Settled | One caller deadline, default 2000 ms. The stop is outside it. |
+| d26 | Deadline | Settled, amended (i27) | One caller deadline for `get_image`, default 2000 ms, and for `feed_open`, default 5000 ms. The stop is outside it. |
 | d27 | Trigger association | Agreed | Phase 2 only. |
 | d28 | Get image during a feed | Agreed | Share the stream. Get image has its own queue. |
 | d29 | Caller interface | Agreed | C++ only in phase 1. |
 
-Other round 1 amendments:
+Contract amendments from round 1:
 
 1. ic5 gains control-plane rows for `kFeedClosed` and `kInvalidArgument`. `AcquisitionController::create` can also return `kFormatNotStreamable` (i28).
 2. ic4: the worker starts through `AcquisitionController::start(WorkerInit)`. The hook binds the gateway thread (i29).
 
+Contract amendments from round 2, for the accepted data-plane fixes (i32):
+
+1. ic1 item 4: the frame is immutable after `create` or after `FrameFanout` publishes it (i7).
+2. ic1 sketch: `encoding()` and `tf_frame()` return `const std::string&`. The other accessors return the field type (i6).
+3. ic2 `FrameSourceStats` adds `callback_ns_max` and `callback_ns_total` (i2).
+4. ic2 `VimbaXFrameSource` item 1: an empty `camera_namespace` returns `kSourceCreateFailed` (i8).
+5. ic3 item 3.1: `receive_seq = frames_received.fetch_add(1) + 1` (i1).
+6. ic3 item 3.2: a second `steady_now()` read after the deferred releases (i2).
+7. ic3 item 3.3: the private `ImageFrame` stage factory replaces `ImageFrame::create` in the callback (i7).
+8. ic7 item 2: `FrameFanoutClock` is an abstract class with virtual `realtime_ns() const` and `steady_now() const`. The clock outlives `FrameFanout` (i9).
+9. ic8 guarantee 10: the callback interval runs from the first `steady_now()` read to the read after the deferred releases (i2).
+
+Contract amendments from round 2, for the accepted control-plane fixes (i33):
+
+1. d18 item 7: "Phase 1 writes no acquisition value during a stream. The `TriggerSelector` write before a `TriggerMode` read is allowed." (i11)
+2. d22 item 5: the stop before the corrective writes is part of the start sequence and gives a confirmed stop (i13).
+3. d22 item 7: the fallback calls `close_admission` and runs the start sequence (i10).
+4. d26: `FeedOptions::deadline`, default 5000 ms, uses the same request mechanism as `get_image` (i27).
+5. ic3 item 4.3: `close_admission` also runs at once after a failed `stream_start` (i17, accepted part).
+6. ic4 stop order step 1: the worker makes each gateway call of the shutdown (i15, accepted part).
+7. ic5: `kDeadlinePassed` adds `feed_open`. `kFeedClosed` adds the init failure and requests queued at shutdown. `kInvalidArgument` adds a second `start` call. Item 2 adds the rule that the second readback decides a corrective write result (i23).
+
+Amendments that wait for an open issue: d19 item 5 (i18), ic2 `Feed` with `LeaseLink` (i26), and ic6 item 3 (i19).
+
 ## 5. Data plane
 
-Source: `codex/sections/data-plane.md`, owner Codex. The coordinator changed only the heading levels. Open issues on this section: i1 to i9.
+Source: `codex/sections/data-plane.md`, owner Codex. The coordinator changed only the heading levels. No issue on this section is open after round 2.
 
-[F] The driver publishes `sensor_msgs/msg/Image` on `image_raw`. The project gateway uses services and binds its blocking calls to one worker thread. (`driver:vimbax_camera/src/vimbax_camera_node.cpp:350-357,1620-1638`, `src/venimapping_camera/src/vimbax_camera_gateway.cpp:49-69`, `src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:45-64`)
+[F] The driver publishes `sensor_msgs/msg/Image` on `image_raw`. The project gateway uses services and binds blocking calls to one worker thread. (`driver:vimbax_camera/src/vimbax_camera_node.cpp:350-357,1620-1638`, `src/venimapping_camera/src/vimbax_camera_gateway.cpp:49-69`, `src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:45-64`)
 
-Keep v1's separate frame port and pull interface. The controller composes `FrameSource` with `CameraGateway`. Consumers pull from `FrameSubscription` on their own threads, so frame processing cannot hold the executor. The frame API and the VimbaX adapter are separate libraries in `venimapping_camera` (`d1`, `d2`, `d7`, `ic8`). (`docs/architecture/image-acquisition-design-v1.md:306-346`)
+Keep v1's separate frame port and pull interface. The controller composes `FrameSource` with `CameraGateway`. Consumers pull from `FrameSubscription` on their own threads. This keeps frame processing off the executor. The frame API and the VimbaX adapter use separate libraries in `venimapping_camera` (`d1`, `d2`, `d7`, `ic8`). (`docs/architecture/image-acquisition-design-v1.md:306-346`)
 
-[A] Phase 1 serves one local C++ consumer on the driver host with CycloneDDS. The controller allows one feed and one outstanding get image. This assumption sets the local port and queue limits (`d13`, `d29`, R1, R12). [Q] Will a consumer need another process or host, calibration, or more than 8 bits (L2, R11, L5)?
+[A] Phase 1 serves one local C++ consumer on the driver host with CycloneDDS. The controller allows one feed and one outstanding get image request. This assumption sets the local port and the controller's queue limits (`d13`, `d29`, R1, R12).
+
+[Q] Will a consumer need another process or host, calibration, or more than 8 bits (L2, R11, L5)?
 
 ### Frame and pixel ownership
 
-`ImageFrame` is a ROS-free value in `venimapping::camera` (`d3`, `d4`, `d11`, `d14`, `d15`, `ic1`). It carries these fields from `ImageFrameFields` and exposes a `const noexcept` accessor for each field.
+`ImageFrame` is a ROS-free value in `venimapping::camera` (`d3`, `d4`, `d11`, `d14`, `d15`, `ic1`). It exposes one `const noexcept` accessor per field. Scalar accessors return by value. `encoding()` and `tf_frame()` return `const std::string&` into the shared frame block. This avoids a string allocation in a `noexcept` accessor.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -296,25 +329,29 @@ Keep v1's separate frame port and pull interface. The controller composes `Frame
 | `encoding` | `std::string` | Wire encoding, unchanged. |
 | `is_bigendian` | `bool` | Pixel byte order, from the message. |
 | `tf_frame` | `std::string` | Coordinate frame name from `header.frame_id`. |
-| `significant_bits` | `std::uint8_t` | Source bit depth from the `PixelFormat` readback for this epoch. |
+| `significant_bits` | `std::uint8_t` | Source bit depth from the final verified `PixelFormat` for this epoch. |
 | `host_stamp_ns` | `std::int64_t` | Driver stamp on host `CLOCK_REALTIME`, in nanoseconds since the Unix epoch. |
-| `receive_seq` | `std::uint64_t` | Receive sequence for this `FrameSource`. |
+| `receive_seq` | `std::uint64_t` | Receive sequence for this `FrameSource`, starting at 1. |
 | `stream_epoch` | `std::uint32_t` | Admission epoch for this `FrameSource`, starting at 1. |
 | `pixels()` | `std::span<const std::byte>` | Read-only view into the received payload. |
 
-`ImageFrame::create(ImageFrameFields, std::shared_ptr<const void>, std::span<const std::byte>)` returns `Expected<ImageFrame>`. If either dimension is zero, it returns `kInvalidArgument`. It returns the same error if `step` times `height` exceeds the span size. Compute that product in 64 bits before the comparison (`ic1`, `ic5`).
+`ImageFrame::create(ImageFrameFields, std::shared_ptr<const void>, std::span<const std::byte>)` returns `Expected<ImageFrame>`. It returns `kInvalidArgument` if either dimension is zero or if `step × height` exceeds the span size. Compute the product in 64 bits before the comparison (`ic1`, `ic5`).
 
-The adapter uses the received image as the type-erased owner and points the span into its `data`. A shared block holds the fields, the owner, and the span. Copying an `ImageFrame` increments one reference count and allocates no memory. Accessors are safe on any thread. Keep an `ImageFrame` alive while using its span. A retained frame stays valid after the subscription, source, and node are gone. [A] The adapter uses the default message allocator, so the payload lifetime does not depend on the node (`d4`, `ic1`).
+`ImageFrame` declares `frame_support::FrameFanout` as a friend. The private `stage` factory validates the layout and allocates a mutable frame block before the fan-out lock. The public `create` factory uses the same validation and returns an immutable frame. Under the lock, only `FrameFanout` sets `stream_epoch` and `significant_bits` on its unpublished block. It then moves the sole staging handle into an `ImageFrame` with a const block and publishes that frame to the queues. The frame is immutable after `FrameFanout` publishes it (`ic1`, `ic3`, `ic8`).
 
-[F] With the local CycloneDDS receive path, an image uses a regular received message. Its unbounded fields prevent a loan. The driver can also copy or shift pixels before publish. (`ros:ros2/common_interfaces/sensor_msgs/msg/Image.msg:21-26`, `ros:ros2/rmw_cyclonedds/rmw_cyclonedds_cpp/src/rmw_node.cpp:2949-2984`, `driver:vimbax_camera/src/vimbax_camera.cpp:1695-1712,1781-1806`)
+The adapter uses the received message as the type-erased owner and points the span into its `data`. The shared frame block holds the fields, owner, and span. A frame copy increments one reference count and allocates no memory. Accessors are safe on any thread. Keep a frame copy alive while using its string references or pixel span. A retained frame stays valid after the subscription, source, and node are gone. [A] The adapter uses the default message allocator, so the payload lifetime does not depend on the node (`d4`, `ic1`).
 
-Keep v1's shared owner so fan-out adds no pixel copy. Pass through both the payload and encoding. Add `significant_bits` because the wire encoding alone cannot give the original bit depth (`d4`, `d14`). [F] The driver publishes Mono12 as `mono16` with samples shifted left four bits. (`docs/architecture/image-acquisition-design-v1.md:261-305`, `driver:vimbax_camera/src/vimbax_camera.cpp:1791-1797,1835-1844`)
+[F] The local CycloneDDS receive path uses a regular message because `Image` has unbounded fields. The driver can copy or shift pixels before publish. (`ros:ros2/common_interfaces/sensor_msgs/msg/Image.msg:21-26`, `ros:ros2/rmw_cyclonedds/rmw_cyclonedds_cpp/src/rmw_node.cpp:2949-2984`, `driver:vimbax_camera/src/vimbax_camera.cpp:1695-1712,1781-1806`)
 
-[A] The initial profile uses full-sensor Mono8 at 1296 × 1032 and 30 Hz. The load target is 69.7 Hz. [F] The c1 check measured 1,337,472 bytes per image and 93.2 MB/s at that load. The c3 check measured 30.010 Hz. A different profile changes the payload and load estimates. Each frame supplies its own layout (`d10`, `d18`, R2–R5). (`docs/architecture/image-acquisition-planning/claude/camera/c1.md:100-119`, `docs/architecture/image-acquisition-planning/codex/camera/c3.md:45-50`)
+Keep v1's shared owner so fan-out adds no pixel copy. Pass through the payload and encoding. Add `significant_bits` to preserve the source bit depth (`d4`, `d14`). [F] The driver publishes Mono12 as `mono16` with samples shifted left four bits. (`docs/architecture/image-acquisition-design-v1.md:261-305`, `driver:vimbax_camera/src/vimbax_camera.cpp:1791-1797,1835-1844`)
+
+[A] The initial profile uses full-sensor Mono8 at 1296 × 1032 and 30 Hz. The load target is 69.7 Hz. Profile changes affect payload size and load estimates. Each frame carries its own layout (`d10`, `d18`, R2–R5).
+
+[F] The c1 check measured 1,337,472 bytes per image and 93.2 MB/s at the load target. The c3 check measured 30.010 Hz at the initial profile. (`docs/architecture/image-acquisition-planning/claude/camera/c1.md:100-119`, `docs/architecture/image-acquisition-planning/codex/camera/c3.md:45-50`)
 
 ### Source, subscription, and backpressure
 
-The source keeps one ROS subscription for its lifetime, including while idle (`d13`, `d25`). `subscribe` opens an empty project queue. The controller owns stream operations and leases (`d16`, `d17`). Get image opens a capacity-1 subscription on the same source and leaves the feed queue independent (`d24`, `d28`).
+`VimbaXFrameSource` keeps one ROS subscription for its lifetime, including while idle (`d13`, `d25`). `FrameSource::subscribe` opens an empty project queue. The controller owns stream operations and leases (`d16`, `d17`). Get image opens its own capacity-1 subscription on the same source (`d24`, `d28`).
 
 ```cpp
 struct SubscribeOptions {
@@ -338,6 +375,8 @@ struct FrameSourceStats {
   std::uint64_t discarded_layout;
   std::uint64_t discarded_stamp_basis;
   std::uint64_t discarded_admission;
+  std::uint64_t callback_ns_max;
+  std::uint64_t callback_ns_total;
   std::optional<std::uint64_t> transport_lost;
   std::optional<std::chrono::steady_clock::time_point> last_admitted;
   std::uint32_t current_epoch;
@@ -366,58 +405,79 @@ class FrameSource {
 };
 ```
 
-`subscribe` accepts capacities 1 through 4 and returns `kInvalidArgument` outside that range. It allocates queue storage before locking the fan-out. Each admission pushes a shared frame to every open queue and increments `frames_delivered` for each push. At capacity, the queue evicts its oldest frame and increments `queue_evictions`. The callback never waits for space. Capacity 1 keeps the newest pending frame. This replaces v1's default of 4 to limit backlog for the phase 1 consumer (`d10`, `d13`, `ic2`). (`docs/architecture/image-acquisition-design-v1.md:348-359,714-724`)
+`subscribe` accepts capacities 1 through 4 and returns `kInvalidArgument` outside that range. The error text gives the supplied capacity. Each admission pushes a shared frame to every open queue and increments `frames_delivered` for each push. At capacity, the queue evicts its oldest frame and counts one `queue_evictions` event. The callback never waits for space. Capacity 1 keeps the newest pending frame. This replaces v1's default of 4 to limit backlog for the phase 1 consumer (`d10`, `d13`, `ic2`). (`docs/architecture/image-acquisition-design-v1.md:348-359,714-724`)
 
 `take` returns the oldest queued frame. If the queue is empty, it waits on a condition variable with a steady-clock deadline. A timeout of zero or less acts as `try_take`. A timeout or empty `try_take` returns a successful empty optional, including during suspended admission. The first pull binds the consumer thread. A pull from another thread on an open subscription returns `kWrongThread` (`d7`, `ic2`, `ic5`).
 
-Any thread can call `stats` or `close`. `close` is idempotent. It removes the queue from fan-out, counts its cleared frames, and wakes a waiting pull. Destruction of the concrete subscription closes it. Source destruction also closes its subscriptions, which can outlive it. After either close, a waiting or later pull returns `kFeedClosed` (`ic2`, `ic5`).
+The adapter and `FakeFrameSource` each hold a `FrameFanout` by value. The adapter holds it in a private implementation block in its source file. `FrameFanout` holds shared state with the fan-out lock and the list of open queues. Each list entry holds a shared pointer to its queue block. Each concrete subscription holds a shared pointer to its queue block and another to the shared state. The queue block holds the ring, pull condition variable, closed flag, and subscription counters. The shared state and queue blocks have no references to the source or clock.
 
-For the Mono8 profile, each queue retains at most `capacity × step × height` payload bytes. Capacity 4 retains at most 5,349,888 bytes. The feed and get image queues together retain at most five payloads, or 6,687,360 bytes. Both queues can reference the same payload. Consumer-held frames add up to `step × height` each at that profile. DDS history, the in-flight callback, and SDK buffers have their own storage. Bring-up sets `buffer_count: 7` in `camera.yaml` at launch (`d10`, `d13`, `ic1`).
+`subscribe` creates the subscription, queue storage, and list node before it takes the fan-out lock. It splices the preallocated node into the list under the lock. Any thread can call `stats` or `close`. `close` marks the queue closed, unlinks its node, counts and clears its frames, and wakes a waiting pull under the lock. Destroy detached list nodes after unlocking. Destruction of the concrete subscription calls `close`.
+
+When the source goes away, `FrameFanout` closes and unlinks all remaining queues under the same lock. A waiting or later pull returns `kFeedClosed`. A later `close` sees the closed flag in its own queue block and returns. Subscription stats remain readable. The subscription uses its shared state and queue block throughout, so the source can disappear while a consumer waits (`ic2`, `ic5`).
+
+Use four local frame holders when evicting or clearing entries under the fan-out lock. Each open queue holds a suffix of admitted pushes because each push reaches every open queue and each removal takes the oldest frame. With capacity at most 4, the queues can contain at most four distinct frames when the operation starts. Use `receive_seq` to match references to the same frame. Move one reference per distinct frame into a holder before removing duplicate references. Release the holders after unlocking. This covers a push, `close_admission`, subscription close, and source teardown. A pull moves its frame out before unlocking. It builds any error result after unlocking (`ic8`).
+
+For the Mono8 profile, each queue retains at most `capacity × step × height` pending payload bytes. The feed and get image queues together hold at most five pending references. Those references cover at most four distinct payloads, or 5,349,888 bytes. Consumer-held frames add up to `step × height` each. Deferred release holders, DDS history, the in-flight callback, and SDK buffers can also hold payloads. Bring-up sets `buffer_count: 7` in `camera.yaml` at launch (`d10`, `d13`, `ic1`).
 
 ### Admission and loss reporting
 
 [A] Phase 1 sets driver `use_ros_time: true` and sets `use_sim_time: false` on the driver and application node. [F] The driver then stamps each frame after the transform and before publish. The stamp marks processing time. (`d20`, `ic6`, `driver:vimbax_camera/src/vimbax_camera.cpp:1745-1757`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:1605-1618`, `ros:ros2/rcl/rcl/src/rcl/time.c:62-72`, `ros:ros2/rcutils/src/time_unix.c:58-74`)
 
-`FrameFanout` owns the queues, the fan-out lock, admission, and counters (`ic3`, `ic7`). The source starts with admission closed and `current_epoch` zero. Only the controller worker opens admission. It does so before its start call, after matching and format checks, or before admission resumes after recovery (`d11`, `d17`, `d19`, `d22`). Under the lock, `open_admission` increments the epoch, reads the `CLOCK_REALTIME` boundary, stores `significant_bits`, and returns `EpochStart`. `close_admission` closes the gate and clears every queue. It adds each cleared frame to `frames_cleared` and leaves the subscriptions open.
+`FrameFanout` manages admission and source counters (`ic3`, `ic7`). The source starts with admission closed and `current_epoch` zero. Only the controller worker opens admission. For a project start, it opens admission after the match and format checks, before `stream_start`. If it keeps a driver restart after reconnect, it opens admission after profile verification (`d11`, `d17`, `d19`, `d22`). Under the lock, `open_admission` increments the epoch, reads the `CLOCK_REALTIME` boundary, stores `significant_bits`, and opens the gate. It returns `EpochStart`. Under the same lock, `close_admission` closes the gate and clears every queue. It counts each removed frame in `frames_cleared` and leaves the subscriptions open.
 
-The adapter forwards each converted message to `FrameFanout::on_message(owner, fields, pixels)` with the three epoch and identity fields initially zero. Tests inject the realtime and steady clocks. The fan-out applies these steps (`d11`, `d12`, `d20`, `ic3`, `ic7`).
+The private header `src/frame_support/frame_fanout.hpp` declares `FrameFanoutClock` and `FrameFanout` in `venimapping::camera::frame_support`. The clock provides `realtime_ns()` as `std::int64_t` and `steady_now()` as `std::chrono::steady_clock::time_point`. Construct `FrameFanout` with a `FrameFanoutClock&`. The clock must outlive `FrameFanout`. The adapter owns the production clock and the fake borrows the test clock (`ic7`).
 
-1. Increment `frames_received`. Assign the next `receive_seq`, including for a message that admission later discards.
-2. Read `CLOCK_REALTIME` and the steady clock once each.
-3. Build the frame with `ImageFrame::create` before taking the fan-out lock. If layout validation fails, count the discard in `discarded_layout`.
-4. If the stamp differs from the realtime read by more than 1 s, count the discard in `discarded_stamp_basis`.
-5. Under the fan-out lock, compare the stamp to the active boundary. If admission is closed or the stamp is at or below the boundary, count the discard in `discarded_admission`.
-6. Under the same lock, finish the unpublished frame with the epoch and bit depth. Push it to each open queue. Set `last_admitted` to the steady read. Increment `frames_admitted` before any pull can return the frame.
+`FrameFanout` exposes `subscribe(const SubscribeOptions&)`, `open_admission(std::uint8_t)`, `close_admission()`, and `stats() const` with the port signatures. Both sources forward these methods. Each source implements `matched_publishers()` itself. `FrameFanout` also exposes `set_transport_lost(std::optional<std::uint64_t>)` for the adapter's RMW event total.
 
-`receive_seq` never resets during the lifetime of the source. Opening a subscription and fan-out use the same lock. The first admitted push after the queue opens is eligible for get image (`d24`, `ic8`). The worker reads `last_admitted` on its 100 ms silence tick. The controller owns the silence threshold and recovery (`d22`). [A] A 1 s stamp check catches the observed device clock basis. A backward host clock step can delay admission until realtime passes the boundary or recovery opens a new epoch (P6, P9). (`docs/architecture/image-acquisition-planning/claude/camera/c1.md:123-143`)
+The adapter forwards each converted message to `void on_message(std::shared_ptr<const void> owner, ImageFrameFields fields, std::span<const std::byte> pixels)`. The fields `receive_seq`, `stream_epoch`, and `significant_bits` arrive as zero. The fake uses the same method. Keep the staging handle and the incoming frame's local reference outside the lock scope. A discard goes directly to step 7 (`d11`, `d12`, `d20`, `ic3`, `ic7`).
 
-Use separate counts for callback discards, queue evictions, clears, and RMW events (`d12`). `transport_lost` starts at zero when the RMW supports the event and stays empty when it does not. Phase 1 has no `stamp_gap_frames` or device stamp. The separate device stamp probe informs L1 (`d20`).
+1. Set `receive_seq = frames_received.fetch_add(1) + 1` on the source's zero-initialized `std::atomic<std::uint64_t>`.
+2. Read `steady_now()` for receipt time and the duration start. Read `realtime_ns()` for the stamp check.
+3. Stage the frame before taking the fan-out lock. If validation fails, count `discarded_layout`.
+4. If the stamp differs from the realtime read by more than 1 s, count `discarded_stamp_basis`.
+5. Under the fan-out lock, check admission. If admission is closed or the stamp is at or below the boundary, count `discarded_admission`.
+6. Otherwise, finish the unpublished block with the epoch and bit depth. Push the immutable frame to each open queue. Set `last_admitted` to the steady read. Increment `frames_admitted` before unlocking.
+7. Release local frame references outside the lock. Read `steady_now()` again. Add the elapsed nanoseconds to `callback_ns_total` with an atomic increment. If the duration exceeds `callback_ns_max`, use atomic compare-and-exchange to raise the maximum.
+
+Each message takes a sequence, including messages that the fan-out discards. The first value is 1 and the sequence never resets. `stats().frames_received` loads the same atomic and gives the last sequence assigned at that load. The duration fields start at zero. `callback_ns_max` is the longest measured interval and `callback_ns_total` is their sum. Concurrent stats reads use atomic loads for these aggregates and for discard counters written outside the lock. The duration covers fan-out work, lock wait, and deferred releases. Adapter conversion and ROS deserialization occur before this interval (`ic3`, `ic7`, `ic8`).
+
+The queue link orders `subscribe` against a push because both use the fan-out lock. Only pushes after the link reach the new queue. A callback can take its sequence before `subscribe` and push after the link. Its sequence can be at or below `frames_received` at the time of `subscribe`.
+
+For get image, the controller worker reads `R = stats().frames_received` for the request before it calls `subscribe`. The control plane skips each frame with `receive_seq <= R`. A qualifying frame has a push after the queue link and `receive_seq > R`. Capacity 1 can evict an earlier qualifying frame before the caller pulls. A test can pause the callback in its first `steady_now()` read to put a queue link between receipt and push (`d24`, `ic7`, `ic8`, `i12`).
+
+The worker reads `last_admitted` on its 100 ms silence tick. The controller owns the threshold and recovery (`d22`). [A] A 1 s stamp check catches the observed device clock basis. A backward host clock step can delay admission until realtime passes the boundary or recovery opens a new epoch (P6, P9). (`docs/architecture/image-acquisition-planning/claude/camera/c1.md:123-143`)
+
+Keep separate counts for callback discards, queue evictions, clears, and RMW events (`d12`). `transport_lost` starts at zero when the RMW supports `message_lost` and stays empty without event support. Phase 1 omits `stamp_gap_frames` and the device stamp. The separate device stamp probe informs L1 (`d20`).
 
 [F] The driver logs incomplete SDK frames and SDK frame ID gaps. CycloneDDS reports DDS sample loss through `message_lost`. It can overwrite an unread history entry without that event. (`driver:vimbax_camera/src/vimbax_camera.cpp:1724-1742`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:1595-1603`, `ros:ros2/rmw_cyclonedds/rmw_cyclonedds_cpp/src/rmw_node.cpp:3943-3955`, `ros:eclipse-cyclonedds/cyclonedds/src/core/ddsc/src/dds_rhc_default.c:854-875`)
 
-The counters cannot give the number of lost frames from incomplete receives, SDK buffer shortages, or reader history overwrites. They also cannot count unseen losses at epoch starts or in trigger mode (`d12`). An admission discard counts a message that reached the callback. A receive sequence gap at a consumer therefore does not measure camera loss.
+An admission discard counts a message that reached the callback. A consumer sequence gap measures a gap in delivery of numbered messages. Incomplete SDK receives, SDK buffer shortages, and unread DDS history overwrites can occur before sequence assignment. Loss before the first received frame of an epoch or in trigger mode can also go unseen (`d12`).
 
 ### VimbaX adapter and threads
 
-`VimbaXFrameSource::create(rclcpp::Node&, const std::string& camera_namespace)` returns `Expected<std::unique_ptr<VimbaXFrameSource>>`. The node outlives the adapter, which is neither copyable nor movable. The factory maps creation failures to `kSourceCreateFailed` (`ic2`, `ic5`).
+`VimbaXFrameSource::create(rclcpp::Node&, const std::string& camera_namespace)` returns `Expected<std::unique_ptr<VimbaXFrameSource>>`. The node outlives the adapter. The adapter forbids copy and move. The factory maps creation failures to `kSourceCreateFailed` (`ic2`, `ic5`).
 
-Create one `rclcpp::Subscription<sensor_msgs::msg::Image>` in the node's default callback group. Strip trailing slashes from `camera_namespace` and append `/image_raw`. [F] The gateway uses this namespace rule for its service names. (`d8`, `ic2`, `src/venimapping_camera/src/gateway_support/vimbax_service_calls.hpp:36-46`)
+If `camera_namespace` is empty, return `kSourceCreateFailed` before creating the ROS subscription. For a nonempty input, strip trailing slashes. Append `/image_raw`. Create one `rclcpp::Subscription<sensor_msgs::msg::Image>` in the default callback group. [F] The gateway rejects empty input and uses the same name rule for services. (`d8`, `ic2`, `src/venimapping_camera/src/vimbax_camera_gateway.cpp:21-25`, `src/venimapping_camera/src/gateway_support/vimbax_service_calls.hpp:36-46`)
 
 Fix QoS at BEST_EFFORT, KEEP_LAST 2, VOLATILE. Depth 2 gives the executor one extra unread sample before DDS can overwrite it. The project queue counts its own evictions. [F] The driver's RELIABLE, KEEP_LAST 10, VOLATILE publisher matches this reader. (`d9`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:354-357`, `ros:ros2/rmw/rmw/include/rmw/qos_profiles.h:51-62`, `ros:ros2/rmw_dds_common/rmw_dds_common/src/qos.cpp:114-124`)
 
 Keep v1's plain rclcpp reader for raw pixels. The bring-up filter selects only the raw plugin, so extra installed plugins cannot add image topics (`d8`, `ic6`). (`docs/architecture/image-acquisition-design-v1.md:377-389`, `ros:ros-perception/image_common/image_transport/src/publisher.cpp:112-155`)
 
-Parse `header.stamp` as `int64(sec) × 1,000,000,000 + nanosec`. The callback takes only `std::shared_ptr<const sensor_msgs::msg::Image>`. It passes layout, stamp, owner, and byte span to `FrameFanout` (`d20`, `ic7`). [A] Phase 1 needs only raw frames, so the adapter has no `CameraInfo` reader or pairing policy (`d15`, R11).
+Parse `header.stamp` as `int64(sec) × 1,000,000,000 + nanosec`. The callback takes only `std::shared_ptr<const sensor_msgs::msg::Image>`. It passes layout, stamp, owner, and byte span to `FrameFanout` (`d20`, `ic7`). [A] Phase 1 needs only raw frames. This sets the scope of the adapter's reader and leaves calibration pairing open (`d15`, R11).
 
-The adapter reports the matched publisher count from `get_publisher_count()`. It returns zero if that call fails. It registers a `message_lost` callback and records the RMW count. If event registration fails because the RMW lacks support, create the reader without the event (`d17`, `ic2`). (`ros:ros2/rclcpp/rclcpp/src/rclcpp/subscription_base.cpp:162-166,277-288`)
+The adapter reports the matched publisher count from `get_publisher_count()`. It returns zero if that call fails. It registers a `message_lost` callback and records the RMW total. If the RMW rejects event registration as unsupported, create the reader without the event (`d17`, `ic2`). (`ros:ros2/rclcpp/rclcpp/src/rclcpp/subscription_base.cpp:162-166,277-288`)
 
-The application runs one node and one `SingleThreadedExecutor` thread for gateway replies, image callbacks, and loss events. The controller uses a separate bound worker and never pulls a frame. Consumers wait on their own threads. `FrameSource` methods are safe from any thread. In phase 1, the worker owns subscriptions and admission. The callback only contends for the fan-out lock. Under the lock, it does no heap allocation, pixel copy, I/O, logging, or consumer work. Each admitted frame reaches every open queue before the callback returns (`d5`, `ic2`, `ic4`, `ic8`).
+The application runs one node and one `SingleThreadedExecutor` thread for gateway replies, image callbacks, and loss events. The controller uses a separate bound worker. Consumers wait on their own threads. `FrameSource` methods are safe from any thread. In phase 1, the worker owns subscriptions and admission. The callback only contends for the fan-out lock. Under the lock, it does no heap allocation or deallocation, pixel copy, I/O, logging, or consumer work. It completes every push before it returns (`d5`, `ic2`, `ic4`, `ic8`).
 
-During shutdown, keep the executor spinning until the controller closes admission, completes any required stop, and joins its worker. Then stop and join the executor before destroying the adapters and node. The feed probe measures callback time and gateway round-trip time while stopped and while streaming Mono8 at 69.7 Hz. If streaming adds more than 5 ms, the composition root passes a second node and executor to the adapter (`d5`, `ic4`, `ic7`).
+1. During shutdown, keep the executor spinning while the controller closes admission, completes any required stop, and joins its worker.
+2. Stop and join the executor.
+3. Destroy the adapters and node in the composition root's shutdown order (`ic4`).
+
+The feed probe reads the callback duration fields from source stats. It measures gateway round-trip time while stopped and while streaming Mono8 at 69.7 Hz. If streaming adds more than 5 ms to the median, the composition root passes a second node and executor to the adapter (`d5`, `ic4`, `ic7`). (`docs/architecture/image-acquisition-planning/claude/sections/testing.md:149-154`)
 
 ## 6. Control plane, policy layer, and error vocabulary
 
-Source: `claude/sections/control-plane.md` and `claude/sections/error-vocabulary.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label lines. v1 called the controller the policy layer. In v2, the control plane and the policy layer are one class, `AcquisitionController`. Open issues on 6.1: i10, i11, i13 to i18, i26, i27. Open issues on 6.2: i18, i23, i27.
+Source: `claude/sections/control-plane.md` and `claude/sections/error-vocabulary.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label lines. v1 called the controller the policy layer. In v2, the control plane and the policy layer are one class, `AcquisitionController`. Open issues on 6.1: i14, i15, i17, i18, i26. Open issues on 6.2: i14, i18.
 
 ### 6.1 Control plane
 
@@ -426,11 +486,15 @@ The control plane is the `AcquisitionController` class. It decides when the driv
 #### Inputs from the code
 
 1. `[F]` `CameraGateway` already has every call that the controller needs: `connection_status`, `stream_start`, `stream_stop`, and the enum, int, bool, and float feature getters and setters (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:35-110`). The controller adds no gateway method (d2).
-2. `[F]` The gateway does no readback, and a setter that times out can still apply (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:24-26`, `src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:49`).
-3. `[F]` Gateway calls block. They must come from the thread that called `bind_to_current_thread()`, and that thread must not spin the node (`src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:45-47`, `:63-64`).
-4. `[F]` `camera_status()` leaves `TriggerSelector` on its last value (`src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:69-71`). The controller never calls it in phase 1.
-5. `[F]` With `autostream: 0`, only a `stream_start` call and the reconnect restart start the stream (`src/venimapping_bringup/config/camera.yaml:12`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:588-593`).
-6. `[F]` A start while active and a stop while stopped succeed with no effect. A start or a stop in `kStarting` or `kStopping` returns -15, and no service resets that state (`driver:vimbax_camera/src/vimbax_camera.cpp:516-519`, `:582-585`).
+2. `[F]` Each feature getter and setter takes a `FeatureModule` argument (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:59-110`). The camera features are under `FeatureModule::kRemoteDevice` (`src/venimapping_camera/include/venimapping_camera/types/feature_module.hpp:15-21`).
+3. `[F]` The gateway does no readback, and a setter that times out can still apply (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:24-26`, `src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:49`).
+4. `[F]` Gateway calls block. They must come from the thread that called `bind_to_current_thread()`, and that thread must not spin the node (`src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:45-47`, `:63-64`).
+5. `[F]` The gateway sets one deadline for each call when the call starts. At the deadline, it removes the pending request and returns a `kGateway` timeout (`src/venimapping_camera/src/vimbax_camera_gateway.cpp:187-201`, `src/venimapping_camera/src/gateway_support/vimbax_service_calls.hpp:79-94`). A call is therefore bounded, but the controller cannot cancel it.
+6. `[F]` `camera_status()` leaves `TriggerSelector` on its last value (`src/venimapping_camera/include/venimapping_camera/vimbax_camera_gateway.hpp:69-71`). The controller never calls it in phase 1.
+7. `[F]` With `autostream: 0`, only a `stream_start` call and the reconnect restart start the stream (`src/venimapping_bringup/config/camera.yaml:12`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:588-593`).
+8. `[F]` A start while active and a stop while stopped succeed with no effect. A start or a stop in `kStarting` or `kStopping` returns -15, and no service resets that state (`driver:vimbax_camera/src/vimbax_camera.cpp:516-519`, `:582-585`).
+9. `[F]` The driver starts its frame processing thread before `CaptureStart` and `AcquisitionStart`, which can still fail (`driver:vimbax_camera/src/vimbax_camera.cpp:458-510`).
+10. `[F]` The `connected` service returns `camera_ != nullptr` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:1520-1527`). A new camera object starts in `kStopped` (`driver:vimbax_camera/include/vimbax_camera/vimbax_camera.hpp:317`).
 
 #### Public interface
 
@@ -438,6 +502,8 @@ Header `include/venimapping_camera/acquisition_controller.hpp`, target `venimapp
 
 ```cpp
 namespace venimapping::camera {
+
+namespace detail { class LeaseLink; }       // private, src/acquisition_support/lease_link.hpp
 
 struct AcquisitionProfile {                 // d18, values from the bringup file
   std::string pixel_format;                 // "Mono8"
@@ -457,6 +523,7 @@ struct ControllerOptions {
 
 struct FeedOptions {
   std::size_t capacity = 1;                 // 1 to 4 (d10)
+  std::chrono::milliseconds deadline{5000}; // caller deadline for feed_open
 };
 
 struct GetImageOptions {
@@ -464,14 +531,15 @@ struct GetImageOptions {
 };
 
 enum class StreamState : std::uint8_t {
-  kIdle, kStreaming, kOutage, kConnectionUnknown, kStalled, kWedged, kShutDown,
+  kIdle, kStreaming, kOutage, kConnectionUnknown, kStalled, kFaulted, kWedged, kShutDown,
 };
 
 struct ControllerStatus {
   StreamState state;
   std::uint32_t leases;
-  std::uint32_t epoch;                      // last EpochStart::epoch, 0 before the first
-  std::optional<Error> last_error;          // last gateway or acquisition failure
+  std::uint32_t epoch;                          // last EpochStart::epoch, 0 before the first
+  std::optional<Error> last_error;              // first error of the last failed operation
+  std::optional<Error> last_reconciliation;     // error of the last reconciliation stop, empty on success
 };
 
 class Feed final {                          // move-only, ic2
@@ -483,6 +551,10 @@ class Feed final {                          // move-only, ic2
   [[nodiscard]] Expected<std::optional<ImageFrame>> try_take();
   void close() noexcept;
   [[nodiscard]] FrameSubscriptionStats stats() const;
+
+ private:
+  std::unique_ptr<FrameSubscription> subscription_;   // sole owner, ic2 Feed item 1
+  std::shared_ptr<detail::LeaseLink> link_;           // lease release and shutdown close
 };
 
 class AcquisitionController final {
@@ -497,8 +569,9 @@ class AcquisitionController final {
   // Starts the worker. The worker runs init first. Returns the init result.
   [[nodiscard]] Expected<void> start(WorkerInit init);
 
-  // Idempotent. Any thread. Returns after the worker has joined.
+  // Idempotent. Any thread except the worker. Returns after the worker has joined.
   void shutdown() noexcept;
+  ~AcquisitionController();                 // runs shutdown()
 
   [[nodiscard]] Expected<Feed> feed_open(const FeedOptions& options);
   [[nodiscard]] Expected<ImageFrame> get_image(const GetImageOptions& options);
@@ -510,10 +583,11 @@ class AcquisitionController final {
 
 1. The controller is pinned. It is not copyable and not movable, like `CameraGateway` (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:29-32`).
 2. `create` takes references. The composition root keeps the gateway and the frame source alive until the controller is destroyed (ic4).
-3. `WorkerInit` lets the composition root bind the gateway thread without a ROS type in this header. The root passes `[&gw] { return gw.bind_to_current_thread(); }`.
-4. `feed_open`, `get_image`, `status`, and `shutdown` are safe from any thread. A request that comes before `start` waits in the worker queue. A request after `shutdown` returns `kFeedClosed`.
-5. A `Feed` can outlive the controller. It then acts as a closed subscription (ic2 rule 7), and its lease release does nothing.
-6. `status()` is how a consumer sees an outage, a stall, or a wedge. `take` stays empty in those states (d22, R14).
+3. `WorkerInit` lets the composition root bind the gateway thread without a ROS type in this header. The root passes `[&gw] { return gw.bind_to_current_thread(); }` (i29).
+4. `feed_open`, `get_image`, `status`, and `shutdown` are safe from any thread, with the worker exception for `shutdown` in "Lifecycle and shutdown".
+5. `Feed` keeps the ic2 rule: it owns its `FrameSubscription` alone. The `LeaseLink` gives the worker a safe close path. See "Subscription ownership".
+6. A `Feed` can outlive the controller. It then acts as a closed subscription (ic2 rule 7), and its lease release does nothing.
+7. `status()` is how a consumer sees an outage, a stall, a fault, or a wedge. `take` stays empty in those states (d22, R14).
 
 #### Threads
 
@@ -521,75 +595,188 @@ The controller follows ic4. It adds no thread beyond the worker.
 
 | Thread | Runs in the controller | Never does |
 |---|---|---|
-| Controller worker | The request queue, all gateway calls, all `FrameSource` calls, the 100 ms tick | `take` or `try_take` |
-| Caller of `feed_open` or `get_image` | Posts a request, waits on a future. In `get_image`, it also runs `take` on the get image subscription | Gateway calls, `FrameSource` calls |
-| Any thread | `Feed::close`, `status`, `shutdown` | Blocks on a gateway call |
+| Controller worker | The request queue, all gateway calls, all `FrameSource` calls, the 100 ms tick, the shutdown steps | `take` or `try_take`, `shutdown()` |
+| Caller of `feed_open` or `get_image` | Posts a request and waits on its request state until the deadline. In `get_image`, it also runs `take` on the get image subscription | Gateway calls, `FrameSource` calls |
+| Any other thread | `Feed::close`, `status`, `shutdown` | A gateway call |
 
 1. The worker is the only gateway caller (d5 item 2, d16). Every stream and feature call is therefore serial. A second start or a feature write cannot race a stop.
 2. The worker waits on one condition variable with a timeout to the next tick. A request wakes it at once.
-3. `[A]` Each in-process gateway call takes a few milliseconds. The CLI value of 586.6 ms per call includes process start and discovery (c1 §3.5 item 4), so it does not apply. The feed probe records the in-process value.
+3. `shutdown()` waits for the worker join. The worker finishes its pending gateway call first, so the wait is bounded by about three gateway timeouts: the pending call, the stop, and one reconciliation stop.
+4. `[A]` Each in-process gateway call takes a few milliseconds. The CLI value of 586.6 ms per call includes process start and discovery (c1 §3.5 item 4), so it does not apply. The feed probe records the in-process value.
+
+#### Requests and deadlines
+
+Each `feed_open` and each `get_image` makes one request state. The caller and the worker share it through a `std::shared_ptr`.
+
+| Field | Meaning |
+|---|---|
+| `deadline` | One absolute steady-clock time: the call time plus `FeedOptions::deadline` or `GetImageOptions::deadline` |
+| `outcome` | `kPending`, `kDelivered`, or `kAbandoned`. One mutex guards it, and one condition variable signals it |
+| `result` | The `Feed` and, for get image, the value `R`. Or an error |
+
+1. Only one transition leaves `kPending`. The side that makes it owns the cleanup.
+2. The worker delivers with `kPending` to `kDelivered`. After that, the caller owns the `Feed` and its lease.
+3. The caller abandons at the deadline with `kPending` to `kAbandoned`, and returns `kDeadlinePassed`.
+4. The worker also abandons a request whose deadline has passed when it checks. The caller then wakes and returns `kDeadlinePassed`.
+5. If the worker cannot deliver because the request is `kAbandoned`, it destroys the `Feed` that it built. The `Feed` destructor closes the subscription and posts the lease release. The worker handles that release in its next loop.
+
+The worker checks the outcome and the deadline at these points. At each point, an abandoned or expired request stops before the next gateway or `FrameSource` call:
+
+1. When it takes the request from the queue. An expired request gets no `subscribe` and no gateway call.
+2. Before the first readback, before the corrective writes, and before the second readback.
+3. Before each 10 ms match poll.
+4. Before `open_admission` and before `stream_start`.
+
+A gateway call that has started always runs to its end, because the gateway has no cancel (input 5). After a `stream_start` that started, the worker runs the release rules in "Leases and the stream lifecycle". If `stream_start` failed, the failure recovery runs first (d19).
+
+`[A]` `FeedOptions::deadline` is 5000 ms. The in-process cold path is 8 reads, up to 8 writes, 8 more reads, the match wait, and `stream_start`. At a few milliseconds per call, this is less than 500 ms. With a 2000 ms gateway timeout and a camera that does not answer, the path without a deadline is about 50 s (N4). What depends on it: the `FeedOpenDeadline` test and the `kDeadlinePassed` row.
+
+#### Lifecycle and shutdown
+
+| Lifecycle point | New request | Queued request |
+|---|---|---|
+| After `create`, before `start` | Waits in the queue | Runs after `start`. If its deadline passes first, the caller returns `kDeadlinePassed` |
+| `start`, and `WorkerInit` fails | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
+| Running | Normal rules | Normal rules |
+| `shutdown()` has started | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
+| After `shutdown()` | `kFeedClosed` at once | None |
+
+`start(init)`:
+
+1. Starts the worker. The worker runs `init` first and gives its result to `start`.
+2. If `init` fails, the worker completes each queued request with `kFeedClosed` and exits. `start` joins the worker and returns the init error. The state becomes `kShutDown`.
+3. A second `start` call returns `kInvalidArgument` and changes nothing.
+
+`shutdown()` sets the shutdown flag, wakes the worker, and joins it. The worker does each gateway step, because only it may call the gateway (input 4). The worker steps, in ic4 stop order step 1:
+
+1. Stop the request that runs at its next check point. Complete it and each queued request with `kFeedClosed`.
+2. Close each live subscription through its `LeaseLink`. A waiting `take` in a `Feed` or in a `get_image` caller returns `kFeedClosed` at once.
+3. Call `close_admission()`.
+4. If the stop is not confirmed, call `stream_stop()`. If it fails, make one reconciliation stop (d19 item 2). Record each error in `status()`. Do not enter `kWedged`.
+5. Mark the request queue as closed. Exit. The state becomes `kShutDown`.
+
+Rules for the thread that runs shutdown:
+
+1. The destructor runs `shutdown()`. A request state is shared, so a caller that waits during destruction wakes with `kFeedClosed` and uses no freed memory.
+2. A call to `shutdown()` from the worker thread can only come from `WorkerInit`. It sets the flag and returns with no join. The worker exits after `init` returns. A join from the worker would wait for its own thread.
+3. The controller must not be destroyed on the worker thread. This is a program error, and a debug assertion catches it.
+
+#### Subscription ownership
+
+`Feed` owns its `std::unique_ptr<FrameSubscription>` alone, as ic2 `Feed` item 1 states. The worker never owns a subscription that it has delivered.
+
+`detail::LeaseLink` is a small shared block. The `Feed` and the worker each hold a `std::shared_ptr` to it. It holds:
+
+1. A mutex.
+2. A non-owning `FrameSubscription*`, set when the worker builds the `Feed`.
+3. A `std::shared_ptr` to the worker request queue, which has a closed flag. This lets a release outlive the controller.
+4. The lease kind: feed or get image.
+
+Rules:
+
+1. `Feed::close()` locks the link, calls `FrameSubscription::close()`, and sets the pointer to null. It then posts the lease release to the queue and returns. It does not wait for `stream_stop` (ic2 `Feed` item 3).
+2. The `Feed` destructor runs `close()` before it destroys the `unique_ptr`. The pointer in the link is therefore null before the subscription object goes away.
+3. Shutdown step 2 locks each link and calls `close()` through a pointer that is not null. The lock makes this safe against a concurrent `Feed` destructor.
+4. A move of `Feed` moves the `unique_ptr`, not the subscription object, so the pointer in the link stays valid.
+5. A release posted to a closed queue does nothing. A `Feed` that outlives the controller therefore releases safely.
+6. `[F]` `FrameSubscription::close()` is idempotent and safe from any thread, also after the source is gone (ic2 rules 5 and 7, `docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:104-106`).
+
+The get image path uses the same `Feed` type inside the controller, with capacity 1. The caller holds it during its take loop and destroys it before the return. So both lease kinds have one owner at a time, and ic2 needs no change.
+
+#### Stream states and new requests
+
+The worker keeps one more fact besides the state: whether the stop is confirmed. A stop is confirmed after a successful `stream_stop` reply. It stops being confirmed at each `stream_start` call, at each reconnect, and when the no-user check sees frames.
+
+| State | Driver stream and admission | Rule for a new `feed_open` or `get_image` |
+|---|---|---|
+| `kIdle` | No lease. Stop confirmed or not. Admission closed | Run the start sequence |
+| `kStreaming` | Running. Admission open. Includes a linger with no lease | Attach |
+| `kOutage`, `kConnectionUnknown` | Unknown. Admission closed, or open and waiting for the first frame after a reconnect | Attach. `feed_open` returns the `Feed` at once. `get_image` waits for a frame until its deadline |
+| `kStalled` | The one stop and start cycle ran. Admission open. No frames | Attach |
+| `kFaulted` | Leases exist. A recovery start sequence failed before `stream_start`, or failed at `stream_start` with a successful reconciliation stop. Admission closed | Run the start sequence. This is the retry point. A failure goes to the request, and the state stays `kFaulted` |
+| `kWedged` | Unknown. Admission closed | `kStreamWedged` with no gateway call (d19 item 3) |
+| `kShutDown` | | `kFeedClosed` |
+
+"Attach" means: read `R` for a get image, call `subscribe`, take the lease, and deliver. It makes no gateway call. The request then waits on its queue with the other leases.
+
+1. Attach in `kOutage` and `kConnectionUnknown` follows d22 item 4: the feed stays open, and `take` returns empty. An open feed and a new feed see the same thing. `status()` shows the state.
+2. Attach in `kStalled` follows d22 item 8: continued silence gets no more action. Each request does not start a new cycle, because that would repeat stop and start calls on a stalled driver.
+3. The worker is serial. A request that arrives during a reconnect step or a d19 recovery waits in the queue. Its deadline still runs.
+4. In phase 1, the controller allows one open feed and one outstanding get image. A second request of the same kind returns `kRequestBusy` with no gateway call (d13 item 4).
 
 #### Leases and the stream lifecycle
 
 Each open `Feed` and each outstanding `get_image` holds one lease (d16). The worker keeps the count.
 
-1. When the count goes from 0 to 1, the worker runs the start sequence in the next subsection.
-2. When the count goes from 1 to 0 and `linger` is 0, the worker calls `close_admission()` and then `stream_stop()` (ic3 item 4.3).
-3. If `linger` is more than 0, the worker keeps the stream and admission open for that time. A new lease in that time uses the running stream. At the end, step 2 runs (d25).
-4. In phase 1, the controller allows one open feed and one outstanding get image. A second request of the same kind returns `kRequestBusy` with no gateway call (d13 item 4).
-5. A lease request in `kWedged` returns `kStreamWedged` with no gateway call (d19 item 3).
+1. When the count goes from 0 to 1 in `kIdle`, the worker runs the start sequence.
+2. When the count goes from 1 to 0 and `linger` is 0, the worker calls `close_admission()`. If the stop is not confirmed, it then calls `stream_stop()`. A failed stop goes to the failure recovery. On success, the state becomes `kIdle`.
+3. If `linger` is more than 0, the worker keeps the stream and admission open for that time. A new lease in that time attaches. At the end, step 2 runs (d25).
+4. Last release in `kOutage` or `kConnectionUnknown`: the worker calls `close_admission()`, stops the poll, and enters `kIdle`. It makes no stream call, because the camera may be unreachable. The stop stays unconfirmed. The no-user check catches a later driver restart (d22 item 9).
+5. Last release in `kFaulted`: step 2 runs. If the stop is already confirmed, the worker makes no gateway call. The state becomes `kIdle`.
+6. Last release in `kWedged`: no gateway call. The state stays `kWedged`.
 
 `feed_open(options)` on the worker:
 
-1. Check the state and the busy rule.
+1. Apply the check points and the state rule.
 2. Call `FrameSource::subscribe({options.capacity})`. A bad capacity returns `kInvalidArgument` from the data plane (ic2).
-3. Take the lease. If the stream already runs with admission open, return the `Feed` at once (d17 item 3).
-4. If not, run the start sequence. On success, return the `Feed`. On failure, close the subscription, release the lease, and return the error.
-
-`Feed::close()` calls `FrameSubscription::close()`, which clears the queue and wakes a waiting `take`. It then posts the lease release to the worker and returns. It does not wait for `stream_stop` (ic2).
-
-`[A]` `feed_open` has no caller deadline in phase 1. Each gateway call has the gateway timeout, so the wait is bounded by the sum of the call timeouts and the 1000 ms match limit. See `draft-notes.md`.
+3. Build the `Feed` and take the lease.
+4. Attach, or run the start sequence. On success, deliver the `Feed`. On failure, destroy the `Feed` and give the error to the request.
 
 #### Start sequence
 
-The worker runs these steps before each `stream_start` that it makes. The steps implement d17, d18, d19, and ic3 item 4.1.
+The worker runs these steps before each `stream_start` that it makes. The steps implement d17, d18, d19, and ic3 item 4.1. Each feature call uses `FeatureModule::kRemoteDevice`.
 
-1. Read back the profile. See the next subsection.
-2. If a value differs, write the profile values and read back again (d18 items 5 and 6).
-3. If `PixelFormat` is not in `profile.allowed_formats`, return `kFormatNotStreamable`. Make no `stream_start` call (d19 item 1). This check comes before the mismatch check, because a wrong format wedges the driver (c1 §3.1 item 2).
-4. If another value still differs, return `kProfileMismatch` (d18 item 6).
-5. Poll `FrameSource::matched_publishers()` every 10 ms. If it stays 0 for 1000 ms, return `kSubscriptionNotMatched` (d17 item 2).
-6. Call `open_admission(significant_bits)`. The value is 8 for `Mono8` and 12 for `Mono12`, from the readback in step 1 (d14). Record the returned epoch and the steady time of the call.
-7. Call `stream_start()`.
-8. If step 7 fails or times out, run the failure recovery in "Start and stop failure recovery".
+1. Read back the profile. See "Configuration order and readback".
+2. If a value differs:
+   1. If the stop is not confirmed, call `stream_stop()`. A failure goes to the failure recovery. This keeps each corrective write on a stopped stream (d18 items 5 and 7).
+   2. Write the values that differ, in the d18 order.
+   3. Read back again.
+3. Call the last readback the final readback. It is the second readback if step 2 ran, else the first.
+4. If the final `PixelFormat` is not in `profile.allowed_formats`, return `kFormatNotStreamable`. Make no `stream_start` call (d19 item 1). This check comes before the mismatch check, because a wrong format wedges the driver (c1 §3.1 item 2).
+5. If another value in the final readback still differs, return `kProfileMismatch` (d18 item 6).
+6. Poll `FrameSource::matched_publishers()` every 10 ms. If it stays 0 for 1000 ms, return `kSubscriptionNotMatched` (d17 item 2).
+7. Call `open_admission(significant_bits)`. The value is 8 for `Mono8` and 12 for `Mono12`, from the final `PixelFormat` (d14). Record the returned epoch and the steady time of the call.
+8. Call `stream_start()`. The stop is no longer confirmed.
+9. If step 8 fails or times out, call `close_admission()` at once. It clears each queue. Then run the failure recovery.
 
-`[F]` The first frame arrives about 79 ms before the `stream_start` reply at Mono8 (c1 §3.5 item 2). Admission opens in step 6, so those frames reach the queue. A reader made after the reply misses 3 to 5 frames (c1 §3.5 item 3).
+`[F]` The first frame arrives about 79 ms before the `stream_start` reply at Mono8 (c1 §3.5 item 2). Admission opens in step 7, so those frames reach the queue. A reader made after the reply misses 3 to 5 frames (c1 §3.5 item 3).
 
-`[F]` The idle subscription stays matched for the life of the `FrameSource` (d25). On a warm system, step 5 ends at the first poll.
+`[F]` A failed start can admit frames before the error, because the driver runs frame processing before the acquisition command (input 9). Step 9 removes them, so a feed that stays open never gets a frame from a failed epoch.
+
+`[F]` The idle subscription stays matched for the life of the `FrameSource` (d25). On a warm system, step 6 ends at the first poll.
+
+A start sequence that fails at step 4, 5, or 6 made no `stream_start` call. The worker returns the error to the request that caused the sequence. If the sequence ran for a recovery with no request, the worker records the error in `status().last_error` and enters `kFaulted`. Admission stays closed.
 
 #### Configuration order and readback
 
 Bring-up loads the phase 1 profile through the driver `settings_file` on each open and reopen (d18 item 1). The controller does not trust the load. `[F]` A failed load only logs an error (`driver:vimbax_camera/src/vimbax_camera_node.cpp:390-400`).
 
-Readback, in this order (d18 item 3):
+Readback, in this order (d18 item 3). Each call passes `FeatureModule::kRemoteDevice`:
 
 | Step | Gateway call | Compare with |
 |---|---|---|
-| 1 | `feature_enum_get("PixelFormat")` | `profile.pixel_format` |
-| 2 | `feature_int_get("Width")` | `profile.width` |
-| 3 | `feature_int_get("Height")` | `profile.height` |
-| 4 | `feature_enum_set("TriggerSelector", "FrameStart")` | Write only |
-| 5 | `feature_enum_get("TriggerMode")` | `profile.trigger_mode` |
-| 6 | `feature_bool_get("AcquisitionFrameRateEnable")` | `profile.frame_rate_enable` |
-| 7 | `feature_float_get("AcquisitionFrameRate")` | `profile.frame_rate_hz`, within 0.001 |
-| 8 | `feature_float_get("ExposureTime")` | `profile.exposure_time_us`, within 0.001 |
+| 1 | `feature_enum_get("PixelFormat", kRemoteDevice)` | `profile.pixel_format` |
+| 2 | `feature_int_get("Width", kRemoteDevice)` | `profile.width` |
+| 3 | `feature_int_get("Height", kRemoteDevice)` | `profile.height` |
+| 4 | `feature_enum_set("TriggerSelector", "FrameStart", kRemoteDevice)` | Write only |
+| 5 | `feature_enum_get("TriggerMode", kRemoteDevice)` | `profile.trigger_mode` |
+| 6 | `feature_bool_get("AcquisitionFrameRateEnable", kRemoteDevice)` | `profile.frame_rate_enable` |
+| 7 | `feature_float_get("AcquisitionFrameRate", kRemoteDevice)` | `profile.frame_rate_hz`, within 0.001 |
+| 8 | `feature_float_get("ExposureTime", kRemoteDevice)` | `profile.exposure_time_us`, within 0.001 |
 
 1. `[F]` `TriggerMode` applies to the current `TriggerSelector`, and `camera_status()` moves the selector (facts 1.5.7, c2 §3.3 item 5). Step 4 makes the read in step 5 target `FrameStart`.
-2. `[F]` `TriggerSelector` is writable during acquisition (c2 §3.3 item 7). Step 4 is therefore safe after a driver restart, when the stream already runs.
-3. `[A]` The float tolerance is 0.001. c3 read back 30.000001907348633 Hz after a write of 30.0 (c3 §3 item 3).
-4. A read that fails returns its error unchanged. The worker then releases the lease.
+2. `[A]` The float tolerance is 0.001. c3 read back 30.000001907348633 Hz after a write of 30.0 (c3 §3 item 3).
+3. A read that fails returns its error unchanged. The worker then destroys the request `Feed`, which releases the lease. In a recovery with no request, the error goes to `status().last_error`. The reconnect path then follows its step 3. Other recoveries enter `kFaulted`.
 
-Corrective writes, in this order, only while the stream is stopped (d18 items 5 and 7):
+The selector write during a stream (i11):
+
+1. After a reconnect, the driver can restart the stream before the readback (`driver:vimbax_camera/src/vimbax_camera_node.cpp:556-568`, `:579-593`). So readback step 4 can run during a stream.
+2. `[F]` `TriggerSelector` is writable during acquisition. The camera accepted the selector write while it streamed (c2 §3.3 item 7).
+3. `[F]` During both c2 streams, the runner `status` calls moved the selector many times. `TriggerMode` under `FrameStart` did not change (c2 §5 item 9).
+4. The section therefore uses the amended d18 item 7: "Phase 1 writes no acquisition value during a stream. The `TriggerSelector` write before a `TriggerMode` read is allowed."
+5. A confirmed stop before each reconnect readback would always discard the driver restart that d22 item 5 keeps. Admission stays closed until the readback matches, so no frame with an unverified profile reaches a queue.
+
+Corrective writes, in this order, only after a confirmed stop (d18 items 5 and 7). Each write passes `FeatureModule::kRemoteDevice`:
 
 1. `PixelFormat`, `Width`, `Height`.
 2. `TriggerSelector` = `FrameStart`, then `TriggerMode`.
@@ -597,9 +784,15 @@ Corrective writes, in this order, only while the stream is stopped (d18 items 5 
 4. `AcquisitionFrameRate`.
 5. `ExposureTime`.
 
-The worker writes only the values that differ. `[F]` `AcquisitionFrameRate` is read only until `AcquisitionFrameRateEnable` is true (c1 §3.6 item 2, c3 §3 item 2), so the enable comes first. `[F]` `PixelFormat`, `Width`, and `TriggerMode` are read only while streaming (c1 §3.6). A write failure does not stop the sequence. The second readback decides the result.
+The worker writes only the values that differ. `[F]` `AcquisitionFrameRate` is read only until `AcquisitionFrameRateEnable` is true (c1 §3.6 item 2, c3 §3 item 2), so the enable comes first. `[F]` `PixelFormat`, `Width`, and `TriggerMode` are read only while streaming (c1 §3.6).
 
-Phase 1 makes no write of an acquisition value during a stream (d18 item 7). The selector write in readback step 4 is the only write during a stream. It changes no acquisition value.
+Write results:
+
+1. A write error does not stop the sequence. The second readback decides the result, because a setter that times out can still apply (input 3).
+2. The worker keeps the first write error in `status().last_error`. It does not return it.
+3. If the second readback matches, the sequence continues with no error.
+4. If a value still differs, the result is `kFormatNotStreamable` or `kProfileMismatch`. The text names the value and the write error.
+5. If a read in the second readback fails, that read error returns unchanged.
 
 #### Get image
 
@@ -607,34 +800,36 @@ Phase 1 makes no write of an acquisition value during a stream (d18 item 7). The
 
 On the caller thread:
 
-1. Compute `deadline = steady_now + options.deadline`.
-2. Post the request to the worker. Wait on its future until `deadline`.
-3. If the future gives an error, return it.
-4. If the future gives the subscription and the value `R`, call `take(deadline - now)` in a loop. Skip each frame with `receive_seq <= R`. Return the first other frame.
-5. If the deadline passes in step 2 or step 4, return `kDeadlinePassed`.
-6. In each case, close the subscription and post the lease release before the return.
+1. Make the request state with `deadline = steady_now + options.deadline`. Post it to the worker.
+2. Wait on the request state until it leaves `kPending` or the deadline passes.
+3. At the deadline, try the transition to `kAbandoned`. If it succeeds, return `kDeadlinePassed`.
+4. If the worker delivered an error, return it.
+5. If the worker delivered the `Feed` and `R`, call `take(deadline - now)` in a loop. Skip each frame with `receive_seq <= R`. Return the first other frame.
+6. If `take` returns empty at the deadline, return `kDeadlinePassed`. If it returns `kFeedClosed`, return `kFeedClosed`.
+7. Destroy the `Feed` before each return. This closes the subscription and posts the lease release.
+
+The `take` result decides the race between a late frame and the deadline. A frame that `take` returns is the answer, even if the clock passed the deadline during the wake-up. A recheck after `take` would discard a valid frame and change no deadline bound.
 
 On the worker:
 
-1. Check the state and the busy rule.
+1. Apply the check points and the state rule.
 2. Read `R = frames.stats().frames_received`.
-3. Call `subscribe({1})` and take the lease (d10 item 3, d28).
-4. If the stream runs with admission open, give the subscription and `R` to the caller.
-5. If not, run the start sequence. Then give the subscription and `R` to the caller.
+3. Call `subscribe({1})`, build the `Feed`, and take the lease (d10 item 3, d28).
+4. Attach, or run the start sequence. Then deliver the `Feed` and `R`.
 
-Freshness (d24):
+Freshness (d24, as amended in i12):
 
-1. The get image queue opens after the request. Each frame in it was pushed after the queue opened.
-2. `[A]` `receive_seq` equals `frames_received` after its increment, so `R` is the sequence of the last message that existed at the request. A message that a callback held before the fan-out lock can still reach the new queue. Step 4 on the caller thread skips it.
-3. The queue has capacity 1 and drops the oldest frame. If several frames arrive before the caller takes, the caller gets the newest one. Each frame in the queue meets R6, "received after the request".
-4. `[F]` A frame received after the request can have been exposed before it (facts A68). Phase 1 accepts this (R6). L4 asks Logan.
+1. The answer is a frame that the fan-out pushed to the get image subscription after it opened, with `receive_seq` greater than `frames_received` at the request.
+2. `[F]` `receive_seq = frames_received.fetch_add(1) + 1`, and `stats().frames_received` loads the same atomic (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:124`, `:132`). So `R` is the last sequence that existed at the request.
+3. `[F]` A callback can take its sequence before `subscribe` and push after the queue link (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:134`). Caller step 5 skips that frame.
+4. The queue has capacity 1 and drops the oldest frame. If several frames arrive before the caller takes, the caller gets the newest one. Each one meets R6, "received after the request".
+5. `[F]` A frame received after the request can have been exposed before it (facts A68). Phase 1 accepts this (R6). L4 asks Logan.
 
 Deadline and stop (d26):
 
-1. The deadline covers the lease, the readback, the format check, the match, `stream_start`, and the first frame.
+1. The deadline covers the queue wait, the lease, the readback, the writes, the format check, the match, `stream_start`, and the first frame.
 2. The `stream_stop` after delivery is outside it. A cold call returns before the stop ends.
-3. If the caller leaves at the deadline, the worker finishes its pending gateway call. It then sees that the caller left, closes the subscription, and releases the lease itself.
-4. A failed stop goes to the failure recovery. The worker is serial, so the next request waits until the recovery ends (d26 item 6).
+3. A failed stop goes to the failure recovery. The worker is serial, so the next request waits until the recovery ends (d26 item 6).
 
 Expected times at the 30 Hz profile:
 
@@ -648,24 +843,33 @@ Phase 1 has no software trigger (d23, d27). The `TriggerSoftware` path and `kTri
 
 #### Start and stop failure recovery
 
-This subsection implements d19.
+This subsection implements d19. The worker keeps two results apart: the first error, from the call that failed, and the reconciliation result.
 
-1. If `stream_start` or `stream_stop` fails or times out, the worker calls `stream_stop()` one time to reconcile.
-2. If the first failure was -3, the camera is not reachable. The worker skips the reconciliation stop and goes to the outage rules.
-3. If the reconciliation stop succeeds, the worker returns the first error unchanged. The state becomes `kIdle`, and the lease is released.
-4. If the reconciliation stop returns -15, fails another way, or times out, the state becomes `kWedged`. The request that started the recovery returns `kStreamWedged`.
-
-In `kWedged`:
-
-1. The worker calls `close_admission()`. Open feeds stay open, and `take` returns empty.
-2. Each lease request returns `kStreamWedged` with no gateway call.
-3. The error text tells the operator to restart the driver process. The project does not restart it (d19 item 4).
-4. The worker calls `connection_status()` every 250 ms. A result other than `true` marks the driver as gone. The first `true` after that counts as a reconnect or a driver restart.
-5. After that, the worker clears `kWedged`. With no users, it calls `stream_stop()` and enters `kIdle`. With users, it follows the reconnect steps in the next subsection (d19 item 5).
+1. If a `stream_start` or a `stream_stop` fails or times out, the worker calls `close_admission()` and records the first error in `status().last_error`. This covers the start sequence, the last release, the no-user stop, the stall cycle, the reconnect paths, and the confirmation stop in `kWedged`.
+2. If the first error is -3, the camera is not reachable. The worker skips the reconciliation stop and goes to the outage rules.
+3. Else, the worker calls `stream_stop()` one time to reconcile.
+4. If the reconciliation stop succeeds, the stop is confirmed. `status().last_reconciliation` is empty. The request that caused the recovery gets the first error unchanged. The state becomes `kIdle` with no lease, or `kFaulted` with a lease.
+5. If the reconciliation stop returns -15, fails another way, or times out, the worker records that error in `status().last_reconciliation`. The state becomes `kWedged`. The request gets `kStreamWedged`. Its text names the first error and the reconciliation error.
 
 `[F]` Each error return in `start_streaming` leaves `kStarting`, and each one in `stop_streaming` leaves `kStopping` (facts 1.4.1, 1.4.2). `[F]` `status.streaming` is false in `kStopping` (`driver:vimbax_camera/src/vimbax_camera.cpp:1508-1513`), so a `status` test misses that wedge. The reconciliation stop catches both states.
 
-`[A]` A disconnect and a driver restart each last more than 250 ms, so the poll sees the "gone" result.
+A first error of -15 with a successful reconciliation stop means that the driver left the transitional state between the two calls. For example, a reconnect made a new camera object in `kStopped` (input 10). The stream is now stopped, so the request gets -15, and a retry is safe.
+
+In `kWedged`:
+
+1. Admission is closed. Open feeds stay open, and `take` returns empty.
+2. Each lease request returns `kStreamWedged` with no gateway call.
+3. The error text tells the operator to restart the driver process. The project does not restart it (d19 item 4).
+4. The worker calls `connection_status()` every 250 ms, with or without leases.
+5. A change signal is a poll result other than `true`, followed by `true`. The result other than `true` can be `false`, -3, or a gateway error.
+6. At a change signal, the worker makes one confirmation `stream_stop()`.
+7. If the confirmation stop succeeds, the driver stream is stopped on the current camera object. The worker clears `kWedged`, and the stop is confirmed.
+8. If it returns -15 or fails another way, the state stays `kWedged`. The worker waits for the next change signal.
+9. After the clear, with no lease, the state becomes `kIdle`. With leases, the worker runs the start sequence, which reads back and waits for a match before `open_admission` (d19 item 5). A failure there gives `kFaulted`.
+
+A poll error alone never clears `kWedged`. A gateway timeout on a live driver followed by `true` gives a change signal, but the confirmation stop then returns -15 on the live wedge. Only a successful stop clears the state. This is direct evidence, because no service resets a wedge (input 8).
+
+`[A]` A disconnect and a driver restart each last more than 250 ms, so the poll sees a result other than `true`. If a restart is faster, the wedge stays until the next change signal. The cost is a longer `kWedged`, not a wrong clear.
 
 #### Silence, outage, and reconnect
 
@@ -684,42 +888,33 @@ This subsection implements d22 and ic3 items 4 and 5. It runs while a lease exis
 
 `[F]` No ROS event reports a disconnect, and each camera service returns -3 while the camera is unavailable (facts 1.9.2, 1.9.5).
 
-In `kOutage` and `kConnectionUnknown`, feeds stay open and `take` returns empty (R14, L9). A `get_image` waits until its deadline and returns `kDeadlinePassed`. `status()` shows the state.
-
-When the poll returns `true`:
+When the poll returns `true`, the reconnect path runs. The stop is not confirmed, because the driver can restart the stream.
 
 1. `[F]` The driver reopens the camera, loads `settings_file`, and then restarts a stream that was active or starting at the disconnect (facts 1.9.6, 1.9.7). The driver ignores the restart result.
-2. The worker reads back the profile.
-3. If all values match, the worker calls `open_admission()`. The source admits only frames with `host_stamp_ns` greater than the new boundary (d22 item 6, ic3).
-4. If a value differs, the worker calls `stream_stop()`, writes the profile, and reads back. It then runs the start sequence from step 3. That sequence opens admission before `stream_start`.
-5. If no frame is admitted within one more threshold, the worker calls `stream_start()` one time. A failure goes to the failure recovery (d22 item 7).
-6. On the first admitted frame, the state becomes `kStreaming`.
+2. The worker reads back the profile. Admission stays closed.
+3. If a read fails with -3, the state becomes `kOutage`. If it fails another way, the state becomes `kConnectionUnknown`. The poll continues.
+4. If all values match, the worker keeps the driver restart. It runs the match wait, then calls `open_admission(significant_bits)` with the bit depth of the `PixelFormat` that it read. The source admits only frames with `host_stamp_ns` greater than the new boundary (d22 item 6, ic3). If the match wait fails, the worker records `kSubscriptionNotMatched` in `status().last_error` and stays in the poll state. The next `true` poll runs this path again.
+5. If a value differs, the worker runs the start sequence. Its step 2.1 makes the confirmed stop before any write. A failed stop goes to the failure recovery.
+6. If no frame is admitted within one more threshold after step 4, the worker calls `close_admission()` and runs the start sequence one time (d22 item 7). That sequence reads back, waits for the match, opens a new epoch, and calls `stream_start`. A failure goes to the failure recovery, or to `kFaulted` for steps 4 to 6 of the sequence.
+7. On the first admitted frame, the state becomes `kStreaming`.
+8. If silence continues after step 6, the silence rule runs again from the new `open_admission` time.
 
 In `kStalled`:
 
-1. The worker calls `stream_stop()`, then runs the start sequence. A failure goes to the failure recovery (d22 item 8).
-2. If silence continues for one more threshold, the state stays `kStalled`. The worker makes no more calls.
-3. An admitted frame returns the state to `kStreaming`. Admission is open after the cycle, so a late frame still counts.
+1. The worker calls `close_admission()` and `stream_stop()`. A failed stop goes to the failure recovery. A successful stop is confirmed.
+2. The worker runs the start sequence. A failure goes to the failure recovery, or to `kFaulted`.
+3. If silence continues for one more threshold, the state stays `kStalled`. The worker makes no more calls (d22 item 8).
+4. An admitted frame returns the state to `kStreaming`. Admission is open after the cycle, so a late frame still counts.
 
 A stream with no user (d22 item 9):
 
-1. On each tick with no lease and no linger, the worker compares `frames_received` with its value at the last tick.
-2. If it rose, a stream runs with no user, for example after a reconnect. The worker calls `stream_stop()`.
-3. This check needs no gateway call while the camera is idle.
+1. After each confirmed stop, the worker reads `frames_received` as the baseline.
+2. On each tick with no lease and no linger, the worker compares `frames_received` with the baseline. If it rose, the stop is no longer confirmed.
+3. A rise means that a stream runs with no user, for example after a reconnect. The worker calls `stream_stop()`.
+4. If that stop fails or times out, the failure recovery runs. It can end in `kWedged`.
+5. This check needs no gateway call while the camera is idle.
 
-New epochs come only from `open_admission` calls (d11). The worker calls it in the start sequence and after a reconnect. No stamp rule starts an epoch (d20).
-
-#### Shutdown
-
-`shutdown()` follows ic4, stop order step 1.
-
-1. Mark the controller as shutting down. New requests return `kFeedClosed`.
-2. Close each open subscription. A waiting `take` returns `kFeedClosed` at once.
-3. Call `close_admission()`.
-4. If the stream runs, call `stream_stop()`. The executor still spins, so the reply arrives.
-5. Join the worker. The state becomes `kShutDown`.
-
-The worker and each `Feed` share ownership of the subscription. A `Feed` that is destroyed during shutdown therefore leaves no dangling pointer.
+New epochs come only from `open_admission` calls (d11). The worker calls it in the start sequence and in reconnect step 4. No stamp rule starts an epoch (d20).
 
 #### What this section changes from v1
 
@@ -727,14 +922,15 @@ The worker and each `Feed` share ownership of the subscription. A `Feed` that is
 |---|---|---|
 | The policy layer runs on the gateway worker, with no new concurrency (v1 §8) | The same, through the `WorkerInit` hook | The gateway thread contract does not change (d5) |
 | `FeedOpen` subscribes and starts, with no match wait (v1 §8.1) | Match wait before each start | A subscription made before `stream_start` does not prove a match (facts A66) |
-| Configuration is verified by readback, with no fixed source (v1 §8.3) | `settings_file` applies the profile, and the controller reads back and corrects | Only `settings_file` applies values before the driver restart after a reopen (d18) |
+| `FeedOpen` has no caller deadline | `FeedOptions::deadline`, default 5000 ms | Without it, a camera that does not answer blocks the caller for about 50 s (N4) |
+| Configuration is verified by readback, with no fixed source (v1 §8.3) | `settings_file` applies the profile, and the controller reads back and corrects after a confirmed stop | Only `settings_file` applies values before the driver restart after a reopen (d18) |
 | `GetImage` has a stream sample and a software trigger strategy (v1 §8.2) | Stream sample only | R6 needs "received after the request", and a trigger stops a feed (d23) |
 | A take timeout makes the consumer check the connection (v1 §8.4) | The worker checks silence on a tick and opens a new epoch after recovery | Consumers do not call the gateway, and a reconnect restarts the stream with no project call (d22) |
-| Close always stops the stream (v1 §8.1) | The last lease release stops it | Get image and a feed share one stream (d16, d28) |
+| Close always stops the stream (v1 §8.1) | The last release stops it | Get image and a feed share one stream (d16, d28) |
 
 ### 6.2 Error vocabulary
 
-Acquisition adds one contractual error domain, `ErrorDomain::kAcquisition`, with eleven fixed codes (d6, ic5). Driver errors still pass unchanged, and gateway diagnostics stay private. A missing frame is a successful empty result, not an error.
+Acquisition adds one contractual error domain, `ErrorDomain::kAcquisition`, with eleven fixed codes (d6, ic5). Driver errors still pass unchanged, and gateway diagnostics stay private. A missing frame from `take` is a successful empty result, not an error.
 
 #### What exists today
 
@@ -809,46 +1005,73 @@ enum class AcquisitionCode : std::int32_t {
 | Code | Name | Layer | Returned by | Cause | Caller action |
 |---|---|---|---|---|---|
 | 1 | `kFeedClosed` | data plane | `take`, `try_take` | `close()` ran, the `FrameSource` is gone, or the controller shut down | Stop reading. Open a new feed if needed. |
-| 1 | `kFeedClosed` | control plane | `feed_open`, `get_image` | The request came after `shutdown()` | Stop. The acquisition stack is closed. |
-| 2 | `kDeadlinePassed` | control plane | `get_image` | No admitted frame before `GetImageOptions::deadline` (d26) | Retry later, or report. Read `status()` to see an outage. |
-| 3 | `kStreamWedged` | control plane | `feed_open`, `get_image` | The controller is in `kWedged` (d19) | The operator restarts the driver process. The controller clears the state after it sees the restart. |
-| 4 | `kFormatNotStreamable` | control plane | `feed_open`, `get_image`, `AcquisitionController::create` | `PixelFormat` is outside the allowed formats that are on the driver gate (d19 item 1) | Fix the settings file or the profile file. No retry. |
-| 5 | `kProfileMismatch` | control plane | `feed_open`, `get_image` | A value still differs after the corrective writes (d18 item 6) | Compare the settings file with the profile file. No retry. |
+| 1 | `kFeedClosed` | control plane | `feed_open`, `get_image` | The request came after `shutdown()` started, or it was queued or running when shutdown ran, or `WorkerInit` failed | Stop. The acquisition stack is closed. |
+| 2 | `kDeadlinePassed` | control plane | `feed_open`, `get_image` | The request deadline passed. See "Deadline stages" | Retry later, or report. Read `status()` to see an outage. |
+| 3 | `kStreamWedged` | control plane | `feed_open`, `get_image` | The controller is in `kWedged`, or the request caused it (d19) | The operator restarts the driver process. The controller clears the state after a confirmation stop succeeds. |
+| 4 | `kFormatNotStreamable` | control plane | `feed_open`, `get_image`, `AcquisitionController::create` | The final `PixelFormat` is outside the allowed formats that are on the driver gate (d19 item 1) | Fix the settings file or the profile file. No retry. |
+| 5 | `kProfileMismatch` | control plane | `feed_open`, `get_image` | A value in the final readback still differs after the corrective writes (d18 item 6) | Compare the settings file with the profile file. No retry. |
 | 6 | `kSubscriptionNotMatched` | control plane | `feed_open`, `get_image` | No matched publisher after 1000 ms (d17) | Check that the driver runs under the same namespace. Retry after that. |
 | 7 | `kWrongThread` | data plane | `take`, `try_take` | A call from a thread other than the first consumer thread (ic2 rule 4) | Fix the caller. This is a program error. |
 | 8 | `kTriggerNoFrame` | control plane | Nothing in phase 1 | Reserved for the phase 2 software trigger (d27) | None in phase 1. |
 | 9 | `kRequestBusy` | control plane | `feed_open`, `get_image` | A feed is already open, or a get image is already outstanding (d13) | Wait for the other request, or close the other feed. |
 | 10 | `kInvalidArgument` | data plane | `subscribe`, `ImageFrame::create` | Capacity outside 1 to 4, or a bad frame layout | Fix the argument. This is a program error. |
-| 10 | `kInvalidArgument` | control plane | `AcquisitionController::create`, `feed_open` | A bad option in `ControllerOptions`, or a bad `FeedOptions::capacity` passed through from `subscribe` | Fix the option. |
-| 11 | `kSourceCreateFailed` | data plane | `VimbaXFrameSource::create` | The ROS subscription could not be made | The composition root reports and exits. |
+| 10 | `kInvalidArgument` | control plane | `AcquisitionController::create`, `start`, `feed_open` | A bad option in `ControllerOptions`, a second `start` call, or a bad `FeedOptions::capacity` passed through from `subscribe` | Fix the caller. |
+| 11 | `kSourceCreateFailed` | data plane | `VimbaXFrameSource::create` | The ROS subscription could not be made, or the namespace is empty | The composition root reports and exits. |
 
 1. The data plane returns only codes 1, 7, 10, and 11. It never returns `kDriver` or `kGateway` errors (ic5 item 1).
 2. The image callback never returns an error. It counts each discard in `FrameSourceStats` (ic5 item 4).
 3. `kWrongThread` and `kInvalidArgument` are program errors. A test finds them. A running system does not retry them.
 
+#### Deadline stages
+
+`kDeadlinePassed` has one cause: the absolute request deadline passed before the call had its result. `FeedOptions::deadline` is 5000 ms by default, and `GetImageOptions::deadline` is 2000 ms (d26). The same code covers each stage:
+
+| Stage | Who sees the deadline | What the worker does after it |
+|---|---|---|
+| Waiting in the worker queue, also before `start` | The caller | Takes the expired request, makes no `subscribe` and no gateway call |
+| Readback, corrective writes, second readback | The caller. The worker sees it at its next check point | Finishes the pending gateway call, then stops the sequence |
+| Match wait | The caller. The worker sees it at the next 10 ms poll | Makes no `open_admission` and no `stream_start` |
+| `stream_start` | The caller | Finishes the call. Then the lease release stops the stream, or the failure recovery runs |
+| `get_image` only: wait for a frame with `receive_seq > R` | The caller, through `take` | The caller destroys its `Feed`, which releases the lease |
+
+1. The `take` result decides a late frame. A frame that `take` returns is the answer, also if the clock passed the deadline during the wake-up.
+2. The `stream_stop` after a get image delivery is outside the deadline (d26 item 3).
+3. A gateway call keeps its own timeout. The request deadline does not shorten it (d26 item 5).
+
 #### Errors that pass through the controller
 
-The controller returns gateway errors from its readback, its writes, and its stream calls unchanged (ic5 item 2). A caller sees these classes:
+The controller returns gateway errors from its reads and its stream calls unchanged (ic5 item 2). A caller sees these classes:
 
 | Domain and code | Typical cause | Caller action |
 |---|---|---|
 | `kDriver`, -3 (`VmbErrorNotFound`) | The camera is not available. A disconnect is in progress (facts 1.9.5). | Retry after `status()` leaves `kOutage`, or after a fixed wait. |
+| `kDriver`, -15 (`VmbErrorInvalidCall`) | A stream call met a transitional driver state, and the reconciliation stop then succeeded | Retry. The reconciliation stop confirmed the stopped state. |
 | `kDriver`, another code | The driver refused one call. | Report the code and the text. The controller has already reconciled the stream state (d19). |
 | `kGateway`, any code | The driver services do not answer, or a call timed out. | Check that the driver process runs. Retry after that. |
 
 1. A caller must classify an error by `domain()` first and then by `code()`. A `kGateway` code number has no meaning to the caller (`src/venimapping_camera/src/gateway_support/gateway_errors.hpp:15`).
-2. -15 (`VmbErrorInvalidCall`) never reaches a caller from a stream call. The controller turns it into `kWedged`, and the next request returns `kStreamWedged`.
-3. -18 (`VmbErrorNotSupported`) from a format refusal at start cannot occur, because the format check comes first (c1 §3.1 item 2).
+2. For a failed stream call, the controller keeps two results apart. The caller gets the first error. `status().last_error` holds the same error. `status().last_reconciliation` holds the error of the reconciliation stop, or is empty if it succeeded.
+3. -15 reaches a caller only with a successful reconciliation stop. If the reconciliation stop fails, the caller gets `kStreamWedged`, and its text names both errors.
+4. -18 (`VmbErrorNotSupported`) from a format refusal at start cannot occur, because the format check comes first (c1 §3.1 item 2).
+
+Corrective writes do not pass through:
+
+1. The second readback decides the result of the corrective writes, because a setter that times out can still apply (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:24-26`).
+2. If the second readback matches, the request continues, and the write error goes only to `status().last_error`.
+3. If a value still differs, the caller gets `kFormatNotStreamable` or `kProfileMismatch`. The text names the value and the write error.
+4. If a read in the second readback fails, that read error passes through unchanged.
 
 #### Results that are not errors
 
 | Result | Where | Meaning |
 |---|---|---|
-| Empty `std::optional` from `take` or `try_take` | data plane | No frame in the timeout. Also during an outage, a stall, a wedge, or a closed admission (ic5 item 3). |
+| Empty `std::optional` from `take` or `try_take` | data plane | No frame in the timeout. Also during an outage, a stall, a fault, a wedge, or a closed admission (ic5 item 3). |
 | A queue eviction | data plane | The queue was at capacity. `queue_evictions` counts it (d10). |
 | A discard in the callback | data plane | `discarded_layout`, `discarded_stamp_basis`, or `discarded_admission` counts it (d12). |
-| `transport_lost` growth | data plane | DDS rejected samples at the reader (d12). |
-| An outage, a stall, or a wedge with a feed open | control plane | `status().state` shows it. The feed stays open (d22, R14). |
+| `transport_lost` growth | data plane | The total count of the RMW `message_lost` event, which Cyclone DDS takes from the DDS sample lost status (d12). |
+| An outage, a stall, a fault, or a wedge with a feed open | control plane | `status().state` shows it. The feed stays open (d22, R14). |
+
+`[F]` `transport_lost` does not count every lost sample. Cyclone DDS fills the RMW event from `dds_get_sample_lost_status` (`ros:ros2/rmw_cyclonedds/rmw_cyclonedds_cpp/src/rmw_node.cpp:3943-3955`). When the reader history is full, Cyclone DDS replaces the oldest unread sample and raises no sample lost status (`ros:eclipse-cyclonedds/cyclonedds/src/core/ddsc/src/dds_rhc_default.c:854-875`). So a slow executor with the KEEP_LAST 2 reader loses samples that `transport_lost` does not show. A gap in `receive_seq` cannot show them either, because the sequence starts in the callback.
 
 `[A]` R14 keeps a feed open during an outage. If Logan answers L9 with "close the feed", phase 1 adds code 12, `kOutage`, which `take` returns. No other code changes.
 
@@ -861,11 +1084,13 @@ A feed consumer reads the result in this order:
 3. If the optional is empty, read `controller.status()` when the empty results last longer than the consumer accepts.
 4. If the optional has a frame, use it. Check `stream_epoch` against the last frame to see a restart.
 
-A get image caller reads the result in this order:
+A `feed_open` or `get_image` caller reads the result in this order:
 
-1. On success, use the frame.
-2. On `kRequestBusy`, `kDeadlinePassed`, `kSubscriptionNotMatched`, a `kGateway` error, or driver -3, retry later.
-3. On `kStreamWedged`, `kFormatNotStreamable`, or `kProfileMismatch`, report to the operator and do not retry.
+1. On success, use the feed or the frame.
+2. On `kFeedClosed`, stop. The controller has shut down.
+3. On `kRequestBusy`, `kDeadlinePassed`, `kSubscriptionNotMatched`, a `kGateway` error, driver -3, or driver -15, retry later.
+4. On `kStreamWedged`, `kFormatNotStreamable`, or `kProfileMismatch`, report to the operator and do not retry.
+5. On another driver code, report it. A retry is allowed after `status()` shows `kIdle` or `kFaulted`.
 
 ## 7. Bring-up
 
@@ -908,8 +1133,9 @@ New `camera.yaml`:
 | `settings_file` | set by the launch file | See "Camera settings file". | d18 |
 
 1. `[F]` The parameter name for the plugin filter is the topic name relative to the node namespace, with `/` changed to `.`, plus `.enable_pub_plugins` (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:114-128`). For `image_raw`, it is `image_raw.enable_pub_plugins`.
-2. `[F]` The driver reads `use_ros_time` on each frame, so a change during a stream changes the time basis between two frames (facts 1.6.4). No project code changes it while acquisition runs (d20 decided item 2).
-3. `[F]` `camera_info` still publishes, because the driver uses a `CameraPublisher` (facts 1.3.1). It carries only width and height (facts 1.8.2). The filter does not affect it.
+2. `[F]` `image_transport` declares that parameter on the driver node, with all installed plugins as the default (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:127-128`). A wrong key in `camera.yaml` therefore leaves the default, and a read of the live parameter shows it.
+3. `[F]` The driver reads `use_ros_time` on each frame, so a change during a stream changes the time basis between two frames (facts 1.6.4). No project code changes it while acquisition runs (d20 decided item 2).
+4. `[F]` `camera_info` still publishes, because the driver uses a `CameraPublisher` (facts 1.3.1). It carries only width and height (facts 1.8.2). The filter does not affect it.
 
 ### Launch file
 
@@ -944,7 +1170,7 @@ Node(
 ```
 
 1. `[F]` `launch_ros` reads a substituted parameter value as YAML, so `"true"` becomes a boolean (`ros:ros2/launch_ros/launch_ros/launch_ros/utilities/evaluate_parameters.py:71-79`).
-2. `[A]` A later entry in `parameters` overrides an earlier one for the same name. The bring-up check reads the value back, so a wrong order fails the check.
+2. `[A]` A later entry in `parameters` overrides an earlier one for the same name. The rig check reads both values back, so a wrong order fails the check.
 3. `settings_file` must be an absolute installed path. A YAML file cannot use `FindPackageShare`, so the launch file sets it (d18 item 1).
 4. The `use_ros_time` argument exists only for the device stamp probe run (d20 item 6). That run uses `use_ros_time:=false` and never uses the controller.
 
@@ -953,8 +1179,15 @@ Node(
 New file `config/camera_settings.xml`. The driver loads it on each open and reopen (d18 item 1).
 
 1. `[F]` The driver loads `settings_file` inside `initialize_camera`. On a reconnect, it sets the restart flag only after that function returns (`driver:vimbax_camera/src/vimbax_camera_node.cpp:390-400`, `:561-566`). The file is therefore the only way to apply the profile before the driver restarts the stream.
-2. `[F]` The load saves and restores the remote device, local device, and stream modules (`driver:vimbax_camera/src/vimbax_camera.cpp:1358-1367`). The save service accepts only a `.xml` name (`driver:vimbax_camera/src/vimbax_camera.cpp:1335-1337`).
-3. `[F]` A missing file or a failed load only logs an error. The driver continues (`driver:vimbax_camera/src/vimbax_camera.cpp:1312-1314`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`). The controller readback catches this (d18).
+2. `[F]` The driver saves and loads with one fixed setting: persistence type `VmbFeaturePersistNoLUT`, module flags `RemoteDevice | LocalDevice | Streams`, and 10 load iterations (`driver:vimbax_camera/src/vimbax_camera.cpp:1358-1367`).
+3. `[F]` `VmbFeaturePersistNoLUT` means all features except look-up tables (`vimbax:api/include/VmbC/VmbCTypeDefinitions.h:473-475`). The SDK repeats the load up to the iteration count, because one write can change a feature that it set before (`vimbax:doc/VimbaX_Documentation/cAPIManual.html:1470-1479`).
+4. Scope: the file can hold features of the camera, the local device module, and the stream module. It holds no system or interface feature. `[A]` The SDK saves each feature of those modules that it can read. The module flags alone do not prove that each feature is in the file. Review the saved file to see its content.
+5. `[F]` The save service accepts only a `.xml` name (`driver:vimbax_camera/src/vimbax_camera.cpp:1335-1337`).
+6. `[F]` A missing file returns -3, and the driver only logs a failed load. The driver continues (`driver:vimbax_camera/src/vimbax_camera.cpp:1312-1314`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`). The log line starts with `Loading settings from file`.
+
+The controller readback is a check of the seven listed profile values and the selector write only (d18 item 3). It does not check any other feature in the file. It also cannot see a failed load when the camera already holds the listed values. The rig check below uses the driver log and a controlled reopen to see the load result.
+
+`[A]` A change to a feature outside the profile enters through the file with no readback (N7). Review the file diff in each change to `camera_settings.xml`.
 
 Make the file on the rig. Do these steps with the stream stopped and the driver started without `settings_file`:
 
@@ -966,7 +1199,7 @@ Make the file on the rig. Do these steps with the stream stopped and the driver 
 6. Do not call the `status` service between steps 2 and 6. It moves `TriggerSelector` (facts 1.5.7).
 7. Call `settings/save` with an absolute `.xml` path.
 8. Copy the file to `src/venimapping_bringup/config/camera_settings.xml`.
-9. Run the bring-up check in this section.
+9. Run the bring-up checks in this section.
 
 `[F]` c3 wrote steps 3 and 4 on this camera while stopped. The read back was 30.000001907348633 Hz, and the stream gave 30.010 Hz (c3 §3 items 2 to 4).
 
@@ -993,7 +1226,7 @@ New file `config/acquisition_profile.yaml`. It holds the values that the control
 
 1. The file goes only to the application node through `--params-file`. The key `/**` therefore reaches no other node.
 2. `use_sim_time: false` on the application node keeps its clock on `CLOCK_REALTIME` (d20 decided item 1).
-3. `[A]` P2: the settings file and this file describe the same values. The bring-up check proves it on the rig.
+3. `[A]` P2: the settings file and this file describe the same values. The rig check proves it.
 4. In phase 1, the application node is the feed probe, `camera_feed_probe`. It declares `camera_namespace` with the default `/vimbax_camera`, as `camera_gateway_probe` does (`src/venimapping_camera/src/camera_gateway_probe.cpp:136`).
 
 ### Namespace
@@ -1026,15 +1259,38 @@ Configuration test without a camera, `test/test_camera_config.py`:
 3. Call `generate_launch_description()`. Check that the arguments `use_ros_time` and `settings_file` exist with their defaults.
 4. Old behavior: `camera.yaml` has no `use_ros_time` key and the launch file has no `settings_file` argument, so the test fails. New behavior: it passes.
 
-Bring-up check on the rig, `camera_feed_probe` with `mode:=bringup` (ic6 item 3, d18 item 8, d20 items 7 and 8):
+The rig check has two parts. The operator does part A, and `camera_feed_probe` with `mode:=bringup` does part B (ic6 item 3, d18 item 8, d20 items 7 and 8). Part A makes a controlled reopen from known different values, so a pass proves that the installed file applied.
 
-1. Read the driver parameter `use_ros_time` before any `stream_start`. Fail on `false`.
-2. List the topics under the namespace. Fail if a topic name starts with `<namespace>/image_raw/`.
-3. Read back the profile through the controller readback code. Fail on any difference.
-4. Start the stream through the controller. Read the first frame on a raw subscription. Fail if `header.stamp` differs from the receipt time on `CLOCK_REALTIME` by more than 1 s.
-5. Stop the stream.
+Part A, the controlled reopen:
 
-Old behavior: step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 4 also fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
+1. Launch the driver with the default arguments. Write its console output to `driver_a.log`.
+2. With the stream stopped, write `ExposureTime` 10000.0 with the CLI.
+3. Write `AcquisitionFrameRate` 20.0 with the CLI.
+4. Stop the driver.
+5. Launch the driver again with the default arguments. Write its console output to `driver_b.log`.
+6. If `driver_b.log` has a line that starts with `Loading settings from file`, the check fails.
+
+`[A]` The camera keeps written values across a driver restart without a power cycle. If it does not, the camera returns to its own defaults. c1 read 69.7 Hz with the enable false as the default (c1 §3.6 item 2), so part B still fails on a failed load.
+
+Part B, `camera_feed_probe` with `mode:=bringup`, before any `stream_start`:
+
+1. Read the driver parameter `use_ros_time`. Fail on `false`.
+2. Read the driver parameter `settings_file`. Fail if it is not the installed path of `camera_settings.xml`, or if no file exists at that path.
+3. Read the driver parameter `image_raw.enable_pub_plugins`. Fail if it is not `["image_transport/raw"]`.
+4. Read the publishers of `<namespace>/image_raw` from the graph. Fail if the count is not 1.
+5. List the topics under the namespace. Fail if a topic name starts with `<namespace>/image_raw/`.
+6. Read back the profile through the controller readback code, with no corrective write. Fail on any difference. After part A, this proves that the file set `ExposureTime` and `AcquisitionFrameRate`.
+7. Start the stream through the controller. Wait at most 2000 ms for the first frame on a raw subscription. Fail at the limit.
+8. Fail if the first `header.stamp` differs from the receipt time on `CLOCK_REALTIME` by more than 1 s.
+9. Stop the stream.
+
+Notes on part B:
+
+1. The prefix rule in step 5 finds each plugin topic, because each extra image topic from a plugin is a subtopic of `image_raw` (`ros:ros-perception/image_common/image_transport/src/publisher.cpp:142-147`). This replaces the ic6 item 3.2 wording (N6).
+2. Step 4 makes step 5 fail when `image_raw` has no publisher. An empty topic list cannot pass.
+3. The 2000 ms limit is about 18 times the measured 110 ms from `stream_start` to the first frame (c1 §3.5 items 1 and 2).
+
+Old behavior: step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 2 fails, because `settings_file` is empty. Step 6 fails, because the camera keeps 10000.0 and 20.0 from part A. Step 8 fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
 
 ### Host check
 
@@ -1049,7 +1305,7 @@ No code depends on these values (ic6 item 4, T11). v1 proposed a project `cyclon
 
 ## 8. Testing
 
-Source: `claude/sections/testing.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. Open issues on this section: i10, i13 to i18, i20 to i22, i26, i27.
+Source: `claude/sections/testing.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. Open issues on this section: i14, i15, i17, i18, i21, i22, i26, i31.
 
 Tests come in four tiers. Each tier needs more of the system than the one before it. Each test names the old behavior that makes it fail and the new behavior that makes it pass (ic7).
 
@@ -1058,7 +1314,7 @@ Tests come in four tiers. Each tier needs more of the system than the one before
 | 1. Unit, no ROS | A compiler and GoogleTest | `colcon test`, each build | `test_acquisition_error`, `test_image_frame`, `test_frame_fanout`, `test_acquisition_controller` |
 | 2. ROS, no driver | rclcpp and Cyclone DDS | `colcon test`, each build | `test_vimbax_frame_source`, `test_camera_config.py` |
 | 3. Driver and camera | The rig, with the driver launched | Manual, before a merge that changes acquisition | `camera_feed_probe` modes |
-| 4. Short hardware checks | The rig and an operator | Manual, once per release of the acquisition code | Unplug, wedge, and load checks |
+| 4. Short hardware checks | The rig and an operator | Manual, once per release of the acquisition code | Unplug, settings load, outside reader, stamp, and wedge checks |
 
 ### What exists today
 
@@ -1074,6 +1330,7 @@ All test files are in `src/venimapping_camera/test/`, except the bring-up test.
 
 | File | Purpose |
 |---|---|
+| `fakes/test_clock.hpp`, `.cpp` | `TestClock`, a `FrameFanoutClock` with a manual realtime value and a hold point |
 | `fakes/fake_frame_source.hpp`, `.cpp` | `FakeFrameSource` over a real `FrameFanout` (ic7 item 5) |
 | `fakes/fake_camera_gateway.hpp`, `.cpp` | `FakeCameraGateway`, a scripted `CameraGateway` |
 | `acquisition_error_test.cpp` | Tier 1, error domain |
@@ -1081,34 +1338,66 @@ All test files are in `src/venimapping_camera/test/`, except the bring-up test.
 | `frame_fanout_test.cpp` | Tier 1, queues, admission, counters |
 | `acquisition_controller_test.cpp` | Tier 1, controller with both fakes |
 | `vimbax_frame_source_test.cpp` | Tier 2, adapter over a test publisher |
+| `installed_consumer/CMakeLists.txt`, `main.cpp` | Step 5 exit check. A project outside the package that links the installed targets |
 | `src/venimapping_bringup/test/test_camera_config.py` | Tier 2, bring-up files (see the bring-up section) |
 
 ### Fakes
+
+`TestClock` implements `FrameFanoutClock` (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:118`).
+
+```cpp
+class TestClock final : public frame_support::FrameFanoutClock {
+ public:
+  // Starts at the real CLOCK_REALTIME value. Changes only through advance().
+  std::int64_t realtime_ns() const override;
+  // Real std::chrono::steady_clock. Blocks once on the hold thread when armed.
+  std::chrono::steady_clock::time_point steady_now() const override;
+  void advance(std::chrono::nanoseconds step);
+  // The next steady_now() call on thread t blocks until release_hold().
+  void arm_hold(std::thread::id t);
+  void wait_until_held();
+  void release_hold();
+};
+```
+
+1. `steady_now()` reads the real steady clock. The controller compares `last_admitted` with its own `std::chrono::steady_clock::now()`, so both values must come from one clock.
+2. `realtime_ns()` is manual, so the boundary and each stamp have a known order.
+3. `[F]` `FrameFanout::on_message` makes its first `steady_now()` read after it assigns `receive_seq` and before it takes the fan-out lock (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:124-128`). The hold point is therefore between sequence and lock.
+4. A test that checks `callback_ns_max` must not arm the hold, because the hold time adds to the measured duration.
+5. The `Fanout.*` tests use the same class and call `advance` for each step.
 
 `FakeFrameSource` implements `FrameSource` over the private `FrameFanout`, so the fake and the adapter share one admission code path (ic7 item 5).
 
 ```cpp
 class FakeFrameSource final : public FrameSource {
  public:
-  explicit FakeFrameSource(FrameFanoutClock& clock);
-  // Builds Mono8 fields and calls FrameFanout::on_message.
-  // host_stamp_ns defaults to clock.realtime_ns().
+  explicit FakeFrameSource(TestClock& clock);   // the clock must outlive the fake
+  // Without a stamp: clock.advance(1 ms), then stamp with clock.realtime_ns().
   void inject(std::uint32_t width, std::uint32_t height,
               std::optional<std::int64_t> host_stamp_ns = std::nullopt);
   void set_matched_publishers(std::size_t n);
-  // FrameSource overrides forward to the FrameFanout.
+  [[nodiscard]] std::size_t subscriptions_opened() const;
+  // Stats of subscription i, also after it closed.
+  [[nodiscard]] FrameSubscriptionStats subscription_stats(std::size_t i) const;
+  // FrameSource overrides forward to FrameFanout: subscribe, open_admission,
+  // close_admission, stats. matched_publishers returns the set value.
 };
 ```
 
+1. A default `inject` advances the realtime value before it stamps the frame. The stamp is therefore strictly greater than each boundary read before the call (d20 item 5). Without the advance, a stamp equal to the boundary is discarded.
+2. `subscribe` wraps each subscription in a thin decorator that keeps its stats after `close()`. A test can then see what reached the get image queue.
+
 `FakeCameraGateway` implements all 30 `CameraGateway` methods.
 
-1. It keeps a feature map with the phase 1 profile values and a stream state: stopped, active, or wedged.
+1. It keeps a feature map with the phase 1 profile values and a stream state: stopped, active, starting, or stopping.
 2. While active, a write to `PixelFormat`, `Width`, `Height`, or `TriggerMode` fails, as on the camera (c1 §3.6).
-3. `TriggerMode` has one value per `TriggerSelector`. The fake keeps the current selector, so a read without a selector write reads the wrong entry (c2 §3.3).
-4. `script(method, result)` sets the next result of one method. `delay(method, duration)` makes one call block.
-5. `on_stream_start(callback)` runs a callback inside `stream_start`. A test uses it to inject frames before the reply (c1 §3.5 item 2).
-6. `calls()` returns the call log as strings, for example `enum_set TriggerSelector FrameStart`.
-7. `camera_status()` fails the test if a controller calls it.
+3. In starting or stopping, `stream_start` and `stream_stop` return -15, as in the driver (`driver:vimbax_camera/src/vimbax_camera.cpp:516-519`, `:582-585`).
+4. `TriggerMode` has one value per `TriggerSelector`. The fake keeps the current selector, so a read without a selector write reads the wrong entry (c2 §3.3).
+5. A feature call with a module other than `FeatureModule::kRemoteDevice` fails the test.
+6. `script(method, results)` sets the next results of one method, in order. `delay(method, duration)` makes one call block.
+7. `on_stream_start(callback)` runs a callback inside `stream_start`. A test uses it to inject frames before the reply (c1 §3.5 item 2).
+8. `calls()` returns the call log as strings, for example `enum_set TriggerSelector FrameStart`.
+9. `camera_status()` fails the test if a controller calls it.
 
 `[A]` The controller tests run in real time. The thresholds are 250 ms and the tick is 100 ms, so a silence test takes about 0.5 s. The whole controller suite takes a few seconds. A fake worker clock is not needed in phase 1.
 
@@ -1124,13 +1413,13 @@ class FakeFrameSource final : public FrameSource {
 
 ### Tier 1: `FrameFanout`
 
-These tests check the data-plane contract in ic2, ic3, and ic8. A fake clock sets `realtime_ns()` and `steady_now()`.
+These tests check the data-plane contract in ic2, ic3, and ic8. Each test uses a `TestClock` and calls `advance` between steps.
 
 | Test | Checks | Old behavior | New behavior |
 |---|---|---|---|
 | `Fanout.SequenceFromOne` | The first `receive_seq` is 1. Each later one is 1 more. `frames_received` equals the last sequence. A discarded message also takes a number. | v1 sequence per subscription (v1 §15.1) | Sequence per source, also for discards (d11) |
 | `Fanout.ClosedAdmissionDiscards` | Before `open_admission`, a message counts in `discarded_admission`, and `take` returns empty | No admission in v1 | Passes |
-| `Fanout.BoundaryDiscards` | A stamp equal to the boundary is discarded. A stamp 1 ns later is admitted. | No boundary | Strictly greater (d20 item 5) |
+| `Fanout.BoundaryDiscards` | With no `advance`, a stamp equal to the boundary is discarded. A stamp 1 ns later is admitted. | No boundary | Strictly greater (d20 item 5) |
 | `Fanout.StampBasisDiscards` | A stamp 12673 s, like the camera clock in c1 §3.4, counts in `discarded_stamp_basis` | Device stamps pass | Discarded (ic3 item 3.4) |
 | `Fanout.EpochAndBits` | Frames after `open_admission(8)` carry epoch 1 and `significant_bits` 8. A second call gives epoch 2. | No epoch, no bit depth | Passes (d11, d14) |
 | `Fanout.DropOldest` | Capacity 2, three frames. `take` gives frames 2 and 3. `queue_evictions` is 1. | v1 default capacity 4 (v1 §15.2) | Default 1, drop oldest (d10) |
@@ -1139,42 +1428,84 @@ These tests check the data-plane contract in ic2, ic3, and ic8. A fake clock set
 | `Fanout.CloseAdmissionClears` | Two queued frames. `close_admission()` empties the queue and adds 2 to `frames_cleared`. The subscription stays open. | No admission | Passes |
 | `Fanout.WrongThread` | A `take` from a second thread returns `kWrongThread` | No check | Passes |
 | `Fanout.SubscribeAfterPush` | A frame pushed before `subscribe` does not reach the new queue. The next one does. | No type | Passes (d24) |
-| `Fanout.SourceGone` | Destroy the source. `take` on the subscription returns `kFeedClosed`. | No type | Passes (ic2 rule 7) |
+| `Fanout.InFlightPushAfterLink` | Arm the hold on a helper thread. The helper injects, and `wait_until_held` returns. `subscribe`, then `release_hold`. The new queue gets the held frame, and its `receive_seq` is at or below `frames_received` at `subscribe`. | No type | Passes. The queue link decides the push (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:134`) |
+| `Fanout.CallbackDuration` | No hold. Inject 10 frames. `callback_ns_total` is more than 0 and at least `callback_ns_max`. | No field | Passes (i2) |
+| `Fanout.SourceGone` | Destroy the source. `take` on the subscription returns `kFeedClosed`. A later `close()` returns. | No type | Passes (ic2 rule 7) |
 
 ### Tier 1: `AcquisitionController`
 
-Each test uses `FakeCameraGateway` and `FakeFrameSource`. A test asserts on `calls()`, on the result, and on `status()`.
+Each test uses `FakeCameraGateway` and `FakeFrameSource`. A test asserts on `calls()`, on the result, and on `status()`. Times have a tolerance of 50 ms.
+
+Start sequence and configuration:
 
 | Test | Checks | Old behavior | New behavior |
 |---|---|---|---|
-| `Controller.ColdFeedOrder` | Call log: 8 readback calls, then `stream_start`. `open_admission` comes before `stream_start`. | v1 §8.1 starts with no match wait and no readback | Readback, match, admission, start (d17, d18) |
+| `Controller.ColdFeedOrder` | Call log: 8 readback calls, then `stream_start`. The match wait and `open_admission(8)` come before `stream_start`. | v1 §8.1 starts with no match wait and no readback | Readback, match, admission, start (d17, d18) |
 | `Controller.SelectorBeforeMode` | `enum_set TriggerSelector FrameStart` comes just before each `enum_get TriggerMode`. No `camera_status` call. | A read without the selector reads the wrong selector (c2 §3.3) | Passes |
+| `Controller.RemoteDeviceModule` | Run a cold feed with one correction. The fake sees each feature call with `kRemoteDevice`. | The draft omitted the module (i16) | Passes |
 | `Controller.KeepsFramesBeforeReply` | `on_stream_start` injects 3 frames before the reply. With capacity 4, the feed gets all 3. | A reader made after the reply misses them (c1 §3.5 item 3) | Passes |
-| `Controller.MatchTimeout` | Matched publishers 0. `feed_open` returns `kSubscriptionNotMatched` after 1000 ms, with no `stream_start` call. The lease count is 0. | v1 starts at once | Passes (d17) |
+| `Controller.MatchTimeout` | Matched publishers 0. `feed_open` returns `kSubscriptionNotMatched` after 1000 ms, with no `open_admission` and no `stream_start`. The lease count is 0. | v1 starts at once | Passes (d17) |
 | `Controller.FormatRefusal` | The fake keeps `PixelFormat` at Mono10 and fails its write. Result `kFormatNotStreamable`. No `stream_start` call. | A direct client calls start, gets -18, and wedges the driver (facts 1.4.1) | Passes (d19 item 1) |
+| `Controller.FormatCorrectionBits` | The fake starts at Mono12 with the stream stopped. The log shows the `PixelFormat` write, the second readback, and `open_admission(8)`. The first frame has `significant_bits` 8. | Bit depth from the first readback labels Mono8 as 12 bits (i16) | Bit depth from the final readback (d14) |
+| `Controller.WriteNeedsConfirmedStop` | New controller, so the stop is not confirmed. `ExposureTime` differs. The log shows `stream_stop` before the first write. | Writes before a confirmed stop (i13) | Passes (d18 items 5 and 7) |
 | `Controller.CorrectiveWriteOrder` | The fake starts with the enable false and the rate 69.71556. The log shows the enable write before the rate write. Then a second readback and a start. | The gateway does no readback (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:24-26`) | Passes (d18 item 5) |
+| `Controller.WriteErrorReadbackDecides` | The `ExposureTime` write returns a gateway timeout, but the fake applies it. The second readback matches. The feed opens. `status().last_error` holds the timeout. | Pass-through would fail the feed | Passes (d18 item 6) |
 | `Controller.ProfileMismatch` | The fake ignores the `ExposureTime` write. Result `kProfileMismatch`. No start. | No readback | Passes (d18 item 6) |
 | `Controller.FloatTolerance` | Rate reads 30.000001907348633. No write. | No readback | Passes (d18 item 4) |
+
+Leases, get image, and deadlines:
+
+| Test | Checks | Old behavior | New behavior |
+|---|---|---|---|
 | `Controller.LeaseCount` | Open a feed, then a warm get image. One `stream_start`. Close the feed while the get image waits. No stop. After the get image returns, `close_admission` and then `stream_stop`. | v1 close always stops (v1 §8.1) | Last release stops (d16) |
 | `Controller.Busy` | A second `feed_open` while one is open returns `kRequestBusy` with no gateway call. Same for a second `get_image`. | No limit | Passes (d13) |
 | `Controller.WarmFreshness` | Inject frame A, then call `get_image`. The result is a later frame, with `receive_seq` greater than A. | v1 drains, then takes (v1 §8.2) | Passes (d24) |
-| `Controller.InFlightFrameSkipped` | The test holds a frame with a sequence at or below `R` and delivers it after `subscribe`. `get_image` skips it. | No rule | Passes (d24) |
-| `Controller.DeadlinePassed` | `stream_start` blocks 3 s. `get_image` returns `kDeadlinePassed` after 2000 ms, within 50 ms. Later, the worker calls `stream_stop` and the lease count is 0. | No deadline | Passes (d26) |
+| `Controller.InFlightFrameSkipped` | Feed open, so the stream is warm. Arm the hold on a helper thread, inject frame N, and `wait_until_held`. Call `get_image` on a second thread. When `subscriptions_opened` rises, `release_hold`, then inject frame N+1. The result is N+1. `subscription_stats` shows that the get image queue got N. | No rule | Passes (d24, i12) |
+| `Controller.DeadlinePassed` | `stream_start` blocks 3 s. `get_image` returns `kDeadlinePassed` at 2000 ms. Later, the worker calls `stream_stop`, and the lease count is 0. | No deadline | Passes (d26) |
+| `Controller.ExpiredInQueue` | A `feed_open` holds the worker, because `stream_start` blocks 1 s. A `get_image` with a 300 ms deadline returns `kDeadlinePassed` at 300 ms. After the worker takes it, `subscriptions_opened` does not rise, and the log has no new call. | The worker ran expired requests (i14) | Passes |
+| `Controller.ExpiredDuringMatch` | Matched publishers 0. `get_image` with a 300 ms deadline returns `kDeadlinePassed` at 300 ms. The worker makes no more match polls after 310 ms. No `open_admission`, no `stream_start`. Lease count 0. | The worker checked only after a gateway call (i14) | Passes |
+| `Controller.FeedOpenDeadline` | `stream_start` blocks 6 s. `feed_open` returns `kDeadlinePassed` at 5000 ms. After `stream_start` ends, the worker calls `close_admission` and `stream_stop`. Lease count 0. | No feed deadline (N4) | Passes (i27) |
 | `Controller.StopOutsideDeadline` | `stream_stop` blocks 500 ms. A cold `get_image` returns before the stop ends. | No rule | Passes (d26 item 3) |
-| `Controller.StartFailReconciled` | `stream_start` returns -1. The reconciliation stop succeeds. The result is the driver error -1, domain `kDriver`. State `kIdle`. | No reconciliation | Passes (d19 item 3) |
-| `Controller.WedgeOnStartTimeout` | `stream_start` times out. The reconciliation stop returns -15. State `kWedged`. The next `feed_open` returns `kStreamWedged` with no new gateway call. | v1 treats -15 as a race (facts X1) | Passes (d19) |
+
+Failure recovery:
+
+| Test | Checks | Old behavior | New behavior |
+|---|---|---|---|
+| `Controller.StartFailReconciled` | `stream_start` returns -1. Then `close_admission`, and the reconciliation stop succeeds. The result is the driver error -1, domain `kDriver`. `status().last_reconciliation` is empty. State `kIdle`. | No reconciliation | Passes (d19 item 3) |
+| `Controller.StartFailClearsQueue` | A feed is open. Silence gives `kStalled`. In the cycle, `on_stream_start` injects a frame, then `stream_start` returns -1. The reconciliation stop succeeds. The feed queue is empty, `frames_cleared` rose, and `take` returns empty. State `kFaulted`. | Admission stayed open after a failed start (i17) | Passes |
+| `Controller.FirstErrorMinus15` | `stream_start` returns -15. The reconciliation stop succeeds. The result is driver -15. State `kIdle`. | The table said -15 never reaches a caller (i18) | Passes |
+| `Controller.WedgeOnStartTimeout` | `stream_start` times out. The reconciliation stop returns -15. State `kWedged`. `last_error` is the timeout, and `last_reconciliation` is -15. The next `feed_open` returns `kStreamWedged` with no new gateway call. | v1 treats -15 as a race (facts X1) | Passes (d19) |
 | `Controller.WedgeOnStopFailure` | The last release. `stream_stop` fails, and the reconciliation stop returns -15. State `kWedged`. | No reconciliation | Passes (d19) |
-| `Controller.WedgeCleared` | In `kWedged`, `connection_status` gives `false`, then `true`. State `kIdle`. The next `feed_open` succeeds. | No wedge state | Passes (d19 item 5) |
+| `Controller.NoUserStopFails` | No lease. Inject 3 frames. The no-user `stream_stop` returns -1, and the reconciliation stop returns -15. State `kWedged`. | The no-user stop had no failure path (i17) | Passes (d19, d22 item 9) |
+| `Controller.WedgeCleared` | In `kWedged`, `connection_status` gives `false`, then `true`. One confirmation `stream_stop` succeeds. State `kIdle`. The next `feed_open` succeeds. | No wedge state | Passes (d19 item 5) |
+| `Controller.WedgePollErrorKeepsWedge` | In `kWedged`, `connection_status` gives a gateway timeout, then `true`. The confirmation stop returns -15. State stays `kWedged`. No `stream_start`. | A poll error cleared a live wedge (i18) | Passes |
+
+Silence, outage, and reconnect:
+
+| Test | Checks | Old behavior | New behavior |
+|---|---|---|---|
 | `Controller.SilenceToOutage` | Stop injecting frames. `connection_status` gives `false`. State `kOutage` within 400 ms. `frames_cleared` rises. `take` returns empty, not an error. | v1 leaves the check to the consumer (v1 §8.4) | Passes (d22 items 1 to 4) |
 | `Controller.ConnectionUnknown` | Same, but `connection_status` returns a gateway timeout. State `kConnectionUnknown`. | No state | Passes (d22 item 4) |
-| `Controller.ReconnectNewEpoch` | After `kOutage`, `connection_status` gives `true`. Readback matches. An old-stamp frame is discarded. A new frame has epoch 2. State `kStreaming`. | No epoch | Passes (d22 items 5 and 6) |
-| `Controller.ReconnectProfileChanged` | After a reconnect, `ExposureTime` differs. Log: `stream_stop`, writes, readback, `stream_start`. | No readback | Passes (d22 item 5) |
-| `Controller.ReconnectNoRestart` | After a reconnect, no frame arrives. One `stream_start` after one more threshold. | No rule | Passes (d22 item 7) |
-| `Controller.Stall` | `connection_status` gives `true` with no frames. One stop and one start. No more calls in the next 1 s. State `kStalled`. | No rule | Passes (d22 item 8) |
+| `Controller.RequestDuringOutage` | A feed is open in `kOutage`. A `get_image` with a 500 ms deadline makes no gateway call other than the polls. It returns `kDeadlinePassed`. A second run: the poll gives `true` 200 ms after the request, the readback matches, and the result has epoch 2. | Requests took the start path in an outage (i13) | Passes |
+| `Controller.ReconnectNewEpoch` | After `kOutage`, `connection_status` gives `true`. Log: 8 readback calls, the match wait, `open_admission(8)`, and no stream call. An old-stamp frame is discarded. A new frame has epoch 2. State `kStreaming`. | No epoch | Passes (d22 items 5 and 6) |
+| `Controller.ReconnectProfileChanged` | After a reconnect, `ExposureTime` differs. Log: readback, `stream_stop`, the write, readback, the match wait, `open_admission`, `stream_start`. No write comes before the stop. | No readback | Passes (d22 item 5) |
+| `Controller.ReconnectNoRestart` | After a reconnect, the readback matches, and no frame arrives. After one threshold, the log shows `close_admission`, 8 readback calls, the match wait, `open_admission(8)`, and `stream_start`. A frame injected after the start has epoch 3. | The fallback called `stream_start` with no checks (i10) | Passes (d22 item 7) |
+| `Controller.Stall` | `connection_status` gives `true` with no frames. One `stream_stop`, then the start sequence and one `stream_start`. No more calls in the next 1 s. State `kStalled`. | No rule | Passes (d22 item 8) |
+| `Controller.FaultedRetry` | A reconnect finds a mismatch, and the fake ignores the write. State `kFaulted`, and the feed stays open. The fake then accepts the write. A `get_image` runs the start sequence and returns a frame. State `kStreaming`. | No retry point | Passes |
 | `Controller.NoUserStreamStopped` | No lease. Inject 3 frames. The worker calls `stream_stop` within 200 ms. | A reconnect restart runs with no user (facts 1.9.7) | Passes (d22 item 9) |
 | `Controller.Linger` | Linger 500 ms. Release, then a get image after 100 ms. One `stream_start` in total. | No linger | Passes (d25) |
-| `Controller.Shutdown` | A thread waits in `Feed::take`. `shutdown()` makes it return `kFeedClosed`. Log ends with `stream_stop`. A later `feed_open` returns `kFeedClosed`. | No controller | Passes (ic4) |
-| `Controller.FeedOutlivesController` | Destroy the controller, then close the `Feed`. No crash under AddressSanitizer. | No controller | Passes |
+
+Lifecycle and ownership:
+
+| Test | Checks | Old behavior | New behavior |
+|---|---|---|---|
+| `Controller.QueuedBeforeStart` | A `get_image` posted before `start` waits. `start` runs 200 ms later. The request returns a frame. | No rule (i15) | Passes |
+| `Controller.InitFailure` | `WorkerInit` returns a gateway error. A queued `feed_open` returns `kFeedClosed`. `start` returns the init error. A later `get_image` returns `kFeedClosed`. State `kShutDown`. | Queued callers had no result (i15) | Passes |
+| `Controller.ShutdownFromInit` | `WorkerInit` calls `shutdown()`. `start` returns within 100 ms with no deadlock. State `kShutDown`. | A worker call would join its own thread (i15) | Passes |
+| `Controller.Shutdown` | A thread waits in `Feed::take`, and another waits in a warm `get_image`. `shutdown()` makes both return `kFeedClosed`. The log ends with `close_admission` and `stream_stop`, all on the worker thread. A later `feed_open` returns `kFeedClosed`. | No controller | Passes (ic4) |
+| `Controller.DestroyWithPendingRequest` | `stream_start` blocks 1 s. A `get_image` waits. The test destroys the controller. The `get_image` returns `kFeedClosed`. No error under AddressSanitizer. | No destructor rule (i15) | Passes |
+| `Controller.FeedOutlivesController` | Destroy the controller, then close the `Feed`. No error under AddressSanitizer. | No controller | Passes (ic2 rule 7, i26) |
+| `Controller.FeedDestroyDuringShutdown` | One thread destroys a `Feed` while another runs `shutdown()`, 1000 times. No error under ThreadSanitizer and AddressSanitizer. | The worker shared the subscription (i26) | Passes. The `LeaseLink` lock orders the two closes |
 
 ### Tier 2: adapter with ROS, no driver
 
@@ -1183,13 +1514,17 @@ Each test uses `FakeCameraGateway` and `FakeFrameSource`. A test asserts on `cal
 | Test | Checks | Old behavior | New behavior |
 |---|---|---|---|
 | `Adapter.TopicName` | Namespace `"/acq_test/"` gives the topic `/acq_test/image_raw` | No project subscriber (facts 1.1.1) | Passes (d8) |
+| `Adapter.EmptyNamespace` | Namespace `""` returns `kSourceCreateFailed` | No project subscriber | Passes (i8) |
 | `Adapter.QosMatches` | `matched_publishers()` reaches 1 within 2 s with the RELIABLE publisher | No project subscriber (facts 1.1.1) | Passes (d9, d17) |
 | `Adapter.QosIsBestEffort` | The graph shows the reader with BEST_EFFORT, KEEP_LAST 2 | A default reader is RELIABLE | Passes (d9) |
 | `Adapter.Conversion` | A 4 x 2 `mono8` message with a host stamp. The frame has the same width, height, step, encoding, `is_bigendian`, `tf_frame`, stamp in ns, and bytes. | No project frame | Passes (d3) |
 | `Adapter.SequenceAcrossDiscards` | One message before `open_admission`, two after. Sequences 1, 2, 3. Admitted frames carry 2 and 3. | No sequence | Passes (d11) |
 | `Adapter.StampBasis` | A message with stamp 12673 s. `discarded_stamp_basis` is 1. | Device stamps pass | Passes (ic3) |
-| `Adapter.NoPixelCopy` | The frame span points into the received message data | v1 also keeps the message (v1 §6.1). The test guards the rule. | Passes (d4) |
+| `Adapter.NoPixelCopy` | A node with intra-process communication on. The test fills a `std::unique_ptr<Image>` and records `msg->data.data()`. It publishes the pointer. `frame.pixels().data()` equals the recorded address, and the span size equals `data.size()`. | v1 also keeps the message (v1 §6.1). The test guards the rule. | Passes (d4) |
 | `Adapter.TransportLostPresent` | With Cyclone DDS, `transport_lost` has a value | No counter | Passes (d12) |
+
+1. `[F]` With intra-process communication, rclcpp moves a published `unique_ptr` into one `shared_ptr` when no subscription needs ownership. It gives that pointer to each const subscription with no copy (`ros:ros2/rclcpp/rclcpp/include/rclcpp/experimental/intra_process_manager.hpp:243-248`). The adapter callback takes `std::shared_ptr<const Image>` (ic2 adapter item 3). So the received buffer is the published buffer, and the test can compare addresses.
+2. `Adapter.NoPixelCopy` uses its own node. The other tests keep the DDS path.
 
 ### Tier 3: driver and camera, `camera_feed_probe`
 
@@ -1197,29 +1532,89 @@ Each test uses `FakeCameraGateway` and `FakeFrameSource`. A test asserts on `cal
 
 | Mode | Steps | Pass condition | Old behavior |
 |---|---|---|---|
-| `bringup` | The bring-up check in the bring-up section | All five steps pass | `use_ros_time` false and a camera-clock stamp fail it |
-| `feed` | Open a feed for 30 s at the profile. Record the rate, the counters, the callback time, and the match time (T12). | 29 to 31 Hz. `discarded_*` all 0. `transport_lost` 0. `queue_evictions` less than 1 % of `frames_delivered`. | No feed exists. The CLI reader showed 30.010 Hz (c3 §3 item 4), which is the reference. |
+| `bringup` | Part B of the bring-up rig check, after part A | All nine steps pass | `use_ros_time` false, no `settings_file`, and a camera-clock stamp fail it |
+| `feed` | Open a feed for 30 s at the profile. Record the rate, the counters, `callback_ns_max`, `callback_ns_total / frames_received`, and the match time. | 29 to 31 Hz. `discarded_*` all 0. `transport_lost` 0. `queue_evictions` less than 1 % of `frames_delivered`. | No feed exists. The CLI reader showed 30.010 Hz (c3 §3 item 4), which is the reference. |
 | `load` | Same as `feed` with `profile.acquisition_frame_rate:=69.71556` for 30 s, then 10 s at 30 Hz | 69 to 70.5 Hz. The camera ends at the 30 Hz profile. | No feed exists. The reference is 69.721 Hz (c1 §3.3). |
 | `rtt` | 50 `feature_enum_get PixelFormat` calls while stopped, then 50 while streaming at 69.7 Hz. Report the median and the 95th percentile. | Report only. If the streaming median is more than 5 ms above the stopped median, d5 moves the image subscription to a second node. | Not measured |
 | `get_image` | 10 cold calls 2 s apart, then 10 warm calls with a feed open | Each returns a frame. Each `receive_seq` is above the value at the request. Cold times under 2 s. Warm times under 67 ms. | Not possible with the gateway alone |
-| `stamps` | Needs the driver with `use_ros_time:=false`. No controller. The gateway starts the stream at 30 Hz, then at 69.7 Hz, 30 s each. A raw subscription with `rclcpp::MessageInfo` records header stamp deltas and source timestamp deltas. | Report only. The two d20 conditions: delta spread within 0.5 period with no loss, and agreement with the driver "frames missing" log under load. | Not measured (d12 item 3, d20 item 6) |
+| `stamps` | Needs the driver with `use_ros_time:=false`. No controller. See "Stamp run" | Report only. The two d20 item 7 conditions, or "inconclusive" | Not measured (d12 item 3, d20 item 6) |
+| `wedge` | The probe part of the tier 4 wedge check. The probe keeps one controller alive across a driver restart | See tier 4 | Not possible with the gateway alone |
 
 1. The probe prints the RMW name and the two `rmem` values (bring-up host check).
 2. The probe restores the 30 Hz profile at the end of each mode that changes it.
-3. `[Q]` The `stamps` mode needs load to test the second d20 condition. The probe can add a second subscriber with a slow consumer. The method stays open until the first run.
+3. The match time starts when `VimbaXFrameSource::create` returns. It ends at the first 10 ms poll with `matched_publishers() >= 1`. The limit is 5 s. This is the T12 value. The match wait inside the start sequence is also logged, and it is near 0 on a warm system.
+4. The callback time comes from `callback_ns_max` and `callback_ns_total` in `FrameSourceStats`. The interval runs from the first `steady_now()` read after sequence assignment to the read after the deferred releases (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:125`, `:130`, `:132`).
+
+Stamp run, `mode:=stamps`:
+
+1. The probe makes a raw subscription with `rclcpp::MessageInfo`, RELIABLE, KEEP_LAST 10. It waits for `get_publisher_count() >= 1` for at most 1000 ms before it starts the stream. With no match, it stops and reports.
+2. The gateway starts the stream at 30 Hz for 30 s. Then it starts it at 69.7 Hz for 30 s. The probe records the wall time of each `stream_start` reply and each `stream_stop` request.
+3. For each message, the probe records the device stamp from `header.stamp` and the `source_timestamp` from `MessageInfo`.
+4. The operator writes the driver console output to a file over the same interval. Each line has a wall-clock time (`ros:ros2/rcutils/src/logging.c:89`).
+
+Gap rules, after the run:
+
+1. A device gap is a pair of messages whose device stamp delta is more than 1.5 nominal periods. Its size is the delta divided by the period, rounded, minus 1.
+2. A driver gap is a `N frames missing` line between the start reply and the stop request. The driver logs it from the SDK frame id, before it publishes the frame after the gap (`driver:vimbax_camera/src/vimbax_camera_node.cpp:1595-1603`).
+3. A device gap matches a driver gap if the sizes are equal and the log time is within 50 ms before the `source_timestamp` of the first message after the gap.
+4. A matched device gap is a driver gap. An unmatched device gap is a reader gap, a loss between publish and this reader.
+5. A driver gap with no matched device gap is a miss of the device stamp counter.
+
+Result rules:
+
+1. Condition 1 of d20 item 7: the 30 Hz run has no device gap and no driver gap, and the delta spread stays within 0.5 period.
+2. Condition 2: in the 69.7 Hz run, each driver gap has a matched device gap, and no reader gap occurs.
+3. If the 69.7 Hz run has no driver gap, condition 2 is inconclusive. It does not pass.
+4. If a reader gap occurs, condition 2 is inconclusive, because a reader gap can hide a driver gap.
+
+`[Q]` The 69.7 Hz run may give no driver gap. The tier 4 outside reader runs at the same time to add load. If no gap occurs in two runs, the report states "inconclusive", and L1 stays open.
 
 ### Tier 4: short hardware checks
 
-Each check takes less than 5 minutes. An operator runs it.
+Each check takes less than 5 minutes. An operator runs them in the order of the table. The driver uses the default launch arguments, so host stamps are on, except in the stamp check.
 
-| Check | Steps | Pass condition | Old behavior |
-|---|---|---|---|
-| Unplug | 1. Start `camera_feed_probe` with `mode:=feed` and 120 s. 2. After 20 s, pull the PoE cable for 10 s. 3. Plug it in. | `status()` goes to `kOutage` within 400 ms of the last frame. After the reconnect, frames arrive with epoch 2. The feed stays open. | v1 assumed that the driver does not restart the stream (facts A28). With no controller, nothing reports the outage. |
-| Wedge | 1. Stop the stream. 2. Write `PixelFormat` `Mono10` with the CLI. 3. Call `stream_start` with the CLI. It fails and leaves `kStarting`. 4. Run `mode:=feed`. 5. Restart the driver. | Step 4 gives `kStreamWedged`. After step 5, `status()` leaves `kWedged`, and a new feed works at Mono8. | The driver stays wedged, and each start returns -15 (facts 1.4.3) |
-| Settings load | 1. Start the driver with `settings_file:=/nonexistent.xml`. 2. Change `ExposureTime` with the CLI. 3. Run `mode:=feed`. | The controller corrects `ExposureTime` and streams at 30 Hz | The driver only logs the failed load (`driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`) |
-| Outside reader | Run `ros2 topic hz` with `--qos-reliability reliable` during `mode:=load` | Report `transport_lost`, the driver "frames missing" log, and the probe rate | Not measured. Tests T9. |
+| Order | Check | Steps | Pass condition | Old behavior |
+|---|---|---|---|---|
+| 1 | Unplug | 1. Start `camera_feed_probe` with `mode:=feed` and 120 s. 2. After 20 s, pull the PoE cable for 10 s. 3. Plug it in. | `status()` goes to `kOutage` within 400 ms of the last frame. After the reconnect, frames arrive with epoch 2. The feed stays open. | v1 assumed that the driver does not restart the stream (facts A28). With no controller, nothing reports the outage. |
+| 2 | Settings load | 1. Start the driver with `settings_file:=/nonexistent.xml`. 2. Change `ExposureTime` with the CLI. 3. Run `mode:=feed`. | The driver log has the `Loading settings from file` error. The controller stops, corrects `ExposureTime`, and streams at 30 Hz | The driver only logs the failed load (`driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`) |
+| 3 | Outside reader and stamp run | 1. Relaunch the driver with `use_ros_time:=false`. 2. Start the outside reader. 3. Run `mode:=stamps`. 4. Stop the outside reader. | Report the stamp results with the gap rules, the driver gap lines, and the outside reader loss lines | Not measured. Tests T9 and d20 item 7. |
+| 4 | Host stamps back | 1. Stop the driver. 2. Launch it with the default arguments. 3. Run `ros2 param get /vimbax_camera/vimbax_camera use_ros_time`. | It prints `True` | Without this step, a later feed discards each frame for stamp basis |
+| 5 | Wedge | See the steps below | See the steps below | The driver stays wedged, and each start returns -15 (facts 1.4.3) |
 
-The wedge check leaves the driver wedged until step 5. Run it last.
+The outside reader is a separate RELIABLE reader process:
+
+```sh
+ros2 topic echo --qos-reliability reliable --qos-depth 10 \
+  --field header.stamp /vimbax_camera/image_raw > outside_reader.log
+```
+
+1. `[F]` Jazzy `ros2 topic hz` has only `--window`, `--filter`, and `--wall-time`, and no QoS option (`ros:ros2/ros2cli/ros2topic/ros2topic/verb/hz.py:64-83`). `ros2 topic echo` takes `--qos-reliability` and `--qos-depth` (`ros:ros2/ros2cli/ros2topic/ros2topic/verb/echo.py:60`, `ros:ros2/ros2cli/ros2topic/ros2topic/api/__init__.py:223-256`).
+2. `ros2 topic echo` deserializes each full 1337472-byte message in Python before it prints the field. It is therefore a slow RELIABLE reader, which is the T9 case.
+3. The outside reader prints a line when it sees lost messages, unless `--no-lost-messages` is set (`ros:ros2/ros2cli/ros2topic/ros2topic/verb/echo.py:94-95`).
+
+Wedge check steps. The scripted gateway tests in tier 1 check the recovery logic (`WedgeOnStartTimeout`, `WedgeCleared`, `WedgePollErrorKeepsWedge`). This check proves only what the fake cannot: the real driver wedge, and the detection of a real driver restart by one live controller.
+
+1. Make sure that the driver runs with host stamps, after check 4.
+2. With the CLI and the stream stopped, write `PixelFormat` `Mono10`.
+3. Call `stream_start` with the CLI. It returns -18 and leaves `kStarting` (c1 §3.1 item 2).
+4. With the CLI, write `PixelFormat` `Mono8`. Read it back.
+5. If the read in step 4 is not `Mono8`, stop the check. Record that the rig cannot restore the format while wedged. The tier 1 tests then cover wedge recovery.
+6. Start `camera_feed_probe` with `mode:=wedge`. It calls `feed_open` every 2 s and prints `status()` every 1 s.
+7. Wait until the probe prints `kWedged`.
+8. Restart the driver process with the default arguments. Do not stop the probe.
+9. Wait until the probe prints a successful `feed_open`. The probe then reads the feed for 10 s and exits.
+
+Pass condition:
+
+1. The first `feed_open` returns `kStreamWedged`. The log shows readback, match, `open_admission`, `stream_start` with -15, and a reconciliation stop with -15.
+2. After step 8, the same controller leaves `kWedged` after one confirmation stop.
+3. The next `feed_open` succeeds at Mono8. The feed gives 29 to 31 Hz for 10 s, with an epoch above the epoch before the wedge.
+
+Notes on the wedge check:
+
+1. `[F]` The format refusal returns before `CaptureStart`, so the camera does not acquire (`driver:vimbax_camera/src/vimbax_camera.cpp:427-431`, `:484`). The driver feature setter does not check the stream state (`driver:vimbax_camera/src/vimbax_camera.cpp:964-976`). `[A]` The camera therefore accepts the `PixelFormat` write in step 4. Step 5 handles the case where it does not.
+2. Step 4 makes the controller readback match. Without it, the controller would correct Mono10 by a write and hide the order of the wedge path.
+3. The wedge check leaves the driver wedged until step 8. It runs last.
 
 ### Coverage of register entries
 
@@ -1228,17 +1623,19 @@ The wedge check leaves the driver wedged until step 5. Run it last.
 | d5 | | | `rtt` | |
 | d9 | | `QosIsBestEffort` | `load` | Outside reader |
 | d10, d13 | `DropOldest`, `Busy` | | | |
-| d11, d24 | `SequenceFromOne`, `WarmFreshness` | `SequenceAcrossDiscards` | `get_image` | |
-| d12, d20 | `StampBasisDiscards` | `StampBasis` | `bringup`, `stamps` | |
-| d17 | `ColdFeedOrder`, `MatchTimeout` | `QosMatches` | `feed` | |
-| d18 | `CorrectiveWriteOrder`, `ProfileMismatch` | | `bringup` | Settings load |
-| d19 | `Wedge*`, `StartFailReconciled` | | | Wedge |
-| d22 | `SilenceToOutage`, `Reconnect*`, `Stall` | | | Unplug |
-| d26 | `DeadlinePassed`, `StopOutsideDeadline` | | `get_image` | |
+| d11, d24 | `SequenceFromOne`, `InFlightPushAfterLink`, `WarmFreshness`, `InFlightFrameSkipped` | `SequenceAcrossDiscards` | `get_image` | |
+| d12, d20 | `StampBasisDiscards` | `StampBasis` | `bringup`, `stamps` | Stamp run, host stamps back |
+| d14 | `EpochAndBits`, `FormatCorrectionBits` | | | |
+| d17 | `ColdFeedOrder`, `MatchTimeout`, `ExpiredDuringMatch` | `QosMatches` | `feed` | |
+| d18 | `CorrectiveWriteOrder`, `WriteNeedsConfirmedStop`, `WriteErrorReadbackDecides`, `ProfileMismatch` | | `bringup` | Settings load |
+| d19 | `Wedge*`, `StartFail*`, `FirstErrorMinus15`, `NoUserStopFails` | | `wedge` | Wedge |
+| d22 | `SilenceToOutage`, `RequestDuringOutage`, `Reconnect*`, `Stall`, `FaultedRetry` | | | Unplug |
+| d26, i27 | `DeadlinePassed`, `ExpiredInQueue`, `FeedOpenDeadline`, `StopOutsideDeadline` | | `get_image` | |
+| ic2, ic4 | `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, `InitFailure` | | | |
 
 ## 9. Proposed source tree
 
-Merged from `codex/source-tree.md` and `claude/source-tree.md`. All files stay in the two existing packages (d1). `[F]` `venimapping_camera` installs each header under `include/` and no header under `src/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Private headers therefore go under `src/frame_support/` and `src/acquisition_support/`, like the existing `src/gateway_support/`.
+Merged from `codex/source-tree.md` and `claude/source-tree.md` at checkpoint `ecba565`. All files stay in the two existing packages (d1). `[F]` `venimapping_camera` installs each header under `include/` and no header under `src/` (`src/venimapping_camera/CMakeLists.txt:58-63`). Private headers therefore go under `src/frame_support/` and `src/acquisition_support/`, like the existing `src/gateway_support/`.
 
 ### 9.1 Tree
 
@@ -1263,26 +1660,31 @@ src/
     ├── include/venimapping_camera/
     │   ├── types/error.hpp                     mod 2   kAcquisition, from_acquisition
     │   ├── types/acquisition_error.hpp         new 2   AcquisitionCode 1 to 11
-    │   ├── image_frame.hpp                     new 3   ImageFrameFields, ImageFrame
-    │   ├── frame_source.hpp                    new 3   FrameSource, FrameSubscription, stats types
+    │   ├── image_frame.hpp                     new 3   ImageFrameFields, ImageFrame, friend FrameFanout, private stage
+    │   ├── frame_source.hpp                    new 3   FrameSource, FrameSubscription, stats with callback duration
     │   ├── vimbax_frame_source.hpp             new 4   VimbaXFrameSource
     │   └── acquisition_controller.hpp          new 5-6 AcquisitionController, Feed, options, status
     ├── src/
     │   ├── image_frame.cpp                     new 3   layout check, shared frame block
     │   ├── frame_support/
-    │   │   ├── frame_fanout.hpp                new 3   private fan-out, clocks, on_message
-    │   │   └── frame_fanout.cpp                new 3   queues, admission, counters
-    │   ├── vimbax_frame_source.cpp             new 4   subscription, conversion, match count, message_lost
-    │   ├── acquisition_controller.cpp          new 5-7 worker, leases, start sequence, get image, recovery
+    │   │   ├── frame_fanout.hpp                new 3   FrameFanoutClock, FrameFanout, shared state, queue block
+    │   │   └── frame_fanout.cpp                new 3   queues, admission, counters, deferred releases
+    │   ├── vimbax_frame_source.cpp             new 4   clock and FrameFanout by value, subscription, conversion
+    │   ├── acquisition_controller.cpp          new 5-7 worker, requests, leases, start sequence, get image, recovery
     │   ├── acquisition_support/
+    │   │   ├── lease_link.hpp                  new 5   LeaseLink and the request state
     │   │   ├── profile_readback.hpp            new 5   readback, comparison, corrective writes
     │   │   ├── profile_readback.cpp            new 5   eight readback calls, five write groups
     │   │   └── stream_formats.hpp              new 5   Mono8 and Mono12 with significant_bits
     │   └── camera_feed_probe.cpp               new 8   temporary composition root and rig modes
     └── test/
         ├── fakes/
+        │   ├── test_clock.hpp, .cpp            new 3   TestClock with manual realtime and a hold point
         │   ├── fake_frame_source.hpp, .cpp     new 5   FakeFrameSource over FrameFanout
         │   └── fake_camera_gateway.hpp, .cpp   new 5   scripted CameraGateway with call log
+        ├── installed_consumer/
+        │   ├── CMakeLists.txt                  new 5   separate project, links the installed acquisition target
+        │   └── main.cpp                        new 5   calls AcquisitionController::create with stubs
         ├── acquisition_error_test.cpp          new 2
         ├── image_frame_test.cpp                new 3
         ├── frame_fanout_test.cpp               new 3
@@ -1296,45 +1698,49 @@ Paths in `venimapping_camera` are relative to `src/venimapping_camera/`.
 
 | File | Change | Step | Owner section | Purpose |
 |---|---|---|---|---|
-| `include/venimapping_camera/image_frame.hpp` | New | 3 | data-plane | `ImageFrameFields`, the checked `ImageFrame` factory, and read-only accessors for shared frame storage |
-| `include/venimapping_camera/frame_source.hpp` | New | 3 | data-plane | The ROS-free source and subscription ports, queue options, epoch result, and stats types |
+| `include/venimapping_camera/image_frame.hpp` | New | 3 | data-plane | `ImageFrameFields`, `ImageFrame::create`, read-only accessors, the `FrameFanout` friend, and the private `stage` factory |
+| `include/venimapping_camera/frame_source.hpp` | New | 3 | data-plane | The ROS-free source and subscription ports, queue options, epoch result, and stats types with both callback duration fields |
 | `src/image_frame.cpp` | New | 3 | data-plane | Layout validation and the shared frame block that keeps the type-erased pixel owner |
-| `src/frame_support/frame_fanout.hpp` | New | 3 | data-plane | The private fan-out, injectable clocks, and the message entry point for the adapter and the test fake |
-| `src/frame_support/frame_fanout.cpp` | New | 3 | data-plane | Bounded queues, pull and close, admission checks, and source and subscription counters |
+| `src/frame_support/frame_fanout.hpp` | New | 3 | data-plane | `FrameFanoutClock` and `FrameFanout` in `venimapping::camera::frame_support`. The shared state and queue block of concrete subscriptions |
+| `src/frame_support/frame_fanout.cpp` | New | 3 | data-plane | Bounded queues, pull and close, admission checks, and counters. Storage and list nodes before the lock. Frame holders and detached nodes released after the unlock |
 | `include/venimapping_camera/vimbax_frame_source.hpp` | New | 4 | data-plane | The pinned VimbaX adapter type and its factory over a caller-owned node |
-| `src/vimbax_frame_source.cpp` | New | 4 | data-plane | Subscribe to `image_raw`, convert each message, report publisher matches and RMW loss events |
+| `src/vimbax_frame_source.cpp` | New | 4 | data-plane | The production clock and `FrameFanout` by value in a private block. Empty namespace rejected. Image conversion, publisher matches, and RMW loss events |
 | `package.xml` | Change | 4 | data-plane | Add `sensor_msgs` |
 | `include/venimapping_camera/types/error.hpp` | Change | 2 | error-vocabulary | `ErrorDomain::kAcquisition = 2` and `Error::from_acquisition` |
 | `include/venimapping_camera/types/acquisition_error.hpp` | New | 2 | error-vocabulary | `AcquisitionCode` 1 to 11, `acquisition_error`, `is_acquisition`, `to_string` |
-| `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | control-plane | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions`, `GetImageOptions`, `StreamState`, `ControllerStatus`, `Feed`, `AcquisitionController` |
-| `src/acquisition_controller.cpp` | New | 5, 6, 7 | control-plane | Worker queue, leases, start sequence, get image, d19 recovery, silence and outage, shutdown |
-| `src/acquisition_support/profile_readback.hpp`, `.cpp` | New | 5 | control-plane | Readback, comparison, and corrective writes in the d18 order |
+| `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | control-plane | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `GetImageOptions`, `StreamState` with `kFaulted`, `ControllerStatus` with `last_reconciliation`, `Feed`, `AcquisitionController` |
+| `src/acquisition_controller.cpp` | New | 5, 6, 7 | control-plane | Worker queue, request state, leases, start sequence, get image, d19 recovery, state rules for new requests, silence and outage, `start`, `shutdown` |
+| `src/acquisition_support/lease_link.hpp` | New | 5 | control-plane | Private. `LeaseLink` with the mutex, the non-owning subscription pointer, and the shared request queue. The request state with its outcome and deadline |
+| `src/acquisition_support/profile_readback.hpp`, `.cpp` | New | 5 | control-plane | Readback, comparison, and corrective writes in the d18 order, each with `FeatureModule::kRemoteDevice` |
 | `src/acquisition_support/stream_formats.hpp` | New | 5 | control-plane | Driver gate formats that this camera offers, `Mono8` and `Mono12`, and their `significant_bits` |
-| `src/camera_feed_probe.cpp` | New | 8 | testing | Temporary. The phase 1 composition root and the rig check modes |
-| `test/fakes/fake_frame_source.hpp`, `.cpp` | New | 5 | testing | `FakeFrameSource` over `FrameFanout`, with `inject` and `set_matched_publishers` |
-| `test/fakes/fake_camera_gateway.hpp`, `.cpp` | New | 5 | testing | Feature map, per-selector `TriggerMode`, stream state, locks during a stream, call log |
+| `src/camera_feed_probe.cpp` | New | 8 | testing | Temporary. The phase 1 composition root and the rig check modes, also `wedge` |
+| `test/fakes/test_clock.hpp`, `.cpp` | New | 3 | testing | `TestClock`: real steady time, manual realtime, and a hold point in `steady_now()` |
+| `test/fakes/fake_frame_source.hpp`, `.cpp` | New | 5 | testing | `FakeFrameSource` over `FrameFanout`, with `inject`, `set_matched_publishers`, `subscriptions_opened`, and `subscription_stats` |
+| `test/fakes/fake_camera_gateway.hpp`, `.cpp` | New | 5 | testing | Feature map, per-selector `TriggerMode`, four stream states, the module check, locks during a stream, call log |
 | `test/acquisition_error_test.cpp` | New | 2 | testing | Fixed code numbers and the factory |
 | `test/image_frame_test.cpp` | New | 3 | testing | Layout checks, shared ownership, lifetime |
-| `test/frame_fanout_test.cpp` | New | 3 | testing | Sequence, admission, epoch, queue, close, and thread rules |
-| `test/vimbax_frame_source_test.cpp` | New | 4 | testing | Adapter over a RELIABLE test publisher, with no driver |
+| `test/frame_fanout_test.cpp` | New | 3 | testing | Sequence, admission, epoch, queue, close, hold, duration, and thread rules |
+| `test/vimbax_frame_source_test.cpp` | New | 4 | testing | Adapter over a RELIABLE test publisher, with no driver. One intra-process case for the pixel address |
 | `test/acquisition_controller_test.cpp` | New | 5, 6, 7 | testing | Controller cases against both fakes |
+| `test/installed_consumer/CMakeLists.txt`, `main.cpp` | New | 5 | implementation-sequence | A separate project that finds the installed package and links `venimapping_camera::venimapping_camera_acquisition` |
 | `CMakeLists.txt` | Change | 2 to 5, 8 | data-plane, control-plane, testing | See 9.3 |
 | bring-up files in 9.1 | New or change | 1 | bring-up | See section 7 |
 
 ### 9.3 Shared `CMakeLists.txt` in `venimapping_camera`
 
-Both planners edit this file. The register gives each part one owner (ic0).
+Both planners edit this file. The register gives each part one owner (ic0). The implementation sequence gives the join rule: each step adds one labeled block, and each library block has its own `install(TARGETS <target> EXPORT export_${PROJECT_NAME} ...)` call (section 10, "CMake layout").
 
 | Part | Owner | Step |
 |---|---|---|
-| `if(BUILD_TESTING)` block, `find_package(ament_cmake_gtest)`, test targets | testing, through the step that adds each test | 2 to 5 |
-| `venimapping_camera_frame_api` library over `venimapping_camera_gateway_api`, with install and export | data-plane | 3 |
-| `find_package(sensor_msgs)`, `venimapping_camera_vimbax_frame_source` with `rclcpp` and `sensor_msgs`, `ament_export_dependencies(sensor_msgs)` | data-plane | 4 |
-| `venimapping_camera_acquisition` library, links only the two ROS-free API targets | control-plane | 5 |
+| `if(BUILD_TESTING)` lines, `find_package(ament_cmake_gtest)` once, test targets | testing, through the step that adds each test | 2 to 5 |
+| `venimapping_camera_frame_api` library over `venimapping_camera_gateway_api`, with its own install and export call | data-plane | 3 |
+| `find_package(sensor_msgs)`, `venimapping_camera_vimbax_frame_source` with `rclcpp` and `sensor_msgs` and its own install and export call, `ament_export_dependencies(sensor_msgs)` | data-plane | 4 |
+| `venimapping_camera_acquisition` library, links only the two ROS-free API targets, with its own install and export call | control-plane | 5 |
 | `camera_feed_probe` executable and its install line | testing | 8 |
 
 1. `src/frame_support/` stays private. Test targets reach it through the package include path `src/` (Codex source tree, Claude note M8).
-2. Open issue i24: no step yet installs and exports `venimapping_camera_acquisition`, and steps 4 and 5 edit this file in parallel.
+2. The shared `install(TARGETS ...)` call and the `ament_export_targets` line do not change (i24).
+3. Steps 4 and 5 can merge in either order. The step that merges second rebases. The only conflict is the insertion point of the two blocks.
 
 ### 9.4 Files that do not change
 
@@ -1348,7 +1754,7 @@ Both planners edit this file. The register gives each part one owner (ic0).
 
 ## 10. Implementation sequence
 
-Source: `claude/sections/implementation-sequence.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. Open issues on this section: i19 to i21, i24.
+Source: `claude/sections/implementation-sequence.md`, owner Claude. The coordinator changed only the heading levels and removed the repeated label line. Open issues on this section: i19, i31.
 
 The work lands in nine steps and one conditional step. Each step builds alone, passes its own exit check, and leaves no code that a later step must repair. The order follows the build rules in ic8.
 
@@ -1370,8 +1776,21 @@ Paths are relative to `src/venimapping_camera/` unless the row names `src/venima
 | 9a | Conditional executor split | data-plane, testing | 8 | Yes |
 
 1. Steps 1 and 2 can land in either order.
-2. Step 4 and steps 5 to 7 can run in parallel after step 3. They touch different files.
+2. Step 4 and steps 5 to 7 can run in parallel after step 3. Both step 4 and step 5 edit `CMakeLists.txt`. "CMake layout" gives the rule that joins them.
 3. `[F]` The gateway already has every call that the controller needs (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:35-110`). No step changes the gateway (d2).
+
+### CMake layout
+
+`[F]` Today, one `install(TARGETS ...)` call installs and exports both libraries into `export_${PROJECT_NAME}`, and `ament_export_targets` exports that set (`src/venimapping_camera/CMakeLists.txt:65-74`). A target that no `install(TARGETS ... EXPORT ...)` call names is not in the installed package.
+
+Rules for steps 2 to 8:
+
+1. Each step adds one labeled block, like the existing `# --- venimapping_camera_vimbax_gateway ---` block (`src/venimapping_camera/CMakeLists.txt:32-48`).
+2. A library block has its own `install(TARGETS <target> EXPORT export_${PROJECT_NAME} ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)` call. CMake accepts several calls with one export set.
+3. A block adds its test targets inside its own `if(BUILD_TESTING)` lines. Step 2 adds `find_package(ament_cmake_gtest REQUIRED)` one time.
+4. The shared `install(TARGETS ...)` call and the `ament_export_targets` line do not change.
+5. Only step 4 edits `ament_export_dependencies`, to add `sensor_msgs`.
+6. Steps 4 and 5 can merge in either order. The step that merges second rebases on the first. With rules 1 to 5, the only conflict is the insertion point of the two blocks.
 
 ### Step 1. Bring-up parameters and files
 
@@ -1391,14 +1810,18 @@ Work:
 2. Add the parameters, the launch arguments, and the profile file.
 3. Add the pytest test.
 
-Exit check:
+Exit check. The feed probe comes in step 8, so this check uses the CLI. It does the bring-up part A and the CLI form of part B.
 
 1. `colcon build --packages-select venimapping_bringup` succeeds.
 2. `colcon test --packages-select venimapping_bringup` passes.
-3. On the rig, launch the driver. `ros2 param get /vimbax_camera/vimbax_camera use_ros_time` prints `True`.
-4. `ros2 topic list` shows no topic that starts with `/vimbax_camera/image_raw/`.
-5. CLI reads of the seven profile values match `acquisition_profile.yaml`.
-6. `camera_gateway_probe` passes as before.
+3. On the rig, do part A of the bring-up rig check. The second launch log has no line that starts with `Loading settings from file`.
+4. `ros2 param get /vimbax_camera/vimbax_camera use_ros_time` prints `True`.
+5. `ros2 param get /vimbax_camera/vimbax_camera settings_file` prints the installed path of `camera_settings.xml`. The file exists at that path.
+6. `ros2 param get /vimbax_camera/vimbax_camera image_raw.enable_pub_plugins` prints only `image_transport/raw`.
+7. `ros2 topic info /vimbax_camera/image_raw` prints `Publisher count: 1`.
+8. `ros2 topic list` shows no topic that starts with `/vimbax_camera/image_raw/`.
+9. CLI reads of the seven profile values match `acquisition_profile.yaml`. Write `TriggerSelector` `FrameStart` before the `TriggerMode` read. After part A, a match proves that the file set `ExposureTime` and `AcquisitionFrameRate`.
+10. `camera_gateway_probe` passes as before.
 
 `[F]` No project code reads image stamps today (facts 1.1.1), so `use_ros_time: true` breaks nothing.
 
@@ -1417,7 +1840,7 @@ Exit check:
 2. `colcon test --packages-select venimapping_camera` runs `test_acquisition_error`, and it passes.
 3. `camera_gateway_probe` builds with no source change.
 
-This step is first among the C++ steps, because each later target returns these codes (ic8 rule 1).
+This step is first among the C++ steps, because each later target returns these codes (ic8 rule 1). The headers belong to the existing INTERFACE target, which the shared install call already exports.
 
 ### Step 3. Frame API
 
@@ -1427,7 +1850,8 @@ Files, owned by the data-plane section:
 - `include/venimapping_camera/frame_source.hpp`, new
 - `src/image_frame.cpp`, new
 - `src/frame_support/frame_fanout.hpp`, `src/frame_support/frame_fanout.cpp`, new
-- `CMakeLists.txt`: the library `venimapping_camera_frame_api`, its install and export lines, and the targets `test_image_frame` and `test_frame_fanout`
+- `CMakeLists.txt`: the block for `venimapping_camera_frame_api`, with its install and export call, and the targets `test_image_frame` and `test_frame_fanout`
+- `test/fakes/test_clock.hpp`, `.cpp`, new
 - `test/image_frame_test.cpp`, `test/frame_fanout_test.cpp`, new
 
 Exit check:
@@ -1437,6 +1861,8 @@ Exit check:
 3. `git grep -n -E 'rclcpp|sensor_msgs' -- src/venimapping_camera/include/venimapping_camera/image_frame.hpp src/venimapping_camera/include/venimapping_camera/frame_source.hpp src/venimapping_camera/src/image_frame.cpp src/venimapping_camera/src/frame_support` prints nothing.
 4. `test_frame_fanout` passes under ThreadSanitizer, with `-fsanitize=thread`.
 
+`TestClock` lands here, because `test_frame_fanout` needs it. Step 5 uses it again.
+
 ### Step 4. VimbaX frame source
 
 Files, owned by the data-plane section:
@@ -1444,7 +1870,7 @@ Files, owned by the data-plane section:
 - `include/venimapping_camera/vimbax_frame_source.hpp`, new
 - `src/vimbax_frame_source.cpp`, new
 - `package.xml`: `<depend>sensor_msgs</depend>`
-- `CMakeLists.txt`: `find_package(sensor_msgs REQUIRED)`, the library `venimapping_camera_vimbax_frame_source`, its export, `ament_export_dependencies(sensor_msgs)`, and the target `test_vimbax_frame_source`
+- `CMakeLists.txt`: `find_package(sensor_msgs REQUIRED)`, the block for `venimapping_camera_vimbax_frame_source` with its install and export call, `sensor_msgs` in `ament_export_dependencies`, and the target `test_vimbax_frame_source`
 - `test/vimbax_frame_source_test.cpp`, new
 
 Exit check:
@@ -1456,46 +1882,53 @@ Exit check:
 
 Files:
 
-- `include/venimapping_camera/acquisition_controller.hpp`, new: `AcquisitionProfile`, `ControllerOptions`, `FeedOptions`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController`
-- `src/acquisition_controller.cpp`, new: the worker queue, leases, `feed_open`, `Feed`, the start sequence, the readback and corrective writes, the d19 recovery, and `shutdown`
+- `include/venimapping_camera/acquisition_controller.hpp`, new: `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController`
+- `src/acquisition_controller.cpp`, new: the worker queue, the request state and its check points, leases, `feed_open`, `Feed`, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
+- `src/acquisition_support/lease_link.hpp`, new
 - `src/acquisition_support/profile_readback.hpp`, `.cpp`, new
 - `src/acquisition_support/stream_formats.hpp`, new
 - `test/fakes/fake_frame_source.hpp`, `.cpp`, new
 - `test/fakes/fake_camera_gateway.hpp`, `.cpp`, new
 - `test/acquisition_controller_test.cpp`, new
-- `CMakeLists.txt`: the library `venimapping_camera_acquisition`, which links only `venimapping_camera_gateway_api` and `venimapping_camera_frame_api`, and the target `test_acquisition_controller`
+- `test/installed_consumer/CMakeLists.txt`, `main.cpp`, new
+- `CMakeLists.txt`: the block for `venimapping_camera_acquisition`, which links only `venimapping_camera_gateway_api` and `venimapping_camera_frame_api`. The block has its own `install(TARGETS venimapping_camera_acquisition EXPORT export_${PROJECT_NAME} ...)` call and the target `test_acquisition_controller`
 
 In this step, the header has no `get_image` and no `GetImageOptions`. Step 6 adds them. The worker tick does nothing until step 7. Later steps add declarations and change no existing signature.
 
+`test/installed_consumer/` is a separate CMake project. It is not part of the package build. Its `CMakeLists.txt` calls `find_package(venimapping_camera REQUIRED)` and links `venimapping_camera::venimapping_camera_acquisition`. Its `main.cpp` calls `AcquisitionController::create` with a stub gateway and a stub source, so the link needs the library symbols.
+
 Exit check:
 
-1. `test_acquisition_controller` passes these cases: `ColdFeedOrder`, `SelectorBeforeMode`, `KeepsFramesBeforeReply`, `MatchTimeout`, `FormatRefusal`, `CorrectiveWriteOrder`, `ProfileMismatch`, `FloatTolerance`, `Busy` for feeds, `StartFailReconciled`, `WedgeOnStartTimeout`, `WedgeOnStopFailure`, `Shutdown`, and `FeedOutlivesController`.
+1. `test_acquisition_controller` passes these cases: `ColdFeedOrder`, `SelectorBeforeMode`, `RemoteDeviceModule`, `KeepsFramesBeforeReply`, `MatchTimeout`, `FormatRefusal`, `FormatCorrectionBits`, `WriteNeedsConfirmedStop`, `CorrectiveWriteOrder`, `WriteErrorReadbackDecides`, `ProfileMismatch`, `FloatTolerance`, `Busy` for feeds, `FeedOpenDeadline`, `StartFailReconciled`, `FirstErrorMinus15`, `WedgeOnStartTimeout`, `WedgeOnStopFailure`, `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, and `FeedDestroyDuringShutdown`.
 2. The acquisition target builds with no ROS include path. A configure-time check reads the `LINK_LIBRARIES` property of `venimapping_camera_acquisition` and fails on `rclcpp`.
 3. The suite passes under ThreadSanitizer and AddressSanitizer.
+4. After `colcon build`, source `install/setup.bash`. Then configure and build `test/installed_consumer` into a temporary build directory. The build links with no undefined symbol.
+
+Old behavior for check 4: no `install(TARGETS ...)` call names the acquisition target, so `find_package` gives no imported target, and the configure step fails.
 
 ### Step 6. Get image
 
 Files:
 
 - `include/venimapping_camera/acquisition_controller.hpp`: `GetImageOptions` and `get_image`
-- `src/acquisition_controller.cpp`: `get_image`, the caller-side deadline, the skip of frames with `receive_seq <= R`, and the worker release after a caller leaves
+- `src/acquisition_controller.cpp`: `get_image`, the caller-side deadline and take loop, the skip of frames with `receive_seq <= R`, and the worker release of an undelivered `Feed`
 - `test/acquisition_controller_test.cpp`: new cases
 
 Exit check:
 
-1. These cases pass: `LeaseCount`, `Busy` for get image, `WarmFreshness`, `InFlightFrameSkipped`, `DeadlinePassed`, and `StopOutsideDeadline`.
+1. These cases pass: `LeaseCount`, `Busy` for get image, `WarmFreshness`, `InFlightFrameSkipped`, `DeadlinePassed`, `ExpiredInQueue`, `ExpiredDuringMatch`, and `StopOutsideDeadline`.
 2. All step 5 cases still pass.
 
 ### Step 7. Silence, outage, and wedge recovery
 
 Files:
 
-- `src/acquisition_controller.cpp`: the 100 ms tick, the silence threshold, `kOutage`, `kConnectionUnknown`, `kStalled`, the reconnect path, the wedge poll, the stop of a stream with no user, and linger
+- `src/acquisition_controller.cpp`: the 100 ms tick, the silence threshold, `kOutage`, `kConnectionUnknown`, `kStalled`, `kFaulted`, the state rules for new requests, the reconnect path, the wedge poll and the confirmation stop, the stop of a stream with no user, and linger
 - `test/acquisition_controller_test.cpp`: new cases
 
 Exit check:
 
-1. These cases pass: `SilenceToOutage`, `ConnectionUnknown`, `ReconnectNewEpoch`, `ReconnectProfileChanged`, `ReconnectNoRestart`, `Stall`, `NoUserStreamStopped`, `WedgeCleared`, and `Linger`.
+1. These cases pass: `StartFailClearsQueue`, `NoUserStopFails`, `WedgeCleared`, `WedgePollErrorKeepsWedge`, `SilenceToOutage`, `ConnectionUnknown`, `RequestDuringOutage`, `ReconnectNewEpoch`, `ReconnectProfileChanged`, `ReconnectNoRestart`, `Stall`, `FaultedRetry`, `NoUserStreamStopped`, and `Linger`.
 2. All earlier cases still pass.
 3. The full controller suite runs in less than 30 s.
 
@@ -1503,12 +1936,12 @@ Exit check:
 
 Files:
 
-- `src/camera_feed_probe.cpp`, new: the phase 1 composition root, in the ic4 start and stop order, with the modes `bringup`, `feed`, `load`, `rtt`, `get_image`, and `stamps`
-- `CMakeLists.txt`: the executable `camera_feed_probe`, marked temporary, and its install line
+- `src/camera_feed_probe.cpp`, new: the phase 1 composition root, in the ic4 start and stop order, with the modes `bringup`, `feed`, `load`, `rtt`, `get_image`, `stamps`, and `wedge`
+- `CMakeLists.txt`: the executable `camera_feed_probe`, marked temporary, and its install line, like `camera_gateway_probe` (`src/venimapping_camera/CMakeLists.txt:71-72`)
 
-Exit check, on the rig:
+Exit check, on the rig, with the driver on the default launch arguments:
 
-1. `mode:=bringup` passes all five steps.
+1. Do part A of the bring-up rig check. Then `mode:=bringup` passes all nine steps of part B.
 2. `mode:=feed` gives 29 to 31 Hz with the counters in the testing section.
 3. `mode:=load` gives 69 to 70.5 Hz.
 4. `mode:=get_image` passes the cold and warm limits.
@@ -1518,16 +1951,17 @@ Exit check, on the rig:
 
 Files: none. The v2 document gets a results table.
 
-Work:
+Work, in this order:
 
-1. Run the unplug, settings load, and outside reader checks.
-2. Launch the driver with `use_ros_time:=false`. Run `mode:=stamps` at 30 Hz and at 69.7 Hz.
-3. Run the wedge check last.
+1. Run the unplug check and the settings load check, with host stamps.
+2. Relaunch the driver with `use_ros_time:=false`. Run the outside reader and `mode:=stamps` together, at 30 Hz and at 69.7 Hz.
+3. Relaunch the driver with the default arguments. Make sure that `use_ros_time` reads `True`.
+4. Run the wedge check last, with `mode:=wedge`.
 
 Exit check:
 
-1. The unplug, wedge, and settings load checks pass their conditions.
-2. The stamp results and the outside reader results are in the v2 document as input to L1 and L7.
+1. The unplug, settings load, and wedge checks pass their conditions. If the rig cannot restore `Mono8` while wedged, the report says so, and the tier 1 wedge tests are the evidence.
+2. The stamp results, with the gap rules, and the outside reader results are in the v2 document as input to L1 and L7. An inconclusive result is recorded as inconclusive.
 
 ### Step 9a. Conditional executor split
 
@@ -1556,7 +1990,7 @@ Exit check:
 
 ## 11. Camera findings
 
-Three short checks ran on the Alvium G1-130 VSWIR, device `DEV_000A471E3D7C`, over PoE at `/vimbax_camera` with `autostream` 0. `camera-log.md` records that the runner stopped the stream, restored and verified each listed feature, and left no driver process after each check. No draft, review, or fix task asked for a new check in round 1.
+Three short checks ran on the Alvium G1-130 VSWIR, device `DEV_000A471E3D7C`, over PoE at `/vimbax_camera` with `autostream` 0. `camera-log.md` records that the runner stopped the stream, restored and verified each listed feature, and left no driver process after each check. No draft, review, fix, or recheck task asked for a new check in rounds 1 and 2.
 
 ### 11.1 c1: formats, size, rate, stamps, start latency, access modes
 
@@ -1572,7 +2006,7 @@ Three short checks ran on the Alvium G1-130 VSWIR, device `DEV_000A471E3D7C`, ov
 | Driver loss log | No "frames missing" and no "Frame with status" line in about 3100 Mono8 and 630 Mono12 frames | c1 §3.7 |
 | Calibration | No calibration file exists for this camera | c1 §3.5 item 5 |
 
-Design effects: the format allow-list (d19), the byte bounds (d10, R5), the match before start (d17), the stamp basis check (ic3), and the rule that no shape write happens during a stream (d18).
+Design effects: the format allow-list (d19), the byte bounds (d10, R5), the match before start (d17), the stamp basis check (ic3), the rule that no shape write happens during a stream (d18), and the frames before the start reply that i17 and i21 depend on.
 
 ### 11.2 c2: software trigger
 
@@ -1581,10 +2015,10 @@ Design effects: the format allow-list (d19), the byte bounds (d10, R5), the matc
 | Trigger features (T6) | `TriggerSelector` `FrameStart`, `TriggerSource` `Software`, and the `TriggerSoftware` command exist. | c2 §3.1 |
 | One command, one frame | With `TriggerMode` `On` under `FrameStart`, each of the 7 commands that gave a frame gave exactly one. Commands 1 and 6 returned error code 0 and gave no frame. Command 1 had no selector write before it, and c2 attributes command 6 to a `status` call that moved the selector. | c2 §3.2, §3.3 |
 | Selector dependency | `TriggerSoftware` follows the current `TriggerSelector`. A `status` call between a selector write and a mode write sent the mode write to the wrong selector at least 3 times in 13 windows. | c2 §3.3 |
-| Selector during a stream | `TriggerSelector` is writable during acquisition. | c2 §3.3 item 7 |
+| Selector during a stream | `TriggerSelector` is writable during acquisition. Runner `status` calls moved it during both streams, and `TriggerMode` under `FrameStart` did not change. | c2 §3.3 item 7, §5 item 9 |
 | Latency | The frame arrives about 76 to 101 ms before the `command_run` reply. In-process, about 17 to 32 ms after the command is sent (derived). | c2 §3.4 |
 
-Design effects: the trigger stays out of phase 1 (d23, d27). The controller never calls `status` (d16). The selector write before each `TriggerMode` read (d18, i11).
+Design effects: the trigger stays out of phase 1 (d23, d27). The controller never calls `status` (d16). The selector write before each `TriggerMode` read, also during a reconnect stream (d18 item 7, i11).
 
 ### 11.3 c3: 30 Hz rate profile
 
@@ -1602,6 +2036,9 @@ Design effects: the phase 1 profile at 30 Hz (R4, d18), the write order with the
 2. `[Q]` The gateway round-trip time under image load. The `rtt` mode measures it (step 8, d5).
 3. `[Q]` `AcquisitionFrameRate` writability during a stream (T7). Phase 1 does not need it.
 4. `[Q]` The device stamp origin and its exposure event (T4).
+5. `[Q]` Whether the camera keeps service writes across a driver restart without a power cycle (P11). The bring-up part A check depends on it. The section gives a fallback if it does not.
+
+No open issue needs a camera check. Each one is a rule or a test in a section.
 
 ## 12. Changes from v1
 
@@ -1612,27 +2049,29 @@ v1 is `docs/architecture/image-acquisition-design-v1.md`. "Keep" means v2 uses t
 | Two ports: `CameraGateway` for control, a separate `FrameSource` for frames | 5 | Keep | A frame push does not fit the bound-worker gateway contract (d2). |
 | Ports are ROS-free, adapters are pinned, factories return `Expected`, C++23 | 4 | Keep | The code already follows these rules (facts A47). |
 | Add `StreamStart`, `StreamStop`, `FeatureCommandRun`, and int and bool calls to `CameraGateway` | 7, 13 phase A | Drop | The gateway already has all 30 methods (facts A3). |
-| No new package. New targets in `venimapping_camera` | 15.5 | Keep | The target graph already enforces the ROS-free rule (d1). |
+| No new package. New targets in `venimapping_camera` | 15.5 | Keep | The target graph already enforces the ROS-free rule (d1). Each new library gets its own install and export call (i24). |
 | `ImageFrame` keeps the received message alive. No pixel copy. | 6.1 | Keep | CycloneDDS gives a heap copy, and a copy adds 93.2 MB/s at Mono8 (d4). |
 | Frame fields `stamp_ns`, `frame_id`, `receive_seq` per subscription from 0 | 6.1, 15.1 | Change | `host_stamp_ns`, `tf_frame`, `is_bigendian`, `significant_bits`, `receive_seq` per source from 1, and `stream_epoch` (d3, d11, d14). Each name says what it holds. |
-| Pass the encoding unchanged, with no bit depth | 6.2 | Change | Pass unchanged and add `significant_bits` from the readback. The wire encoding hides the Mono12 shift (d14). |
+| String fields returned by const reference | 6.1 | Keep | A copy can throw inside a `noexcept` accessor (i6). |
+| Pass the encoding unchanged, with no bit depth | 6.2 | Change | Pass unchanged and add `significant_bits` from the final readback. The wire encoding hides the Mono12 shift (d14). |
 | Pull API with `Take`, `TryTake`, `Close` | 6.3 | Keep, with snake_case names | Pull keeps consumer code off the executor (d7). |
 | `Subscribe` follows the gateway bound-thread rules | 6.3 | Change | `FrameSource` methods are safe from any thread. In phase 1, only the worker calls them (ic2). |
 | One subscription per feed. RELIABLE, KEEP_LAST small, configurable | 6.4, 15.2 | Change | One subscription per source. BEST_EFFORT, KEEP_LAST 2, fixed (d9, d13). A RELIABLE reader can block the driver, and a history overwrite is invisible (facts X8). |
 | Queue capacity default 4, drop oldest | 6.4, 15.2 | Change | Default 1, range 1 to 4, drop oldest (d10). R9 gives newer frames priority. |
-| `FeedStats` with received, overflow, and transport loss | 6.4 | Change | Counters per subscription and per source, with three discard counters (d12). |
+| `FeedStats` with received, overflow, and transport loss | 6.4 | Change | Counters per subscription and per source, with three discard counters and two callback duration fields (d12, i2). |
 | RELIABLE delivery moves all loss into the project queue, where it is counted | 6.4, 14 | Drop | Wrong. A history overwrite raises no event (facts A41, X8). |
 | One node and one `SingleThreadedExecutor` thread | 6.5, 14 | Keep for phase 1 | The probe measures load and decides a split (d5). |
 | Policy layer on the gateway worker, no new concurrency | 8 | Keep | Through `start(WorkerInit)` (i29). |
 | `FeedOpen`: configure, subscribe, start. Close always stops. | 8.1 | Change | Leases, a match wait before each start, admission, and the last release stops (d16, d17). |
+| `FeedOpen` with no caller deadline | 8.1 | Change | `FeedOptions::deadline`, default 5000 ms (i27). A camera that does not answer would block a caller for about 50 s. |
 | `GetImage` S1 sample and S2 software trigger, chosen per call | 8.2, 15.4 | Change | S1 only. The trigger moves to phase 2 (d23, d27). R6 does not need exposure after the request, and a trigger must stop a feed (c1 §3.6). |
 | Freshness: drain the queue, then take the next frame | 8.2 | Change | A new subscription after the request plus a `receive_seq` cutoff (d24, i12). |
 | Cold `GetImage` makes a temporary subscription. A persistent one is later tuning. | 8.2 | Change | The subscription lives as long as the source (d25). The v1 reason, an rclcpp rule against temporary subscriptions, has no source (facts A69). |
 | `GetImageOptions::timeout` | 15.4 | Change | One deadline, default 2000 ms. The stop is outside it (d26). |
-| Configuration verified by readback, with no fixed source | 8.3 | Change | `settings_file` applies the profile at each open. The controller reads back and corrects while stopped (d18). |
-| Frame rate is the run-time knob | 8.3 | Change | No feature write during a stream in phase 1. The 30 Hz profile needs the enable first (c3). |
+| Configuration verified by readback, with no fixed source | 8.3 | Change | `settings_file` applies the profile at each open. The controller reads back and corrects only after a confirmed stop (d18). |
+| Frame rate is the run-time knob | 8.3 | Change | No acquisition value write during a stream in phase 1. Only the `TriggerSelector` write before a `TriggerMode` read is allowed (d18 item 7). The 30 Hz profile needs the enable first (c3). |
 | A take timeout makes the consumer check the connection. The driver does not restart the stream. | 8.4, 14 | Change | The worker checks silence on a 100 ms tick. The driver does restart the stream after a reopen (facts A28, d22). |
-| -15 means a start or stop raced a transition | 3.2 | Drop | Wrong (facts X1). -15 means a wedged state. d19 handles it. |
+| -15 means a start or stop raced a transition | 3.2 | Drop | Wrong (facts X1). -15 means a wedged state, unless the reconciliation stop then succeeds. d19 handles it. |
 | No new error domain. Non-contractual diagnostics. | 9 | Change | Contractual `kAcquisition` domain with 11 codes (d6). A caller cannot act on a private code. |
 | `use_ros_time: true` | 10 | Keep, as a working assumption | The d20 verdicts disagree. Logan decides (L1). |
 | `camera_info_url` to a project calibration file | 10 | Drop for phase 1 | No calibration exists, and R11 needs none (d15). |
@@ -1641,14 +2080,14 @@ v1 is `docs/architecture/image-acquisition-design-v1.md`. "Keep" means v2 uses t
 | Plain rclcpp reader, not `image_transport` | 11 | Keep | Add a raw-only publisher filter in bring-up (d8). |
 | Direct VmbC adapter as a later escape hatch | 11 | Keep, deferred | The driver opens the camera in exclusive mode, so the swap also moves capture and reconnect into the project (d8). |
 | ROS get image service deferred | 11 | Keep | R1 names one in-process consumer (d29). |
-| Two test tiers: unit on fakes and a probe | 12 | Change | Four tiers, with a ROS adapter tier and short hardware checks (section 8). |
+| Two test tiers: unit on fakes and a probe | 12 | Change | Four tiers, with a ROS adapter tier and five short hardware checks (section 8). |
 | Phases A to D | 13 | Change | Nine steps and one conditional step. Phase A is already done (section 10). |
 | No driver patch named | 14 | Change | No patch in phase 1. Four candidate patches go to Logan (d21, L3). |
-| `detail/frame_queue` and `detail/frame_factory` | 15.5 | Change | `src/frame_support/frame_fanout` and `src/acquisition_support/` (section 9). |
+| `detail/frame_queue` and `detail/frame_factory` | 15.5 | Change | `src/frame_support/frame_fanout` and `src/acquisition_support/`, with `lease_link.hpp` (section 9). |
 
 ## 13. Decisions for Logan
 
-Each question changes an interface, an owner, or a package. A question that changes only one profile value is not in this list. The recommended default is the working assumption that v2 uses now.
+Each question changes an interface, an owner, or a package. A question that changes only one profile value is not in this list. The recommended default is the working assumption that v2 uses now. Round 2 adds no question.
 
 ### L1. Host header stamp or camera-side loss count
 
@@ -1659,7 +2098,7 @@ Each question changes an interface, an owner, or a package. A question that chan
   3. Both are needed. The driver must publish both stamps. This is a new patch for L3.
   4. Neither is needed. Keep `use_ros_time: true`.
 - Recommended default: option 1 or 4, the current assumption. It has fewer parts, and the reversal adds one field and changes no consumer code (d20).
-- Entries: d20, d12, R9, R10.
+- Entries: d20, d12, R9, R10, i30.
 
 ### L2. Consumer outside the process
 
@@ -1740,23 +2179,26 @@ Each question changes an interface, an owner, or a package. A question that chan
 
 ## 14. Recorded disagreements
 
-These disagreements remain after the register, the drafts, and the reviews. The design follows the column "v2 uses". The review findings that are still open are in `issues.md`, not here.
+These disagreements remain after the register, the drafts, the reviews, and the round 1 fixes and rechecks. The design follows the column "v2 uses". Findings that are still open are in `issues.md`. This table lists an open issue only where the fix and the recheck take opposite positions.
 
 | Entry | Claude position | Codex position | Evidence | v2 uses | State |
 |---|---|---|---|---|---|
 | d20, timestamp source | Keep `use_ros_time: false`. Fill `host_stamp_ns` from the DDS source timestamp. Add an optional device stamp and a provisional `stamp_gap_frames`. | Set `use_ros_time: true`. Fill one `host_stamp_ns` from the header. No gap counter until a probe run proves it. | Both stamps mark a driver event on host `CLOCK_REALTIME` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:1608-1609`, `ros:ros2/rmw_cyclonedds/rmw_cyclonedds_cpp/src/rmw_node.cpp:1965-1970`). No check measured the device stamp delta spread. | Codex verdict, as a working assumption | For Logan, L1 (i30) |
+| d26 and i14, a frame queued after the deadline | The `take` result decides. A frame that `take` returns is the answer, also if the clock passed the deadline during the wake-up. A recheck after `take` discards a valid frame and changes no return bound. | Enforce the absolute deadline when the caller accepts a frame. A `take` with a timeout of 0 or less acts as `try_take`, so the loop can return a frame queued after expiry. | `claude/sections/control-plane.md:328`, `:332`. `codex/sections/data-plane.md:100`. Register d26 item 4: "A passed deadline returns `kDeadlinePassed`." | The Claude section text | Open in i14. `integrate-3` opens a dispute if round 2 does not settle it. |
 | d5, threads | A second node and executor for images from the start, so that frame load never delays a gateway reply | One node and one executor thread, as in v1 | The executor thread deserializes each 1.34 MB frame (facts 1.3.13). No measurement of the gateway time under load exists. | One node. Step 9a splits it if `rtt` shows more than 5 ms. | Open until the step 8 `rtt` result |
 | d9, reader depth | KEEP_LAST 2. One late take moves the older frame into the project queue, where an eviction counts it. | KEEP_LAST 1. Depth 2 can deliver an older unread frame. No reader-depth comparison exists. | A history overwrite raises no event (`ros:eclipse-cyclonedds/cyclonedds/src/core/ddsc/src/dds_rhc_default.c:854-875`). c1 and c3 used a depth 5 reader only. | Depth 2 | Settled toward Claude. Codex keeps the dissent in its draft notes. |
 | d10, default capacity | Default 2, to absorb one frame period of consumer delay | Default 1, newest frame first | R9 gives newer frames priority. The cost to change is one constant. | Default 1 | Settled toward Codex. Claude keeps the dissent in its draft notes. |
 | d26, stop and the deadline | The stop is outside the deadline. A cold call returns before the stop ends. A stop failure becomes controller state. | A cold success should include the stop result. Reserve 250 ms of the deadline for the stop. | A successful stop takes at least 100 ms (facts 1.4.6). A timed-out gateway call can still apply (facts 1.1.14). | Stop outside | Settled toward Claude. Codex keeps the dissent in its draft notes. |
-| d24, get image answer | Any admitted frame after the request, with `receive_seq > R`. The newest one in the capacity-1 queue. | A one-shot latch if the first push must be the answer. Otherwise the oldest frame still queued at the pull. | R6 needs only "received after the request". The first frame arrives about 79 ms before the start reply (c1 §3.5). | Claude rule, amended d24 (i12) | Closed for phase 1. Reopens if Logan makes the first frame contractual. |
+| d24, get image answer | Any admitted frame after the request, with `receive_seq > R`. The newest one in the capacity-1 queue. | A one-shot latch if the first push must be the answer. Otherwise the oldest frame still queued at the pull. | R6 needs only "received after the request". The first frame arrives about 79 ms before the start reply (c1 §3.5). | Claude rule, amended d24 (i12). The data plane states the same cutoff (i4). | Closed for phase 1. Reopens if Logan makes the first frame contractual. |
 | d13, several consumers | One queue per `FrameSubscription` | Two fixed slots, one for the feed and one for get image | Both designs use one ROS subscription (facts 1.3.13). The controller limit gives the same memory bound. | Per-subscription queues | Settled as a combination. Codex dissent recorded in the register. |
-| d18, configuration source | Service writes only, because a failed file load is invisible and an XML file is hard to review | `settings_file` on each open and reopen, with readback | Only the file applies values before the driver restart after a reopen (`driver:vimbax_camera/src/vimbax_camera_node.cpp:561-566`). | `settings_file` plus readback | Settled toward Codex. Claude accepts it and records a residual concern about values outside the profile (N7, i25). |
+| d18, configuration source | Service writes only, because a failed file load is invisible and an XML file is hard to review | `settings_file` on each open and reopen, with readback | Only the file applies values before the driver restart after a reopen (`driver:vimbax_camera/src/vimbax_camera_node.cpp:561-566`). | `settings_file` plus readback | Settled toward Codex. Claude accepts it and records the residual concern about values outside the profile (N7). i19 and i25 make the load check able to fail. |
 
-Disagreements that the drafts withdrew:
+Disagreements that the drafts or the round 1 fixes withdrew:
 
 1. d3 naming. Codex used `frame_id`. The Codex draft uses `tf_frame`.
 2. d6 grouping. Codex grouped the format refusal and the readback failure under one code. The Codex draft uses the fixed ic5 codes.
 3. d14 bit depth. Codex wanted to defer `significant_bits`. The Codex draft adopts it, because d19 and d22 read `PixelFormat` back before each epoch.
 4. d19 reconciliation. Claude had no reconciliation stop. The Claude draft implements it.
 5. d22 silence floor. Claude used 500 ms. The Claude draft withdraws this, because c3 measured a longest interval of 34 ms at 30 Hz.
+6. d18 item 7, the selector write during a stream. The Codex review asked for a confirmed stop before the reconnect readback or a register change. The Codex recheck accepts the narrow exception (i11).
+7. ic2 `Feed` ownership. The Claude draft shared the subscription with the worker. The Claude fix keeps sole ownership in `Feed`, and the Codex recheck accepts the model. The remaining defect, a double release, is in i26.
