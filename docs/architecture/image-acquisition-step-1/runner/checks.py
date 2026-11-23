@@ -129,6 +129,9 @@ def scan_settings(path: Path, denied: list[str]) -> dict:
     missing = [n for n, info in profile.items() if not info["match"]]
     detail = (f"{len(features)} features; profile values missing or wrong: "
               f"{missing or 'none'}; denied features: {hits or 'none'}")
+    profile_names = {name for name, _, _ in PROFILE} | {"TriggerSelector"}
+    others = {name: values for name, values in sorted(features.items())
+              if name not in profile_names}
     return {"passed": not missing and not hits, "detail": detail,
             "features": len(features), "denied": hits, "profile": profile,
-            "missing": missing}
+            "missing": missing, "others": others}

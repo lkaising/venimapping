@@ -97,6 +97,9 @@ class Preflight:
             self.env = ros_env(self.worktree / self.settings["env_script"])
         except Stop as error:
             return self.item(False, "environment loads", str(error))
+        defaults = self.worktree / ".devcontainer/colcon-defaults.yaml"
+        if defaults.is_file():
+            self.env.setdefault("COLCON_DEFAULTS_FILE", str(defaults))
         tools = [name for name in ("ros2", "colcon")
                  if not any(Path(p, name).exists() for p in
                             self.env.get("PATH", "").split(":"))]
@@ -134,7 +137,10 @@ class Preflight:
             self.settings["build"]["timeout_s"], cwd=self.worktree)
         self.item(code == 0, "bring-up test runs",
                   f"colcon test --packages-select {checks.PACKAGE} exit {code}")
+        defaults = self.env.get("COLCON_DEFAULTS_FILE")
         self.env = ros_env(self.worktree / self.settings["env_script"])
+        if defaults:
+            self.env["COLCON_DEFAULTS_FILE"] = defaults
         result = subprocess.run(["ros2", "pkg", "prefix", checks.PACKAGE],
                                 env=self.env, capture_output=True, text=True,
                                 timeout=60)

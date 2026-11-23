@@ -176,6 +176,11 @@ def settings_section(stage: dict | None, xml: str) -> list[str]:
         lines.append(f"| {name} | {info['expected']} | "
                      f"{cell(', '.join(info['found']) or 'absent')} | "
                      f"{'yes' if info['match'] else 'no'} |")
+    others = scan.get("others") or {}
+    lines += ["", "The driver also writes these features of the file on each "
+              "open. v2 asks for a review of them in each change to the file:",
+              "", ", ".join(f"`{name}`={cell(', '.join(values))}"
+                            for name, values in others.items()) or "none"]
     return lines
 
 
