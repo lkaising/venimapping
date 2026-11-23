@@ -1,0 +1,14 @@
+{
+  "question": "Through this driver, which PixelFormat values does the G1-130 VSWIR offer and pass the driver gate, what frame size and rate does it deliver, what does its device timestamp look like, and how long do stream_start and TriggerSoftware take to the first published frame?",
+  "why": "The answers set the pinned PixelFormat (a format outside the driver gate fails stream_start with -18 and leaves the stream state stuck at kStarting), the frame memory and queue budget, the use_ros_time choice, and whether get image can start a stream per call or use a software trigger, or must keep a stream running. Unknowns U3 to U8 in claude/trace.md.",
+  "features": [
+    {"name": "PixelFormat", "type": "enum"},
+    {"name": "AcquisitionFrameRateEnable", "type": "bool"},
+    {"name": "AcquisitionFrameRate", "type": "float"},
+    {"name": "TriggerSelector", "type": "enum"},
+    {"name": "TriggerMode", "type": "enum"},
+    {"name": "TriggerSource", "type": "enum"}
+  ],
+  "steps": "1. Launch: ros2 launch venimapping_bringup camera.launch.py (autostream 0). 2. Read only, no writes: features/enum_info_get for PixelFormat, TriggerSelector, TriggerSource. features/enum_get PixelFormat. features/int_get Width, Height, WidthMax, HeightMax, PayloadSize, DeviceLinkThroughputLimit. features/float_info_get AcquisitionFrameRate and ExposureTime. features/list_get with module 3 (local device) to see if DeviceTimestampFrequency exists. features/access_mode_get AcquisitionFrameRateEnable. Save the read values to restore them later. 3. Make sure the current PixelFormat is on the driver gate list before step 4. If it is not, set PixelFormat to Mono8 while stopped. 4. Start ros2 topic hz /vimbax_camera/image_raw and ros2 topic echo --field header /vimbax_camera/image_raw in other shells. 5. Run time ros2 service call /vimbax_camera/stream_start and note the time to the first header. 6. Stream for the stream_seconds period, record the rate, two header stamps, and the host clock at the same moments. 7. If AcquisitionFrameRateEnable exists, set it true and AcquisitionFrameRate to half the reported rate, then record the rate again. 8. Run stream_stop. 9. If Mono12 is offered, set PixelFormat to Mono12, repeat steps 5 to 8 for 10 s, and record PayloadSize and the encoding field. 10. Set TriggerSelector FrameStart, TriggerMode On, TriggerSource Software. Run stream_start. Run time ros2 service call features/command_run with TriggerSoftware five times and note when each frame header arrives. Run stream_stop. 11. Restore all six features to the values saved in step 2, read them back, and run stream_stop. 12. Collect the driver log lines that contain 'frames missing' or 'Frame with status'.",
+  "stream_seconds": 30
+}
