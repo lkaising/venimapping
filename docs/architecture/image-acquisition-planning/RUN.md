@@ -3,8 +3,8 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-23T01:43:37-05:00
-- Last completed checkpoint: register (this commit)
+- Updated: 2026-11-23T01:46:29-05:00
+- Last completed checkpoint: camera-c3 (this commit)
 - Push pending: False
 
 ## Next step
@@ -28,7 +28,7 @@ If the workstation restarted, run this command from the worktree root. The runne
 | reconcile | claude | done | 1 | 52916894b1 |
 | positions-claude | claude | done | 1 | 4115d3e945 |
 | positions-codex | codex | done | 1 | 589fea708e |
-| register | claude | done | 1 |  |
+| register | claude | done | 1 | bc6f68fd5f |
 | register-final | claude | pending | 0 |  |
 | draft-codex | codex | pending | 0 |  |
 | draft-claude | claude | pending | 0 |  |
@@ -40,3 +40,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | finish | claude | pending | 0 |  |
 | camera-c1 | claude | done | 1 | 3ace405867 |
 | camera-c2 | claude | done | 1 | 25faa9d303 |
+| camera-c3 | codex | done | 1 |  |
+| dispute-d20-position-claude | claude | pending | 0 |  |
+| dispute-d20-position-codex | codex | pending | 0 |  |
+| dispute-d20-judge-claude | claude | pending | 0 |  |
+| dispute-d20-judge-codex | codex | pending | 0 |  |
