@@ -77,8 +77,9 @@ enum class AcquisitionCode : std::int32_t {
 | Code | Name | Layer | Returned by | Cause | Caller action |
 |---|---|---|---|---|---|
 | 1 | `kFeedClosed` | data plane | `take`, `try_take` | `close()` ran, the `FrameSource` is gone, or the controller shut down | Stop reading. Open a new feed if needed. |
-| 1 | `kFeedClosed` | control plane | `feed_open`, `get_image` | The request came after `shutdown()` started, or it was queued or running when shutdown ran, or `WorkerInit` failed | Stop. The acquisition stack is closed. |
-| 2 | `kDeadlinePassed` | control plane | `feed_open`, `get_image` | The request deadline passed. See "Deadline stages" | Retry later, or report. Read `status()` to see an outage. |
+| 1 | `kFeedClosed` | control plane | `feed_open`, `get_image`, `Feed::take` on an empty `Feed` | The request came after `shutdown()` started, or it was queued or running when shutdown ran, also before `start`. Or `WorkerInit` failed | Stop. The acquisition stack is closed. |
+| 1 | `kFeedClosed` | control plane | `start` | `shutdown()` started before or during `start` | Stop. Make a new controller if needed. |
+| 2 | `kDeadlinePassed` | control plane | `feed_open`, `get_image` | The request deadline passed before the call had its result. See "Deadline stages" | Retry later, or report. Read `status()` to see an outage. |
 | 3 | `kStreamWedged` | control plane | `feed_open`, `get_image` | The controller is in `kWedged`, or the request caused it (d19) | The operator restarts the driver process. The controller clears the state after a confirmation stop succeeds. |
 | 4 | `kFormatNotStreamable` | control plane | `feed_open`, `get_image`, `AcquisitionController::create` | The final `PixelFormat` is outside the allowed formats that are on the driver gate (d19 item 1) | Fix the settings file or the profile file. No retry. |
 | 5 | `kProfileMismatch` | control plane | `feed_open`, `get_image` | A value in the final readback still differs after the corrective writes (d18 item 6) | Compare the settings file with the profile file. No retry. |
@@ -87,28 +88,31 @@ enum class AcquisitionCode : std::int32_t {
 | 8 | `kTriggerNoFrame` | control plane | Nothing in phase 1 | Reserved for the phase 2 software trigger (d27) | None in phase 1. |
 | 9 | `kRequestBusy` | control plane | `feed_open`, `get_image` | A feed is already open, or a get image is already outstanding (d13) | Wait for the other request, or close the other feed. |
 | 10 | `kInvalidArgument` | data plane | `subscribe`, `ImageFrame::create` | Capacity outside 1 to 4, or a bad frame layout | Fix the argument. This is a program error. |
-| 10 | `kInvalidArgument` | control plane | `AcquisitionController::create`, `start`, `feed_open` | A bad option in `ControllerOptions`, a second `start` call, or a bad `FeedOptions::capacity` passed through from `subscribe` | Fix the caller. |
+| 10 | `kInvalidArgument` | control plane | `AcquisitionController::create`, `start`, `feed_open` | A bad option in `ControllerOptions`, a second `start` call while the worker starts or runs, or a bad `FeedOptions::capacity` passed through from `subscribe` | Fix the caller. |
 | 11 | `kSourceCreateFailed` | data plane | `VimbaXFrameSource::create` | The ROS subscription could not be made, or the namespace is empty | The composition root reports and exits. |
 
 1. The data plane returns only codes 1, 7, 10, and 11. It never returns `kDriver` or `kGateway` errors (ic5 item 1).
 2. The image callback never returns an error. It counts each discard in `FrameSourceStats` (ic5 item 4).
 3. `kWrongThread` and `kInvalidArgument` are program errors. A test finds them. A running system does not retry them.
+4. A `shutdown()` before `start` completes each queued request with `kFeedClosed` on the calling thread, with no gateway call.
 
 ### Deadline stages
 
-`kDeadlinePassed` has one cause: the absolute request deadline passed before the call had its result. `FeedOptions::deadline` is 5000 ms by default, and `GetImageOptions::deadline` is 2000 ms (d26). The same code covers each stage:
+`kDeadlinePassed` has one cause: the absolute request deadline passed before the call had its result. `FeedOptions::deadline` is 5000 ms by default, and `GetImageOptions::deadline` is 2000 ms (d26). The worker checks the outcome and the deadline before each gateway call that the request causes. The same code covers each stage:
 
 | Stage | Who sees the deadline | What the worker does after it |
 |---|---|---|
 | Waiting in the worker queue, also before `start` | The caller | Takes the expired request, makes no `subscribe` and no gateway call |
-| Readback, corrective writes, second readback | The caller. The worker sees it at its next check point | Finishes the pending gateway call, then stops the sequence |
+| Readback, corrective writes, second readback | The caller. The worker sees it before its next gateway call | Finishes the pending gateway call. Makes no further call in the list |
 | Match wait | The caller. The worker sees it at the next 10 ms poll | Makes no `open_admission` and no `stream_start` |
+| After `open_admission`, before `stream_start` | The caller. The worker sees it before `stream_start` | Calls `close_admission()`, makes no `stream_start`, and runs the lease release rules |
 | `stream_start` | The caller | Finishes the call. Then the lease release stops the stream, or the failure recovery runs |
-| `get_image` only: wait for a frame with `receive_seq > R` | The caller, through `take` | The caller destroys its `Feed`, which releases the lease |
+| Delivery | The worker, in the same locked section as the `kDelivered` transition | Abandons the request instead of a delivery, and destroys the `Feed` |
+| `get_image` only: wait for a frame with `receive_seq > R` | The caller, before each `take` and after each frame that `take` returns | The caller drops a frame that it took after the deadline and destroys its `Feed`, which releases the lease |
 
-1. The `take` result decides a late frame. A frame that `take` returns is the answer, also if the clock passed the deadline during the wake-up.
+1. A `get_image` that returns a frame accepted it at or before its deadline. A frame that `take` returns after the deadline gives `kDeadlinePassed`, also if it is fresh. The caller cannot see when a frame entered its queue, so the acceptance time is the only exact check.
 2. The `stream_stop` after a get image delivery is outside the deadline (d26 item 3).
-3. A gateway call keeps its own timeout. The request deadline does not shorten it (d26 item 5).
+3. A gateway call keeps its own timeout. The request deadline does not shorten it (d26 item 5). A check before each call frees the worker within one gateway timeout after the deadline.
 
 ### Errors that pass through the controller
 
@@ -125,6 +129,7 @@ The controller returns gateway errors from its reads and its stream calls unchan
 2. For a failed stream call, the controller keeps two results apart. The caller gets the first error. `status().last_error` holds the same error. `status().last_reconciliation` holds the error of the reconciliation stop, or is empty if it succeeded.
 3. -15 reaches a caller only with a successful reconciliation stop. If the reconciliation stop fails, the caller gets `kStreamWedged`, and its text names both errors.
 4. -18 (`VmbErrorNotSupported`) from a format refusal at start cannot occur, because the format check comes first (c1 §3.1 item 2).
+5. The confirmation stop in `kWedged` runs with no request. Its error never reaches a caller. It goes to `status().last_reconciliation`, and the state stays `kWedged`.
 
 Corrective writes do not pass through:
 
@@ -142,6 +147,7 @@ Corrective writes do not pass through:
 | A discard in the callback | data plane | `discarded_layout`, `discarded_stamp_basis`, or `discarded_admission` counts it (d12). |
 | `transport_lost` growth | data plane | The total count of the RMW `message_lost` event, which Cyclone DDS takes from the DDS sample lost status (d12). |
 | An outage, a stall, a fault, or a wedge with a feed open | control plane | `status().state` shows it. The feed stays open (d22, R14). |
+| A frame of an epoch whose start failed later | control plane | A valid image at the verified profile. Later frames carry a higher epoch. `status().last_error` holds the start error. |
 
 `[F]` `transport_lost` does not count every lost sample. Cyclone DDS fills the RMW event from `dds_get_sample_lost_status` (`ros:ros2/rmw_cyclonedds/rmw_cyclonedds_cpp/src/rmw_node.cpp:3943-3955`). When the reader history is full, Cyclone DDS replaces the oldest unread sample and raises no sample lost status (`ros:eclipse-cyclonedds/cyclonedds/src/core/ddsc/src/dds_rhc_default.c:854-875`). So a slow executor with the KEEP_LAST 2 reader loses samples that `transport_lost` does not show. A gap in `receive_seq` cannot show them either, because the sequence starts in the callback.
 

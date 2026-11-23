@@ -13,22 +13,22 @@ This list covers the files that the control-plane, error-vocabulary, bring-up, t
 | `include/venimapping_camera/types/error.hpp` | Change | 2 | Add `ErrorDomain::kAcquisition = 2` and `Error::from_acquisition` |
 | `include/venimapping_camera/types/acquisition_error.hpp` | New | 2 | `AcquisitionCode` 1 to 11, `acquisition_error`, `is_acquisition`, and `to_string` |
 | `include/venimapping_camera/acquisition_controller.hpp` | New | 5, 6 | `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `GetImageOptions`, `StreamState` with `kFaulted`, `ControllerStatus` with `last_reconciliation`, `Feed`, and `AcquisitionController` |
-| `src/acquisition_controller.cpp` | New | 5, 6, 7 | The worker queue, the request state, leases, the start sequence, get image, d19 recovery, the state rules for new requests, silence and outage handling, `start`, and `shutdown` |
-| `src/acquisition_support/lease_link.hpp` | New | 5 | Private. `LeaseLink`: the mutex, the non-owning subscription pointer, and the shared request queue. The request state with its outcome and deadline |
-| `src/acquisition_support/profile_readback.hpp` | New | 5 | Private. Declares the readback, the comparison, and the corrective writes |
+| `src/acquisition_controller.cpp` | New | 5, 6, 7 | The lifecycle value and the join rule, the worker queue, the request state with a check before each gateway call, the lease set, the `Feed` move rules, the start sequence, get image with the acceptance check, d19 recovery, the wedge confirmation stop, the state rules for new requests, silence and outage handling, `start`, and `shutdown` |
+| `src/acquisition_support/lease_link.hpp` | New | 5 | Private. `LeaseLink`: the mutex, the non-owning subscription pointer, the `released` flag, and the shared request queue. The request state with its outcome and deadline |
+| `src/acquisition_support/profile_readback.hpp` | New | 5 | Private. Declares the readback, the comparison, and the corrective writes, each with a check callback before each call |
 | `src/acquisition_support/profile_readback.cpp` | New | 5 | The eight readback calls and the five write groups in the d18 order, each with `FeatureModule::kRemoteDevice` |
 | `src/acquisition_support/stream_formats.hpp` | New | 5 | Private. The driver gate formats that this camera offers, `Mono8` and `Mono12`, and their `significant_bits` |
 | `src/camera_feed_probe.cpp` | New | 8 | Temporary. The phase 1 composition root and the rig check modes, also `wedge` |
 | `test/fakes/test_clock.hpp` | New | 3 | `TestClock`: real steady time, manual realtime, and a hold point in `steady_now()` |
 | `test/fakes/test_clock.cpp` | New | 3 | The hold and release logic |
-| `test/fakes/fake_frame_source.hpp` | New | 5 | `FakeFrameSource` over `FrameFanout`, with `inject`, `set_matched_publishers`, `subscriptions_opened`, and `subscription_stats` |
-| `test/fakes/fake_frame_source.cpp` | New | 5 | Mono8 test frames for `inject`, and the stats decorator for subscriptions |
+| `test/fakes/fake_frame_source.hpp` | New | 5 | `FakeFrameSource` over `FrameFanout`, with `inject`, `set_matched_publishers`, `subscriptions_opened`, `subscription_stats`, the take hooks, and `on_open_admission` |
+| `test/fakes/fake_frame_source.cpp` | New | 5 | Mono8 test frames for `inject`, and the subscription decorator that keeps stats, counts and holds `take` calls, and records the taken sequences |
 | `test/fakes/fake_camera_gateway.hpp` | New | 5 | `FakeCameraGateway`, a scripted `CameraGateway` with a call log |
 | `test/fakes/fake_camera_gateway.cpp` | New | 5 | The feature map, per-selector `TriggerMode`, the four stream states, the module check, and locks during a stream |
 | `test/acquisition_error_test.cpp` | New | 2 | Fixed code numbers and the factory |
 | `test/image_frame_test.cpp` | New | 3 | Layout checks, shared ownership, and lifetime |
 | `test/frame_fanout_test.cpp` | New | 3 | Sequence, admission, epoch, queue, close, hold, duration, and thread rules |
-| `test/acquisition_controller_test.cpp` | New | 5, 6, 7 | Controller cases against both fakes |
+| `test/acquisition_controller_test.cpp` | New | 5, 6, 7 | Controller cases against both fakes. The testing section gives the step of each case |
 | `test/vimbax_frame_source_test.cpp` | New | 4 | Adapter over a RELIABLE test publisher, with no driver. One intra-process case for the pixel address |
 | `test/installed_consumer/CMakeLists.txt` | New | 5 | A separate project that finds the installed package and links `venimapping_camera::venimapping_camera_acquisition` |
 | `test/installed_consumer/main.cpp` | New | 5 | Calls `AcquisitionController::create` with stubs, so the link needs the library |

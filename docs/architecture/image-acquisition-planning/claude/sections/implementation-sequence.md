@@ -24,6 +24,7 @@ Paths are relative to `src/venimapping_camera/` unless the row names `src/venima
 1. Steps 1 and 2 can land in either order.
 2. Step 4 and steps 5 to 7 can run in parallel after step 3. Both step 4 and step 5 edit `CMakeLists.txt`. "CMake layout" gives the rule that joins them.
 3. `[F]` The gateway already has every call that the controller needs (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:35-110`). No step changes the gateway (d2).
+4. Each controller test runs first in the step that the testing section names in its step column. A test that calls `get_image` is never in the step 5 list, because step 6 adds `get_image`.
 
 ### CMake layout
 
@@ -60,7 +61,7 @@ Exit check. The feed probe comes in step 8, so this check uses the CLI. It does 
 
 1. `colcon build --packages-select venimapping_bringup` succeeds.
 2. `colcon test --packages-select venimapping_bringup` passes.
-3. On the rig, do part A of the bring-up rig check. The second launch log has no line that starts with `Loading settings from file`.
+3. On the rig, do part A of the bring-up rig check, steps 1 to 13. The control launch log has the failed-load line. The part A readback before the reopen shows 10000.0 and 20.0. `grep -F 'Loading settings from file' driver_a.log driver_b.log` prints nothing.
 4. `ros2 param get /vimbax_camera/vimbax_camera use_ros_time` prints `True`.
 5. `ros2 param get /vimbax_camera/vimbax_camera settings_file` prints the installed path of `camera_settings.xml`. The file exists at that path.
 6. `ros2 param get /vimbax_camera/vimbax_camera image_raw.enable_pub_plugins` prints only `image_transport/raw`.
@@ -129,11 +130,11 @@ Exit check:
 Files:
 
 - `include/venimapping_camera/acquisition_controller.hpp`, new: `AcquisitionProfile`, `ControllerOptions`, `FeedOptions` with `deadline`, `StreamState`, `ControllerStatus`, `Feed`, and `AcquisitionController`
-- `src/acquisition_controller.cpp`, new: the worker queue, the request state and its check points, leases, `feed_open`, `Feed`, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
+- `src/acquisition_controller.cpp`, new: the lifecycle value and the join rule, the worker queue, the request state and its check points before each gateway call, the lease set, `feed_open`, `Feed` with its move rules, the start sequence, the readback and corrective writes, the d19 recovery, `start`, and `shutdown`
 - `src/acquisition_support/lease_link.hpp`, new
 - `src/acquisition_support/profile_readback.hpp`, `.cpp`, new
 - `src/acquisition_support/stream_formats.hpp`, new
-- `test/fakes/fake_frame_source.hpp`, `.cpp`, new
+- `test/fakes/fake_frame_source.hpp`, `.cpp`, new, with the take hooks and `on_open_admission`
 - `test/fakes/fake_camera_gateway.hpp`, `.cpp`, new
 - `test/acquisition_controller_test.cpp`, new
 - `test/installed_consumer/CMakeLists.txt`, `main.cpp`, new
@@ -145,7 +146,11 @@ In this step, the header has no `get_image` and no `GetImageOptions`. Step 6 add
 
 Exit check:
 
-1. `test_acquisition_controller` passes these cases: `ColdFeedOrder`, `SelectorBeforeMode`, `RemoteDeviceModule`, `KeepsFramesBeforeReply`, `MatchTimeout`, `FormatRefusal`, `FormatCorrectionBits`, `WriteNeedsConfirmedStop`, `CorrectiveWriteOrder`, `WriteErrorReadbackDecides`, `ProfileMismatch`, `FloatTolerance`, `Busy` for feeds, `FeedOpenDeadline`, `StartFailReconciled`, `FirstErrorMinus15`, `WedgeOnStartTimeout`, `WedgeOnStopFailure`, `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, and `FeedDestroyDuringShutdown`.
+1. `test_acquisition_controller` passes these cases, each with `feed_open` only:
+   1. Start sequence: `ColdFeedOrder`, `SelectorBeforeMode`, `RemoteDeviceModule`, `KeepsFramesBeforeReply`, `MatchTimeout`, `FormatRefusal`, `FormatCorrectionBits`, `WriteNeedsConfirmedStop`, `CorrectiveWriteOrder`, `WriteErrorReadbackDecides`, `ProfileMismatch`, and `FloatTolerance`.
+   2. Leases and deadlines: `Busy` for feeds, `FeedOpenDeadline`, `ExpiredDuringReadback`, and `ExpiredBeforeStart`.
+   3. Failure recovery: `StartFailReconciled`, `FirstErrorMinus15`, `WedgeOnStartTimeout`, and `WedgeOnStopFailure`.
+   4. Lifecycle and ownership: `QueuedBeforeStart`, `InitFailure`, `ShutdownFromInit`, `ShutdownBeforeStart`, `StartShutdownOverlap`, `Shutdown`, `DestroyWithPendingRequest`, `FeedOutlivesController`, `FeedDestroyDuringShutdown`, and `FeedMoveAssignIntoLive`.
 2. The acquisition target builds with no ROS include path. A configure-time check reads the `LINK_LIBRARIES` property of `venimapping_camera_acquisition` and fails on `rclcpp`.
 3. The suite passes under ThreadSanitizer and AddressSanitizer.
 4. After `colcon build`, source `install/setup.bash`. Then configure and build `test/installed_consumer` into a temporary build directory. The build links with no undefined symbol.
@@ -157,24 +162,24 @@ Old behavior for check 4: no `install(TARGETS ...)` call names the acquisition t
 Files:
 
 - `include/venimapping_camera/acquisition_controller.hpp`: `GetImageOptions` and `get_image`
-- `src/acquisition_controller.cpp`: `get_image`, the caller-side deadline and take loop, the skip of frames with `receive_seq <= R`, and the worker release of an undelivered `Feed`
+- `src/acquisition_controller.cpp`: `get_image`, the caller-side take loop with the deadline check before each `take` and at frame acceptance, the skip of frames with `receive_seq <= R`, and the worker release of an undelivered `Feed`
 - `test/acquisition_controller_test.cpp`: new cases
 
 Exit check:
 
-1. These cases pass: `LeaseCount`, `Busy` for get image, `WarmFreshness`, `InFlightFrameSkipped`, `DeadlinePassed`, `ExpiredInQueue`, `ExpiredDuringMatch`, and `StopOutsideDeadline`.
+1. These cases pass: `LeaseCount`, `Busy` for get image, `WarmFreshness`, `InFlightFrameSkipped`, `FrameAfterDeadlineRejected`, `DeadlinePassed`, `ExpiredInQueue`, `ExpiredDuringMatch`, `StopOutsideDeadline`, `ShutdownWakesGetImage`, and `FeedCloseThenDestroy`.
 2. All step 5 cases still pass.
 
 ### Step 7. Silence, outage, and wedge recovery
 
 Files:
 
-- `src/acquisition_controller.cpp`: the 100 ms tick, the silence threshold, `kOutage`, `kConnectionUnknown`, `kStalled`, `kFaulted`, the state rules for new requests, the reconnect path, the wedge poll and the confirmation stop, the stop of a stream with no user, and linger
+- `src/acquisition_controller.cpp`: the 100 ms tick, the silence threshold, `kOutage`, `kConnectionUnknown`, `kStalled`, `kFaulted`, the state rules for new requests, the reconnect path, the wedge poll and the one confirmation stop for each change signal, the stop of a stream with no user, and linger
 - `test/acquisition_controller_test.cpp`: new cases
 
 Exit check:
 
-1. These cases pass: `StartFailClearsQueue`, `NoUserStopFails`, `WedgeCleared`, `WedgePollErrorKeepsWedge`, `SilenceToOutage`, `ConnectionUnknown`, `RequestDuringOutage`, `ReconnectNewEpoch`, `ReconnectProfileChanged`, `ReconnectNoRestart`, `Stall`, `FaultedRetry`, `NoUserStreamStopped`, and `Linger`.
+1. These cases pass: `StartFailClearsQueue`, `ConsumerDuringFailingStart`, `NoUserStopFails`, `WedgeCleared`, `WedgePollErrorKeepsWedge`, `WedgeConfirmMinus3`, `SilenceToOutage`, `ConnectionUnknown`, `RequestDuringOutage`, `ReconnectNewEpoch`, `ReconnectProfileChanged`, `ReconnectNoRestart`, `Stall`, `FaultedRetry`, `NoUserStreamStopped`, and `Linger`.
 2. All earlier cases still pass.
 3. The full controller suite runs in less than 30 s.
 
@@ -200,14 +205,14 @@ Files: none. The v2 document gets a results table.
 Work, in this order:
 
 1. Run the unplug check and the settings load check, with host stamps.
-2. Relaunch the driver with `use_ros_time:=false`. Run the outside reader and `mode:=stamps` together, at 30 Hz and at 69.7 Hz.
+2. Relaunch the driver with `use_ros_time:=false`, with the console output in a file. Run the outside reader and `mode:=stamps` together, at 30 Hz and at 69.7 Hz.
 3. Relaunch the driver with the default arguments. Make sure that `use_ros_time` reads `True`.
 4. Run the wedge check last, with `mode:=wedge`.
 
 Exit check:
 
 1. The unplug, settings load, and wedge checks pass their conditions. If the rig cannot restore `Mono8` while wedged, the report says so, and the tier 1 wedge tests are the evidence.
-2. The stamp results, with the gap rules, and the outside reader results are in the v2 document as input to L1 and L7. An inconclusive result is recorded as inconclusive.
+2. The stamp results, with the gap rules, and the outside reader results are in the v2 document as input to L1 and L7. An inconclusive or ambiguous result is recorded as inconclusive, with the item that caused it.
 
 ### Step 9a. Conditional executor split
 

@@ -16,6 +16,8 @@ Labels: `[F]` is a fact with a citation. `[A]` is a working assumption that is c
 8. `[F]` A start while active and a stop while stopped succeed with no effect. A start or a stop in `kStarting` or `kStopping` returns -15, and no service resets that state (`driver:vimbax_camera/src/vimbax_camera.cpp:516-519`, `:582-585`).
 9. `[F]` The driver starts its frame processing thread before `CaptureStart` and `AcquisitionStart`, which can still fail (`driver:vimbax_camera/src/vimbax_camera.cpp:458-510`).
 10. `[F]` The `connected` service returns `camera_ != nullptr` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:1520-1527`). A new camera object starts in `kStopped` (`driver:vimbax_camera/include/vimbax_camera/vimbax_camera.hpp:317`).
+11. `[F]` `take` returns a queued frame at once. A timeout of 0 or less acts as `try_take` (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:100`).
+12. `[F]` `ImageFrame` has no steady-clock receipt time. Its only time field is `host_stamp_ns`, the driver stamp (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:15-26`). A consumer therefore cannot see when a frame entered its queue.
 
 ### Public interface
 
@@ -60,17 +62,17 @@ struct ControllerStatus {
   std::uint32_t leases;
   std::uint32_t epoch;                          // last EpochStart::epoch, 0 before the first
   std::optional<Error> last_error;              // first error of the last failed operation
-  std::optional<Error> last_reconciliation;     // error of the last reconciliation stop, empty on success
+  std::optional<Error> last_reconciliation;     // error of the last reconciliation or confirmation stop
 };
 
 class Feed final {                          // move-only, ic2
  public:
-  Feed(Feed&&) noexcept;
-  Feed& operator=(Feed&&) noexcept;
+  Feed(Feed&&) noexcept;                    // the source becomes empty
+  Feed& operator=(Feed&&) noexcept;         // closes this Feed first, then takes the source
   ~Feed();                                  // runs close()
   [[nodiscard]] Expected<std::optional<ImageFrame>> take(std::chrono::milliseconds timeout);
   [[nodiscard]] Expected<std::optional<ImageFrame>> try_take();
-  void close() noexcept;
+  void close() noexcept;                    // releases the lease at most once
   [[nodiscard]] FrameSubscriptionStats stats() const;
 
  private:
@@ -87,10 +89,12 @@ class AcquisitionController final {
   [[nodiscard]] static Expected<std::unique_ptr<AcquisitionController>> create(
       CameraGateway& gateway, FrameSource& frames, ControllerOptions options);
 
-  // Starts the worker. The worker runs init first. Returns the init result.
+  // Starts the worker. The worker runs init first. Returns the init result,
+  // kInvalidArgument for a second call, or kFeedClosed after shutdown started.
   [[nodiscard]] Expected<void> start(WorkerInit init);
 
-  // Idempotent. Any thread except the worker. Returns after the worker has joined.
+  // Idempotent. Any thread. On the worker thread it only sets the flag.
+  // Elsewhere it returns after the worker has exited, or at once if no worker started.
   void shutdown() noexcept;
   ~AcquisitionController();                 // runs shutdown()
 
@@ -105,7 +109,7 @@ class AcquisitionController final {
 1. The controller is pinned. It is not copyable and not movable, like `CameraGateway` (`src/venimapping_camera/include/venimapping_camera/camera_gateway.hpp:29-32`).
 2. `create` takes references. The composition root keeps the gateway and the frame source alive until the controller is destroyed (ic4).
 3. `WorkerInit` lets the composition root bind the gateway thread without a ROS type in this header. The root passes `[&gw] { return gw.bind_to_current_thread(); }` (i29).
-4. `feed_open`, `get_image`, `status`, and `shutdown` are safe from any thread, with the worker exception for `shutdown` in "Lifecycle and shutdown".
+4. `feed_open`, `get_image`, `status`, and `shutdown` are safe from any thread. "Lifecycle and shutdown" gives the rules for `start` and `shutdown`.
 5. `Feed` keeps the ic2 rule: it owns its `FrameSubscription` alone. The `LeaseLink` gives the worker a safe close path. See "Subscription ownership".
 6. A `Feed` can outlive the controller. It then acts as a closed subscription (ic2 rule 7), and its lease release does nothing.
 7. `status()` is how a consumer sees an outage, a stall, a fault, or a wedge. `take` stays empty in those states (d22, R14).
@@ -116,13 +120,13 @@ The controller follows ic4. It adds no thread beyond the worker.
 
 | Thread | Runs in the controller | Never does |
 |---|---|---|
-| Controller worker | The request queue, all gateway calls, all `FrameSource` calls, the 100 ms tick, the shutdown steps | `take` or `try_take`, `shutdown()` |
+| Controller worker | The request queue, all gateway calls, all `FrameSource` calls, the 100 ms tick, the shutdown steps | `take` or `try_take`, a join of its own thread |
 | Caller of `feed_open` or `get_image` | Posts a request and waits on its request state until the deadline. In `get_image`, it also runs `take` on the get image subscription | Gateway calls, `FrameSource` calls |
-| Any other thread | `Feed::close`, `status`, `shutdown` | A gateway call |
+| Any other thread | `Feed::close`, `status`, `start`, `shutdown` | A gateway call |
 
 1. The worker is the only gateway caller (d5 item 2, d16). Every stream and feature call is therefore serial. A second start or a feature write cannot race a stop.
 2. The worker waits on one condition variable with a timeout to the next tick. A request wakes it at once.
-3. `shutdown()` waits for the worker join. The worker finishes its pending gateway call first, so the wait is bounded by about three gateway timeouts: the pending call, the stop, and one reconciliation stop.
+3. `shutdown()` waits for the worker to exit. The worker finishes its pending gateway call first, so the wait is bounded by about three gateway timeouts: the pending call, the stop, and one reconciliation stop.
 4. `[A]` Each in-process gateway call takes a few milliseconds. The CLI value of 586.6 ms per call includes process start and discovery (c1 §3.5 item 4), so it does not apply. The feed probe records the in-process value.
 
 ### Requests and deadlines
@@ -138,49 +142,73 @@ Each `feed_open` and each `get_image` makes one request state. The caller and th
 1. Only one transition leaves `kPending`. The side that makes it owns the cleanup.
 2. The worker delivers with `kPending` to `kDelivered`. After that, the caller owns the `Feed` and its lease.
 3. The caller abandons at the deadline with `kPending` to `kAbandoned`, and returns `kDeadlinePassed`.
-4. The worker also abandons a request whose deadline has passed when it checks. The caller then wakes and returns `kDeadlinePassed`.
+4. The worker abandons a request whose deadline has passed when it checks. The caller then wakes and returns `kDeadlinePassed`.
 5. If the worker cannot deliver because the request is `kAbandoned`, it destroys the `Feed` that it built. The `Feed` destructor closes the subscription and posts the lease release. The worker handles that release in its next loop.
 
-The worker checks the outcome and the deadline at these points. At each point, an abandoned or expired request stops before the next gateway or `FrameSource` call:
+A check point reads the outcome and the steady clock under the outcome mutex. If the outcome is `kAbandoned`, or the deadline has passed, the request stops there. The worker makes a check point at each of these places:
 
 1. When it takes the request from the queue. An expired request gets no `subscribe` and no gateway call.
-2. Before the first readback, before the corrective writes, and before the second readback.
+2. Before each gateway call that the request causes. This covers each of the 8 readback calls, each corrective write, the confirmed stop of start step 2.1, and `stream_start`.
 3. Before each 10 ms match poll.
-4. Before `open_admission` and before `stream_start`.
+4. Before `open_admission`.
+5. At delivery. The worker makes the `kDelivered` transition only if the deadline has not passed, in the same locked section as the check.
 
-A gateway call that has started always runs to its end, because the gateway has no cancel (input 5). After a `stream_start` that started, the worker runs the release rules in "Leases and the stream lifecycle". If `stream_start` failed, the failure recovery runs first (d19).
+When a check point stops a request:
+
+1. The worker makes no further call for that request.
+2. If the stop comes after `open_admission` and before `stream_start`, the worker calls `close_admission()` at once. This clears each queue, so no frame of the unstarted epoch stays in a queue. The epoch number is used up. The next `open_admission` returns the next number.
+3. The worker then destroys the `Feed`, and the release rules in "Leases and the stream lifecycle" run. They stop the stream if no other lease exists and the stop is not confirmed.
+4. The state does not change because of the stop. A start sequence in `kIdle` ends in `kIdle`, and one in `kFaulted` ends in `kFaulted`.
+
+A gateway call that has started always runs to its end, because the gateway has no cancel (input 5). With a check before each call, the worker is free within one gateway timeout after the deadline. After a `stream_start` that started, the worker runs the release rules. If `stream_start` failed, the failure recovery runs first (d19).
+
+A start sequence that runs for a recovery with no request has no deadline and no check point.
 
 `[A]` `FeedOptions::deadline` is 5000 ms. The in-process cold path is 8 reads, up to 8 writes, 8 more reads, the match wait, and `stream_start`. At a few milliseconds per call, this is less than 500 ms. With a 2000 ms gateway timeout and a camera that does not answer, the path without a deadline is about 50 s (N4). What depends on it: the `FeedOpenDeadline` test and the `kDeadlinePassed` row.
 
 ### Lifecycle and shutdown
 
+The controller keeps a lifecycle value: `kCreated`, `kStarting`, `kRunning`, `kStopping`, or `kStopped`. One lifecycle mutex guards it, the shutdown flag, and the `std::thread` object of the worker. The request queue has its own mutex. A thread that holds both takes the lifecycle mutex first. `status().state` is `kShutDown` from the moment that the value leaves `kRunning` or `kStarting` for `kStopping` or `kStopped`.
+
 | Lifecycle point | New request | Queued request |
 |---|---|---|
-| After `create`, before `start` | Waits in the queue | Runs after `start`. If its deadline passes first, the caller returns `kDeadlinePassed` |
-| `start`, and `WorkerInit` fails | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
-| Running | Normal rules | Normal rules |
-| `shutdown()` has started | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
-| After `shutdown()` | `kFeedClosed` at once | None |
+| `kCreated`, after `create` and before `start` | Waits in the queue | Runs after `start`. If its deadline passes first, the caller returns `kDeadlinePassed` |
+| `kStarting`, and `WorkerInit` fails | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
+| `kRunning` | Normal rules | Normal rules |
+| `shutdown()` before `start` | `kFeedClosed` at once | The `shutdown()` caller completes it with `kFeedClosed` |
+| `shutdown()` after `start` | `kFeedClosed` at once | The worker completes it with `kFeedClosed` |
+| `kStopped` | `kFeedClosed` at once | None |
+
+Join rule: a thread joins the worker only if it moved the `std::thread` object out of the controller under the lifecycle mutex. Only one thread can do that. So only one thread joins, also when `start` and `shutdown` overlap. A `shutdown()` caller that did not get the object waits on a condition variable until the value is `kStopped`.
 
 `start(init)`:
 
-1. Starts the worker. The worker runs `init` first and gives its result to `start`.
-2. If `init` fails, the worker completes each queued request with `kFeedClosed` and exits. `start` joins the worker and returns the init error. The state becomes `kShutDown`.
-3. A second `start` call returns `kInvalidArgument` and changes nothing.
+1. Under the lifecycle mutex: in `kCreated`, set `kStarting` and make the worker thread. In `kStarting` or `kRunning`, return `kInvalidArgument`. In `kStopping` or `kStopped`, return `kFeedClosed`. Neither case makes a thread.
+2. Wait for the init result. The worker runs `init` first and gives its result to `start`.
+3. If `init` failed, the worker makes no gateway call, because the gateway is not bound. It completes each queued request with `kFeedClosed`, closes the queue, and exits. `start` applies the join rule, sets `kStopped`, and returns the init error.
+4. If `init` succeeded and the shutdown flag is clear, `start` sets `kRunning` and returns success.
+5. If `init` succeeded and the shutdown flag is set, the worker runs the shutdown steps. `start` applies the join rule and returns `kFeedClosed`. This covers a `shutdown()` call from `WorkerInit` and a `shutdown()` on another thread during `init`.
 
-`shutdown()` sets the shutdown flag, wakes the worker, and joins it. The worker does each gateway step, because only it may call the gateway (input 4). The worker steps, in ic4 stop order step 1:
+`shutdown()`:
+
+1. On the worker thread, which is only possible inside `WorkerInit`: set the shutdown flag and return. No join.
+2. In `kCreated`: no worker exists. Set `kStopped` under the lifecycle mutex. Then close the request queue and complete each queued request with `kFeedClosed`, on the calling thread. No queued request holds a `Feed` or a lease, because only the worker calls `subscribe`. No gateway call runs.
+3. In `kStarting` or `kRunning`: set the shutdown flag and `kStopping`. Move the thread object out if it is still there. Wake the worker. If this call got the object, join, set `kStopped`, and notify. Else wait for `kStopped`.
+4. In `kStopping`: wait for `kStopped`.
+5. In `kStopped`: return.
+
+The worker shutdown steps, in ic4 stop order step 1. The worker does each gateway step, because only it may call the gateway (input 4):
 
 1. Stop the request that runs at its next check point. Complete it and each queued request with `kFeedClosed`.
 2. Close each live subscription through its `LeaseLink`. A waiting `take` in a `Feed` or in a `get_image` caller returns `kFeedClosed` at once.
 3. Call `close_admission()`.
 4. If the stop is not confirmed, call `stream_stop()`. If it fails, make one reconciliation stop (d19 item 2). Record each error in `status()`. Do not enter `kWedged`.
-5. Mark the request queue as closed. Exit. The state becomes `kShutDown`.
+5. Mark the request queue as closed. Exit.
 
 Rules for the thread that runs shutdown:
 
 1. The destructor runs `shutdown()`. A request state is shared, so a caller that waits during destruction wakes with `kFeedClosed` and uses no freed memory.
-2. A call to `shutdown()` from the worker thread can only come from `WorkerInit`. It sets the flag and returns with no join. The worker exits after `init` returns. A join from the worker would wait for its own thread.
-3. The controller must not be destroyed on the worker thread. This is a program error, and a debug assertion catches it.
+2. The controller must not be destroyed on the worker thread, or while another thread runs `start`. Each is a program error, and a debug assertion catches the first.
 
 ### Subscription ownership
 
@@ -190,17 +218,25 @@ Rules for the thread that runs shutdown:
 
 1. A mutex.
 2. A non-owning `FrameSubscription*`, set when the worker builds the `Feed`.
-3. A `std::shared_ptr` to the worker request queue, which has a closed flag. This lets a release outlive the controller.
-4. The lease kind: feed or get image.
+3. A `released` flag, false at the start.
+4. A `std::shared_ptr` to the worker request queue, which has a closed flag. This lets a release outlive the controller.
+5. The lease kind: feed or get image.
+
+The link is the lease identity. The worker keeps the live leases as a set of links. `status().leases` is the size of that set.
 
 Rules:
 
-1. `Feed::close()` locks the link, calls `FrameSubscription::close()`, and sets the pointer to null. It then posts the lease release to the queue and returns. It does not wait for `stream_stop` (ic2 `Feed` item 3).
-2. The `Feed` destructor runs `close()` before it destroys the `unique_ptr`. The pointer in the link is therefore null before the subscription object goes away.
-3. Shutdown step 2 locks each link and calls `close()` through a pointer that is not null. The lock makes this safe against a concurrent `Feed` destructor.
-4. A move of `Feed` moves the `unique_ptr`, not the subscription object, so the pointer in the link stays valid.
-5. A release posted to a closed queue does nothing. A `Feed` that outlives the controller therefore releases safely.
-6. `[F]` `FrameSubscription::close()` is idempotent and safe from any thread, also after the source is gone (ic2 rules 5 and 7, `docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:104-106`).
+1. `Feed::close()` on an empty `Feed` does nothing. A `Feed` is empty after a move from it.
+2. Otherwise, `Feed::close()` locks the link. If `released` is true, it unlocks and returns. Else it calls `FrameSubscription::close()` if the pointer is not null, sets the pointer to null, and sets `released`. It unlocks and posts one release that names the link. It does not wait for `stream_stop` (ic2 `Feed` item 3).
+3. Rule 2 posts at most one release for each link, also after an explicit close and a later destructor, and also for two concurrent `close()` calls.
+4. The worker removes the named link from the set. A release whose link is not in the set does nothing. So one lease can never remove another lease.
+5. The `Feed` destructor runs `close()` before it destroys the `unique_ptr`. The pointer in the link is therefore null before the subscription object goes away.
+6. A move construction takes both pointers. The source becomes empty. The subscription object does not move, so the pointer in the link stays valid.
+7. A move assignment into a `Feed` from itself does nothing. Otherwise it runs `close()` on the destination, destroys the destination subscription, and then takes both pointers of the source. The old lease is released once, and the old link holds a null pointer before its subscription goes away.
+8. On an empty `Feed`, `take` and `try_take` return `kFeedClosed`, and `stats` returns zeros.
+9. Shutdown step 2 locks each link in the set. If the pointer is not null, it calls `close()` through it and sets it to null. It does not set `released`. The later `Feed::close()` posts its release to the closed queue.
+10. A release posted to a closed queue does nothing. A `Feed` that outlives the controller therefore releases safely.
+11. `[F]` `FrameSubscription::close()` is idempotent and safe from any thread, also after the source is gone (ic2 rules 5 and 7, `docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:104-106`).
 
 The get image path uses the same `Feed` type inside the controller, with capacity 1. The caller holds it during its take loop and destroys it before the return. So both lease kinds have one owner at a time, and ic2 needs no change.
 
@@ -227,10 +263,10 @@ The worker keeps one more fact besides the state: whether the stop is confirmed.
 
 ### Leases and the stream lifecycle
 
-Each open `Feed` and each outstanding `get_image` holds one lease (d16). The worker keeps the count.
+Each open `Feed` and each outstanding `get_image` holds one lease (d16). The worker keeps the set of links.
 
-1. When the count goes from 0 to 1 in `kIdle`, the worker runs the start sequence.
-2. When the count goes from 1 to 0 and `linger` is 0, the worker calls `close_admission()`. If the stop is not confirmed, it then calls `stream_stop()`. A failed stop goes to the failure recovery. On success, the state becomes `kIdle`.
+1. When the set goes from empty to one lease in `kIdle`, the worker runs the start sequence.
+2. When the set becomes empty and `linger` is 0, the worker calls `close_admission()`. If the stop is not confirmed, it then calls `stream_stop()`. A failed stop goes to the failure recovery. On success, the state becomes `kIdle`.
 3. If `linger` is more than 0, the worker keeps the stream and admission open for that time. A new lease in that time attaches. At the end, step 2 runs (d25).
 4. Last release in `kOutage` or `kConnectionUnknown`: the worker calls `close_admission()`, stops the poll, and enters `kIdle`. It makes no stream call, because the camera may be unreachable. The stop stays unconfirmed. The no-user check catches a later driver restart (d22 item 9).
 5. Last release in `kFaulted`: step 2 runs. If the stop is already confirmed, the worker makes no gateway call. The state becomes `kIdle`.
@@ -240,12 +276,12 @@ Each open `Feed` and each outstanding `get_image` holds one lease (d16). The wor
 
 1. Apply the check points and the state rule.
 2. Call `FrameSource::subscribe({options.capacity})`. A bad capacity returns `kInvalidArgument` from the data plane (ic2).
-3. Build the `Feed` and take the lease.
+3. Build the `Feed` and add its link to the set.
 4. Attach, or run the start sequence. On success, deliver the `Feed`. On failure, destroy the `Feed` and give the error to the request.
 
 ### Start sequence
 
-The worker runs these steps before each `stream_start` that it makes. The steps implement d17, d18, d19, and ic3 item 4.1. Each feature call uses `FeatureModule::kRemoteDevice`.
+The worker runs these steps before each `stream_start` that it makes. The steps implement d17, d18, d19, and ic3 item 4.1. Each feature call uses `FeatureModule::kRemoteDevice`. For a request, the check points in "Requests and deadlines" run before each call.
 
 1. Read back the profile. See "Configuration order and readback".
 2. If a value differs:
@@ -262,11 +298,28 @@ The worker runs these steps before each `stream_start` that it makes. The steps 
 
 `[F]` The first frame arrives about 79 ms before the `stream_start` reply at Mono8 (c1 §3.5 item 2). Admission opens in step 7, so those frames reach the queue. A reader made after the reply misses 3 to 5 frames (c1 §3.5 item 3).
 
-`[F]` A failed start can admit frames before the error, because the driver runs frame processing before the acquisition command (input 9). Step 9 removes them, so a feed that stays open never gets a frame from a failed epoch.
-
 `[F]` The idle subscription stays matched for the life of the `FrameSource` (d25). On a warm system, step 6 ends at the first poll.
 
 A start sequence that fails at step 4, 5, or 6 made no `stream_start` call. The worker returns the error to the request that caused the sequence. If the sequence ran for a recovery with no request, the worker records the error in `status().last_error` and enters `kFaulted`. Admission stays closed.
+
+### Frames from an epoch whose start is pending
+
+Between step 7 and the `stream_start` result, epoch E is pending. An open feed can take frames of E in that interval, because `take` returns a queued frame at once (input 11).
+
+The rule for a feed that stays open:
+
+1. Each frame of E passed the final readback and the format check for E, because steps 1 to 6 come before step 7. Its `stream_epoch` is E, and its `significant_bits` come from the final `PixelFormat`.
+2. A frame of E is a camera image at the verified profile. It stays valid if the start of E fails later. A frame can only exist if the camera acquired it, for example when `stream_start` timed out but the driver started.
+3. If the start of E fails, step 9 calls `close_admission()`. This removes each frame of E that the consumer did not take yet.
+4. No frame admitted after step 9 carries epoch E, because each later `open_admission` increments the epoch (ic3 item 1).
+5. So a consumer sees some frames of E, then empty results, then frames of a later epoch. `status()` shows the failure as `kFaulted`, `kIdle`, or `kWedged`, and `last_error` holds the start error.
+
+The rule for get image:
+
+1. A get image whose request caused the start gets no frame of a failed epoch. The worker delivers its `Feed` only after `stream_start` succeeds.
+2. A get image that attached in `kOutage`, `kConnectionUnknown`, or `kStalled` takes frames like a feed. It can return a frame of an epoch whose recovery start fails later. Feed rule 2 applies to that frame.
+
+The section keeps admission open before `stream_start`. Admission after the reply would lose 3 to 5 frames of each cold start (c1 §3.5 item 3). A held state until the reply would need a new data-plane state, and it would only delay valid frames.
 
 ### Configuration order and readback
 
@@ -288,6 +341,7 @@ Readback, in this order (d18 item 3). Each call passes `FeatureModule::kRemoteDe
 1. `[F]` `TriggerMode` applies to the current `TriggerSelector`, and `camera_status()` moves the selector (facts 1.5.7, c2 §3.3 item 5). Step 4 makes the read in step 5 target `FrameStart`.
 2. `[A]` The float tolerance is 0.001. c3 read back 30.000001907348633 Hz after a write of 30.0 (c3 §3 item 3).
 3. A read that fails returns its error unchanged. The worker then destroys the request `Feed`, which releases the lease. In a recovery with no request, the error goes to `status().last_error`. The reconnect path then follows its step 3. Other recoveries enter `kFaulted`.
+4. For a request, a check point runs before each of the 8 calls. A request that expires after step 2 makes no call for step 3.
 
 The selector write during a stream (i11):
 
@@ -314,6 +368,7 @@ Write results:
 3. If the second readback matches, the sequence continues with no error.
 4. If a value still differs, the result is `kFormatNotStreamable` or `kProfileMismatch`. The text names the value and the write error.
 5. If a read in the second readback fails, that read error returns unchanged.
+6. A request that expires between two writes makes no further write. The next start sequence reads back and corrects the rest.
 
 ### Get image
 
@@ -325,30 +380,43 @@ On the caller thread:
 2. Wait on the request state until it leaves `kPending` or the deadline passes.
 3. At the deadline, try the transition to `kAbandoned`. If it succeeds, return `kDeadlinePassed`.
 4. If the worker delivered an error, return it.
-5. If the worker delivered the `Feed` and `R`, call `take(deadline - now)` in a loop. Skip each frame with `receive_seq <= R`. Return the first other frame.
-6. If `take` returns empty at the deadline, return `kDeadlinePassed`. If it returns `kFeedClosed`, return `kFeedClosed`.
-7. Destroy the `Feed` before each return. This closes the subscription and posts the lease release.
+5. If the worker delivered the `Feed` and `R`, run the take loop below.
+6. Destroy the `Feed` before each return. This closes the subscription and posts the lease release.
 
-The `take` result decides the race between a late frame and the deadline. A frame that `take` returns is the answer, even if the clock passed the deadline during the wake-up. A recheck after `take` would discard a valid frame and change no deadline bound.
+The take loop:
+
+1. Read the steady clock. If the deadline has passed, return `kDeadlinePassed`. Make no `take` call.
+2. Call `take(deadline - now)`. The timeout is more than 0, so the call can wait.
+3. If `take` returns `kFeedClosed`, return `kFeedClosed`. If it returns empty, go to step 1.
+4. If `take` returns a frame, read the steady clock again. If the deadline has passed, drop the frame and return `kDeadlinePassed`.
+5. If the frame has `receive_seq <= R`, skip it and go to step 1.
+6. Else return the frame.
+
+Deadline at frame acceptance (d26 item 4):
+
+1. The acceptance check in step 4 decides the result. A call that accepts a frame accepted it at or before the deadline. A call that reaches step 4 after the deadline returns `kDeadlinePassed`.
+2. The check is exact only at acceptance, because a consumer cannot see when a frame entered its queue (input 12).
+3. The cost is one dropped frame when a frame arrives just before the deadline and the caller wakes just after it. The window is the wake-up time of the caller thread.
+4. The caller can retry. A warm retry gets a new frame within about one frame period, 33 ms at 30 Hz (d28).
 
 On the worker:
 
 1. Apply the check points and the state rule.
 2. Read `R = frames.stats().frames_received`.
-3. Call `subscribe({1})`, build the `Feed`, and take the lease (d10 item 3, d28).
-4. Attach, or run the start sequence. Then deliver the `Feed` and `R`.
+3. Call `subscribe({1})`, build the `Feed`, and add its link to the set (d10 item 3, d28).
+4. Attach, or run the start sequence. Then deliver the `Feed` and `R` with the delivery check point.
 
 Freshness (d24, as amended in i12):
 
 1. The answer is a frame that the fan-out pushed to the get image subscription after it opened, with `receive_seq` greater than `frames_received` at the request.
 2. `[F]` `receive_seq = frames_received.fetch_add(1) + 1`, and `stats().frames_received` loads the same atomic (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:124`, `:132`). So `R` is the last sequence that existed at the request.
-3. `[F]` A callback can take its sequence before `subscribe` and push after the queue link (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:134`). Caller step 5 skips that frame.
+3. `[F]` A callback can take its sequence before `subscribe` and push after the queue link (`docs/architecture/image-acquisition-planning/codex/sections/data-plane.md:134`). Take loop step 5 skips that frame.
 4. The queue has capacity 1 and drops the oldest frame. If several frames arrive before the caller takes, the caller gets the newest one. Each one meets R6, "received after the request".
 5. `[F]` A frame received after the request can have been exposed before it (facts A68). Phase 1 accepts this (R6). L4 asks Logan.
 
 Deadline and stop (d26):
 
-1. The deadline covers the queue wait, the lease, the readback, the writes, the format check, the match, `stream_start`, and the first frame.
+1. The deadline covers the queue wait, the lease, the readback, the writes, the format check, the match, `stream_start`, and the acceptance of the first frame.
 2. The `stream_stop` after delivery is outside it. A cold call returns before the stop ends.
 3. A failed stop goes to the failure recovery. The worker is serial, so the next request waits until the recovery ends (d26 item 6).
 
@@ -366,7 +434,7 @@ Phase 1 has no software trigger (d23, d27). The `TriggerSoftware` path and `kTri
 
 This subsection implements d19. The worker keeps two results apart: the first error, from the call that failed, and the reconciliation result.
 
-1. If a `stream_start` or a `stream_stop` fails or times out, the worker calls `close_admission()` and records the first error in `status().last_error`. This covers the start sequence, the last release, the no-user stop, the stall cycle, the reconnect paths, and the confirmation stop in `kWedged`.
+1. If a `stream_start` or a `stream_stop` fails or times out, the worker calls `close_admission()` and records the first error in `status().last_error`. This covers the start sequence, the last release, the no-user stop, the stall cycle, and the reconnect paths. It does not cover the confirmation stop in `kWedged`, which has its own rule below.
 2. If the first error is -3, the camera is not reachable. The worker skips the reconciliation stop and goes to the outage rules.
 3. Else, the worker calls `stream_stop()` one time to reconcile.
 4. If the reconciliation stop succeeds, the stop is confirmed. `status().last_reconciliation` is empty. The request that caused the recovery gets the first error unchanged. The state becomes `kIdle` with no lease, or `kFaulted` with a lease.
@@ -383,10 +451,10 @@ In `kWedged`:
 3. The error text tells the operator to restart the driver process. The project does not restart it (d19 item 4).
 4. The worker calls `connection_status()` every 250 ms, with or without leases.
 5. A change signal is a poll result other than `true`, followed by `true`. The result other than `true` can be `false`, -3, or a gateway error.
-6. At a change signal, the worker makes one confirmation `stream_stop()`.
+6. At each change signal, the worker makes exactly one confirmation `stream_stop()`. This stop is not part of the failure recovery. It causes no reconciliation stop, no outage state, and no second stop.
 7. If the confirmation stop succeeds, the driver stream is stopped on the current camera object. The worker clears `kWedged`, and the stop is confirmed.
-8. If it returns -15 or fails another way, the state stays `kWedged`. The worker waits for the next change signal.
-9. After the clear, with no lease, the state becomes `kIdle`. With leases, the worker runs the start sequence, which reads back and waits for a match before `open_admission` (d19 item 5). A failure there gives `kFaulted`.
+8. If the confirmation stop fails in any way, the state stays `kWedged`. This covers -15, -3, another driver error, a gateway error, and a timeout. The worker records the error in `status().last_reconciliation` and waits for the next change signal. `last_error` keeps the error that caused the wedge.
+9. After the clear, with no lease, the state becomes `kIdle`. With leases, the worker runs the start sequence, which reads back and waits for a match before `open_admission` (d19 item 5). A failure there goes to the failure recovery, or to `kFaulted` for steps 4 to 6 of the sequence.
 
 A poll error alone never clears `kWedged`. A gateway timeout on a live driver followed by `true` gives a change signal, but the confirmation stop then returns -15 on the live wedge. Only a successful stop clears the state. This is direct evidence, because no service resets a wedge (input 8).
 
@@ -443,8 +511,8 @@ New epochs come only from `open_admission` calls (d11). The worker calls it in t
 |---|---|---|
 | The policy layer runs on the gateway worker, with no new concurrency (v1 §8) | The same, through the `WorkerInit` hook | The gateway thread contract does not change (d5) |
 | `FeedOpen` subscribes and starts, with no match wait (v1 §8.1) | Match wait before each start | A subscription made before `stream_start` does not prove a match (facts A66) |
-| `FeedOpen` has no caller deadline | `FeedOptions::deadline`, default 5000 ms | Without it, a camera that does not answer blocks the caller for about 50 s (N4) |
+| `FeedOpen` has no caller deadline | `FeedOptions::deadline`, default 5000 ms, checked before each gateway call | Without it, a camera that does not answer blocks the caller for about 50 s (N4) |
 | Configuration is verified by readback, with no fixed source (v1 §8.3) | `settings_file` applies the profile, and the controller reads back and corrects after a confirmed stop | Only `settings_file` applies values before the driver restart after a reopen (d18) |
-| `GetImage` has a stream sample and a software trigger strategy (v1 §8.2) | Stream sample only | R6 needs "received after the request", and a trigger stops a feed (d23) |
+| `GetImage` has a stream sample and a software trigger strategy (v1 §8.2) | Stream sample only, accepted only at or before the deadline | R6 needs "received after the request", and a trigger stops a feed (d23) |
 | A take timeout makes the consumer check the connection (v1 §8.4) | The worker checks silence on a tick and opens a new epoch after recovery | Consumers do not call the gateway, and a reconnect restarts the stream with no project call (d22) |
 | Close always stops the stream (v1 §8.1) | The last release stops it | Get image and a feed share one stream (d16, d28) |

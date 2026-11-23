@@ -11,6 +11,7 @@ Labels: `[F]` is a fact with a citation. `[A]` is a working assumption. `[Q]` is
 3. `[F]` The package installs `config/` and `launch/` and has no tests (`src/venimapping_bringup/CMakeLists.txt:14`).
 4. `[F]` All other driver parameters keep their defaults: `buffer_count` 7, `use_ros_time` false, `settings_file` and `camera_info_url` empty (`driver:vimbax_camera/src/vimbax_camera_node.cpp:276-305`, `:415-418`).
 5. `[F]` `settings_file` and `camera_info_url` are read-only parameters. `use_ros_time` and `buffer_count` can change at run time (`driver:vimbax_camera/src/vimbax_camera_node.cpp:282-305`, `:415-418`).
+6. `[F]` The launch `Node` sets no `output` argument (`src/venimapping_bringup/launch/camera.launch.py:35-41`). The default `output` is `log`, which also sends the process stderr to the screen (`ros:ros2/launch/launch/launch/actions/execute_process.py:217-219`).
 
 ### Driver parameters
 
@@ -89,9 +90,16 @@ New file `config/camera_settings.xml`. The driver loads it on each open and reop
 3. `[F]` `VmbFeaturePersistNoLUT` means all features except look-up tables (`vimbax:api/include/VmbC/VmbCTypeDefinitions.h:473-475`). The SDK repeats the load up to the iteration count, because one write can change a feature that it set before (`vimbax:doc/VimbaX_Documentation/cAPIManual.html:1470-1479`).
 4. Scope: the file can hold features of the camera, the local device module, and the stream module. It holds no system or interface feature. `[A]` The SDK saves each feature of those modules that it can read. The module flags alone do not prove that each feature is in the file. Review the saved file to see its content.
 5. `[F]` The save service accepts only a `.xml` name (`driver:vimbax_camera/src/vimbax_camera.cpp:1335-1337`).
-6. `[F]` A missing file returns -3, and the driver only logs a failed load. The driver continues (`driver:vimbax_camera/src/vimbax_camera.cpp:1312-1314`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`). The log line starts with `Loading settings from file`.
+6. `[F]` A missing file returns -3, and the driver only logs a failed load. The driver continues (`driver:vimbax_camera/src/vimbax_camera.cpp:1312-1314`, `driver:vimbax_camera/src/vimbax_camera_node.cpp:394-399`).
 
-The controller readback is a check of the seven listed profile values and the selector write only (d18 item 3). It does not check any other feature in the file. It also cannot see a failed load when the camera already holds the listed values. The rig check below uses the driver log and a controlled reopen to see the load result.
+The failed-load line:
+
+1. `[F]` The driver logs the message `Loading settings from file <path> failed with error <code> (<text>)` through `RCLCPP_ERROR` (`driver:vimbax_camera/src/vimbax_camera_node.cpp:395-398`). It is the only driver log text that contains `Loading settings from file`, and the driver logs it only on a failed load.
+2. `[F]` The default console format is `[{severity}] [{time}] [{name}]: {message}` (`ros:ros2/rcutils/src/logging.c:88-89`). Console output goes to stderr by default (`ros:ros2/rcutils/src/logging.c:659-670`).
+3. `[F]` `launch` puts `[<process name>] ` before each line of process output (`ros:ros2/launch/launch/launch/actions/execute_local.py:91`).
+4. So the message is in the middle of the console line, after two prefixes. Each check in this document matches the text anywhere in the line, with `grep -F 'Loading settings from file'`.
+
+The controller readback is a check of the seven listed profile values and the selector write only (d18 item 3). It does not check any other feature in the file. It also cannot see a failed load when the camera already holds the listed values. The rig check below uses the failed-load line and a controlled reopen to see the load result.
 
 `[A]` A change to a feature outside the profile enters through the file with no readback (N7). Review the file diff in each change to `camera_settings.xml`.
 
@@ -167,16 +175,35 @@ Configuration test without a camera, `test/test_camera_config.py`:
 
 The rig check has two parts. The operator does part A, and `camera_feed_probe` with `mode:=bringup` does part B (ic6 item 3, d18 item 8, d20 items 7 and 8). Part A makes a controlled reopen from known different values, so a pass proves that the installed file applied.
 
+Each launch in part A writes the console output to a file. The step 11 launch is an example:
+
+```sh
+ros2 launch venimapping_bringup camera.launch.py 2>&1 | tee driver_b.log
+```
+
 Part A, the controlled reopen:
 
-1. Launch the driver with the default arguments. Write its console output to `driver_a.log`.
-2. With the stream stopped, write `ExposureTime` 10000.0 with the CLI.
-3. Write `AcquisitionFrameRate` 20.0 with the CLI.
+1. Launch the driver with `settings_file:=/nonexistent.xml`. Write its console output to `driver_control.log`.
+2. Run `grep -F 'Loading settings from file' driver_control.log`.
+3. If step 2 prints no line, the capture does not show the failed-load line. Stop the check and fix the capture.
 4. Stop the driver.
-5. Launch the driver again with the default arguments. Write its console output to `driver_b.log`.
-6. If `driver_b.log` has a line that starts with `Loading settings from file`, the check fails.
+5. Launch the driver with the default arguments. Write its console output to `driver_a.log`.
+6. With the stream stopped, write `ExposureTime` 10000.0 with the CLI.
+7. Write `AcquisitionFrameRate` 20.0 with the CLI.
+8. Read back `ExposureTime` and `AcquisitionFrameRate` with the CLI.
+9. If a value in step 8 differs from the written value by more than 0.001, stop the check. Record that the camera did not take the part A values.
+10. Stop the driver.
+11. Launch the driver again with the default arguments. Write its console output to `driver_b.log`.
+12. Run `grep -F 'Loading settings from file' driver_a.log driver_b.log`.
+13. If step 12 prints a line, the check fails.
 
-`[A]` The camera keeps written values across a driver restart without a power cycle. If it does not, the camera returns to its own defaults. c1 read 69.7 Hz with the enable false as the default (c1 §3.6 item 2), so part B still fails on a failed load.
+Notes on part A:
+
+1. Steps 1 to 3 prove that the check can fail. A capture that misses stderr, or a match on the wrong text, stops the check at step 3.
+2. Step 9 makes sure that the camera held 10000.0 and 20.0 before the reopen. Part B step 6 then fails if the file did not set the profile values.
+3. `[F]` `AcquisitionFrameRate` is writable only while `AcquisitionFrameRateEnable` is true (c1 §3.6 item 2, c3 §3 item 2). Step 5 loads the file, which sets the enable to true.
+4. `[A]` The camera keeps written values across a driver restart without a power cycle. If it does not, the camera returns to its own defaults. c1 read 69.7 Hz with the enable false as the default (c1 §3.6 item 2), so part B still fails on a failed load.
+5. The launch in step 1 also loads no profile. The camera keeps its last values, and step 5 loads the file again.
 
 Part B, `camera_feed_probe` with `mode:=bringup`, before any `stream_start`:
 
@@ -196,7 +223,7 @@ Notes on part B:
 2. Step 4 makes step 5 fail when `image_raw` has no publisher. An empty topic list cannot pass.
 3. The 2000 ms limit is about 18 times the measured 110 ms from `stream_start` to the first frame (c1 §3.5 items 1 and 2).
 
-Old behavior: step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 2 fails, because `settings_file` is empty. Step 6 fails, because the camera keeps 10000.0 and 20.0 from part A. Step 8 fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
+Old behavior: the launch file has no `settings_file` argument, so the driver loads no file, and part A stops at step 3. Part B step 1 fails, because `use_ros_time` is false (facts 1.1.5). Step 2 fails, because `settings_file` is empty. Step 6 fails, because the camera keeps 10000.0 and 20.0 from part A. Step 8 fails, because the stamp is about 12674 s of camera clock (c1 §3.4 item 3). New behavior: all steps pass.
 
 ### Host check
 
