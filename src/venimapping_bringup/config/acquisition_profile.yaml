@@ -1,0 +1,21 @@
+# ------------------------------------------------------------------------------
+#  Filename: acquisition_profile.yaml
+#
+#  Purpose:  Expected camera profile values that the application node reads as
+#            ROS parameters for the controller readback.
+#
+#  Copyright (C) 2026 Logan Kaising.  All rights reserved.
+# ------------------------------------------------------------------------------
+
+/**:
+  ros__parameters:
+    use_sim_time: false
+    profile:
+      pixel_format: "Mono8"
+      width: 1296
+      height: 1032
+      trigger_mode: "Off"
+      acquisition_frame_rate_enable: true
+      acquisition_frame_rate: 30.0
+      exposure_time: 4999.455
+      allowed_formats: ["Mono8"]
