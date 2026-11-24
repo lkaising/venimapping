@@ -3,9 +3,9 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-24T06:13:54-05:00
+- Updated: 2026-11-24T06:13:56-05:00
 - Run base commit: 9dee1f0e372
-- Last completed checkpoint: rig-1 (this commit)
+- Last completed checkpoint: report (this commit)
 - Push pending: False
 
 ## Next step
@@ -32,8 +32,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 | review | codex | done | 1 | pass | 6ba9c9a586 |
 | fix | claude | done | 1 |  | abff025563 |
 | build-2 | harness | done | 1 | pass | fdbc9c6971 |
-| rig-1 | harness | done | 1 | pass |  |
-| report | harness | pending | 0 |  |  |
+| rig-1 | harness | done | 1 | pass | 20357022a4 |
+| report | harness | done | 1 | pass |  |
 
 ## Camera
 
