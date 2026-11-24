@@ -12,9 +12,11 @@ from pathlib import Path
 
 import launch.logging
 import yaml
+from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import PathJoinSubstitution, TextSubstitution
 from launch_ros.substitutions import FindPackageShare
+from launch_ros.utilities import evaluate_parameters, normalize_parameters
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 CAMERA_YAML = PACKAGE_DIR / "config" / "camera.yaml"
@@ -42,17 +44,25 @@ def load_yaml(path):
         return yaml.safe_load(stream)
 
 
-def load_launch_arguments(log_dir):
-    # DeclareLaunchArgument opens the launch log file. Keep it out of ~/.ros.
-    if not launch.logging.launch_config.file_handlers:
-        launch.logging.launch_config.log_dir = str(log_dir)
-
+def load_launch_module():
     spec = importlib.util.spec_from_file_location(
         "venimapping_bringup_camera_launch", LAUNCH_FILE
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    description = module.generate_launch_description()
+    return module
+
+
+def keep_launch_log_in(log_dir):
+    # DeclareLaunchArgument and LaunchContext open the launch log file. Keep it
+    # out of ~/.ros.
+    if not launch.logging.launch_config.file_handlers:
+        launch.logging.launch_config.log_dir = str(log_dir)
+
+
+def load_launch_arguments(log_dir):
+    keep_launch_log_in(log_dir)
+    description = load_launch_module().generate_launch_description()
     return {
         entity.name: entity
         for entity in description.entities
@@ -126,3 +136,69 @@ def test_launch_arguments_have_defaults(tmp_path):
 
     assert text_of(components[1]) == "config"
     assert text_of(components[2]) == "camera_settings.xml"
+
+
+LAUNCH_VALUES = {"use_ros_time": False, "settings_file": "/override.xml"}
+
+
+def test_mirror_covers_exact_entry_then_matching_wildcard():
+    # rcl merges the launch override into the first entry. Without the mirror,
+    # the later wildcard sets true and /fallback.xml.
+    document = {
+        "/vimbax_camera/vimbax_camera": {
+            "ros__parameters": {
+                "camera_id": "0GPF3",
+                "use_ros_time": True,
+                "settings_file": "/first.xml",
+            }
+        },
+        "/**/vimbax_camera": {
+            "ros__parameters": {"use_ros_time": True, "settings_file": "/fallback.xml"}
+        },
+    }
+
+    mirror = load_launch_module().mirror_override_entries(document, LAUNCH_VALUES)
+
+    assert list(mirror) == ["/vimbax_camera/vimbax_camera", "/**/vimbax_camera"]
+    for entry in mirror.values():
+        assert entry == {"ros__parameters": LAUNCH_VALUES}
+
+
+def test_mirror_keeps_nested_node_keys_and_only_set_names():
+    document = {
+        "vimbax_camera": {
+            "vimbax_camera": {"ros__parameters": {"use_ros_time": True, "buffer_count": 7}}
+        },
+        "/other_node": {"ros__parameters": {"buffer_count": 7}},
+    }
+
+    mirror = load_launch_module().mirror_override_entries(document, LAUNCH_VALUES)
+
+    assert mirror == {
+        "vimbax_camera": {"vimbax_camera": {"ros__parameters": {"use_ros_time": False}}}
+    }
+
+
+def test_mirror_of_shipped_camera_yaml():
+    mirror = load_launch_module().mirror_override_entries(
+        load_yaml(CAMERA_YAML), LAUNCH_VALUES
+    )
+
+    assert mirror == {DRIVER_NODE_KEY: {"ros__parameters": {"use_ros_time": False}}}
+
+
+def test_settings_file_path_with_hash_stays_whole(tmp_path):
+    keep_launch_log_in(tmp_path)
+    path = "/tmp/Camera #2/camera_settings.xml"
+    context = LaunchContext()
+    context.launch_configurations["use_ros_time"] = "false"
+    context.launch_configurations["settings_file"] = path
+
+    overrides = load_launch_module().driver_parameter_overrides()
+    (evaluated,) = evaluate_parameters(context, normalize_parameters([overrides]))
+
+    assert evaluated == {"use_ros_time": False, "settings_file": path}
+
+    # The mirror file must also keep the whole path.
+    mirror = {DRIVER_NODE_KEY: {"ros__parameters": {"settings_file": path}}}
+    assert yaml.safe_load(yaml.safe_dump(mirror)) == mirror
