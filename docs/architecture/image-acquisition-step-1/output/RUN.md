@@ -2,18 +2,17 @@
 
 The runner writes this file. Do not edit it by hand.
 
-- Status: running
-- Updated: 2026-11-24T06:13:56-05:00
+- Status: complete
+- Updated: 2026-11-24T06:13:58-05:00
 - Run base commit: 9dee1f0e372
-- Last completed checkpoint: report (this commit)
+- Last completed checkpoint: report (7ee2a60b728)
 - Push pending: False
 
 ## Next step
 
+The run is complete. Read docs/architecture/image-acquisition-step-1/output/report.md.
 
-If the workstation restarted, run this command from the worktree root. The runner resumes from the last checkpoint:
-
-    python3 docs/architecture/image-acquisition-step-1/runner/run.py
+After this commit, the runner pushes and checks that the remote branch has it. If the push fails, the runner prints the retry command and writes it to final-status.txt in the run folder.
 
 ## Tools
 
@@ -33,7 +32,7 @@ If the workstation restarted, run this command from the worktree root. The runne
 | fix | claude | done | 1 |  | abff025563 |
 | build-2 | harness | done | 1 | pass | fdbc9c6971 |
 | rig-1 | harness | done | 1 | pass | 20357022a4 |
-| report | harness | done | 1 | pass |  |
+| report | harness | done | 1 | pass | 7ee2a60b72 |
 
 ## Camera
 
