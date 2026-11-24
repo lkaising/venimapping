@@ -97,8 +97,16 @@ def write_outputs(prompt: str, stage: str, plan: dict, behavior: str) -> None:
     worktree = Path(field(prompt, "Worktree (read only)"))
     required = section(prompt, "Required outputs, relative to the output root:")
     if kind in ("implement", "repair") and behavior != "nochange":
-        for rel, text in step1_files(plan.get("bugs", [])).items():
-            write(root, rel, text)
+        if plan.get("replay"):
+            # A camera rehearsal replays files that a real agent wrote.
+            source = Path(plan["replay"])
+            for path in sorted(source.rglob("*")):
+                if path.is_file():
+                    write(root, str(path.relative_to(source)),
+                          path.read_text())
+        else:
+            for rel, text in step1_files(plan.get("bugs", [])).items():
+                write(root, rel, text)
     if kind == "review":
         findings = plan.get("findings", [
             {"id": "r1", "severity": "minor", "file": f"{PKG}/package.xml",

@@ -110,6 +110,27 @@ def xml_value_matches(name: str, raw: str, expected) -> bool:
     return raw.strip() == expected
 
 
+def strip_denied(source: Path, target: Path, denied: list[str]) -> list[str]:
+    """Writes source to target without each element whose name is denied.
+
+    A removed SelectorGroup takes its features with it. The SDK load writes
+    only the features in the file, so a removed feature is not written.
+    Returns the removed names.
+    """
+    patterns = [re.compile(p) for p in denied]
+    tree = ElementTree.parse(source)
+    removed = []
+    for parent in list(tree.getroot().iter()):
+        for child in list(parent):
+            name = child.get("Name") or child.get("name") or ""
+            if name and any(p.search(name) for p in patterns):
+                parent.remove(child)
+                removed.append(name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(target, encoding="UTF-8", xml_declaration=True)
+    return sorted(set(removed))
+
+
 def scan_settings(path: Path, denied: list[str]) -> dict:
     """Checks the profile values in the file and finds denied features."""
     try:

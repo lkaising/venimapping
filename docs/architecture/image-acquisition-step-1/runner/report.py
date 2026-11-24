@@ -149,6 +149,13 @@ def render(state: dict, settings: dict, out: str, xml: str) -> str:
         "`exercise_stream:=false`, its read-only defaults, set explicitly.",
         "6. The settings file is made on a driver that `ros2 run` starts with "
         "a runner parameter file and no `settings_file`.",
+        "7. Part A step 11 passes a float readback within one camera "
+        "increment of the written value, where v2 asks for 0.001. See the "
+        "row for part A step 11 above.",
+        f"8. The settings file policy is "
+        f"`{settings['camera']['xml_denied_policy']}`. With `strip`, the "
+        f"package copy has no denied feature, where v2 installs the saved "
+        f"file as it is. See the camera settings file section.",
         "",
     ]
     return "\n".join(lines)
@@ -176,11 +183,20 @@ def settings_section(stage: dict | None, xml: str) -> list[str]:
         lines.append(f"| {name} | {info['expected']} | "
                      f"{cell(', '.join(info['found']) or 'absent')} | "
                      f"{'yes' if info['match'] else 'no'} |")
+    stripped = result.get("stripped")
+    if stripped:
+        after = result.get("scan_after_strip", {})
+        lines += ["", f"Policy `strip`: the runner removed {len(stripped)} "
+                  f"denied names from the package copy, so the driver never "
+                  f"writes them. The saved file in the logs is unchanged. "
+                  f"This differs from v2 section 10, which installs the "
+                  f"saved file as it is. The package copy holds "
+                  f"{after.get('features', '?')} features. Removed: "
+                  f"{', '.join(f'`{n}`' for n in stripped)}."]
     others = scan.get("others") or {}
-    lines += ["", "The driver also writes these features of the file on each "
-              "open. v2 asks for a review of them in each change to the file:",
-              "", ", ".join(f"`{name}`={cell(', '.join(values))}"
-                            for name, values in others.items()) or "none"]
+    lines += ["", f"The driver also writes each other writable feature of the "
+              f"file on each open: {len(others)} names. v2 asks for a review "
+              f"of the file content. Read `{xml}` for the full list."]
     return lines
 
 
@@ -193,6 +209,7 @@ def assumptions_section(rig_result: dict, settings_stage: dict | None,
     p11 = facts.get("p11", {})
     order = facts.get("control_order", {})
     host = facts.get("host", {})
+    rounding = facts.get("part_a_rounding") or {}
     limit = settings["camera"]["init_wait_s"]
     longest = max((w["seconds"] for w in waits.values()), default=None)
     p11_text = {True: "Holds", False: "Contradicted"}.get(
@@ -216,6 +233,9 @@ def assumptions_section(rig_result: dict, settings_stage: dict | None,
         f"| P2 | The settings file and the profile file describe the same "
         f"values | {'Holds' if all_pass(rig_result, ['E9']) else 'Open'} | "
         f"Exit check 9 after the controlled reopen, and the file scan |",
+        f"| Part A step 11 | The camera holds 10000.0 and 20.0 within 0.001 "
+        f"| {'Contradicted' if rounding else 'Holds'} | "
+        f"{cell(json.dumps(rounding) if rounding else 'exact readback')} |",
         f"| Host check | `net.core.rmem_max` and `net.core.rmem_default` are "
         f"8388608 or more | "
         f"{'Below' if host.get('below_8388608') else 'Holds'} | "
@@ -234,7 +254,11 @@ def assumptions_section(rig_result: dict, settings_stage: dict | None,
               "failed-load `grep` runs on each launch log and the camera "
               "defaults keep `AcquisitionFrameRateEnable` false. A slow init "
               "wait stops the run, because a new limit is a change to v2 "
-              "that Logan decides."]
+              "that Logan decides. A float write that the camera rounds to "
+              "its own increment passes part A step 11 when the readback is "
+              "within one increment of the written value and differs from "
+              "the profile value. v2 asks for 0.001, so each such rounding "
+              "is listed in the row for part A step 11."]
     if p11.get("holds") is False:
         after = p11.get("after_restart", {})
         lines += ["", f"P11 is contradicted. After a restart without a file, "

@@ -32,6 +32,8 @@ LOAD_LINE = "Loading settings from file"
 NO_FILE = "/nonexistent.xml"
 TOLERANCE = 0.001
 
+PARAM_RE = re.compile(r"(?:value is|values are):[ \t]*(.*)")
+
 SERVICE_TYPES = {
     "float": ("FeatureFloatGet", "FeatureFloatSet"),
     "int": ("FeatureIntGet", "FeatureIntSet"),
@@ -162,6 +164,18 @@ class Cli:
                           {"feature_name": name})
         return parse_value(kind, reply)
 
+    def float_increment(self, name: str) -> float | None:
+        """Returns the write increment of a float feature, or None."""
+        reply = self.call("features/float_info_get", "FeatureFloatInfoGet",
+                          {"feature_name": name})
+        available = re.search(r"\binc_available=(True|False)", reply)
+        inc = re.search(r"\binc=([-+0-9.eE]+)", reply)
+        if available is None or inc is None:
+            raise CameraError(f"float info reply has no increment: "
+                              f"{excerpt(reply, 300)}")
+        value = float(inc.group(1))
+        return value if available.group(1) == "True" and value > 0 else None
+
     def set(self, name: str, value) -> None:
         if name not in FEATURES:
             raise CameraError(f"the runner refuses a write to {name}")
@@ -218,6 +232,25 @@ def same(name: str, left, right) -> bool:
     if FEATURES.get(name) == "float":
         return abs(float(left) - float(right)) <= TOLERANCE
     return left == right
+
+
+def took(cli: Cli, name: str, written, read) -> tuple[bool, str]:
+    """Decides if the camera took a written value.
+
+    v2 asks for a readback within 0.001. The camera rounds a float write to
+    its own increment, for example ExposureTime 10000.0 to 10004.707. So a
+    float readback also passes when it is within one increment of the
+    written value. The report lists each such rounding.
+    """
+    if same(name, read, written):
+        return True, "exact"
+    if FEATURES.get(name) != "float":
+        return False, f"wrote {written}, read {read}"
+    inc = cli.float_increment(name)
+    if inc is not None and abs(float(read) - float(written)) <= inc * 1.0001:
+        return True, (f"rounded: wrote {written}, the camera holds {read}, "
+                      f"increment {inc}")
+    return False, f"wrote {written}, read {read}, increment {inc}"
 
 
 # --- Driver launches ----------------------------------------------------------
@@ -519,11 +552,28 @@ def rig_check(rig: Rig, profile_file: Path, install_prefix: Path) -> None:
                  not loaded)
     rig.facts["part_a_readback"] = values
     rig.record("A10", True, f"read back {values}")
-    wrong = {n: values[n] for n, v in PART_A if not same(n, values[n], v)}
+    profile = {name: value for name, _, value in PROFILE}
+    wrong, notes = {}, {}
+    for name, value in PART_A:
+        try:
+            ok, note = took(cli, name, value, values[name])
+        except CameraError as error:
+            ok, note = False, str(error)
+        if ok and same(name, values[name], profile[name]):
+            ok, note = False, f"{note}; equal to the profile value"
+        notes[name] = note
+        if not ok:
+            wrong[name] = values[name]
+    rig.facts["part_a_rounding"] = {n: t for n, t in notes.items()
+                                    if t != "exact"}
     if wrong:
-        rig.fail("A11", f"the camera did not take the part A values: {wrong}",
-                 not loaded)
-    rig.record("A11", True, "the readback is within 0.001 of each value")
+        rig.fail("A11", f"the camera did not take the part A values: "
+                        f"{wrong}; {notes}", not loaded)
+    rig.record("A11", True,
+               "the readback is within 0.001 of each value" if not
+               rig.facts["part_a_rounding"] else
+               f"each value taken; v2 step 11 asks for 0.001, and the camera "
+               f"rounded: {rig.facts['part_a_rounding']}")
     driver.stop(pgid)
     rig.record("A12", True, "stopped driver_a")
 
@@ -573,10 +623,12 @@ def exit_checks(rig: Rig, profile_file: Path, install_prefix: Path) -> list:
             time.sleep(1.0)
 
     def param(name: str) -> str:
+        # ros2 param get prints "<Type> value is: <v>" for a scalar and
+        # "<Type> values are: [<v>, ...]" for an array.
         output = graph(["ros2", "param", "get", node, name],
-                       lambda out: "value is:" in out)
-        return output.split("value is:", 1)[1].strip() \
-            if "value is:" in output else output.strip()
+                       lambda out: PARAM_RE.search(out) is not None)
+        match = PARAM_RE.search(output)
+        return match.group(1).strip() if match else output.strip()
 
     value = param("use_ros_time")
     check("E4", value == "True", f"use_ros_time is {value}", True)
@@ -673,8 +725,9 @@ def p11_check(rig: Rig) -> None:
         for name, value in PART_A:
             cli.set(name, value)
         written = {name: cli.get(name) for name, _ in PART_A}
+        taken = [took(cli, n, v, written[n])[0] for n, v in PART_A]
         rig.driver.stop(pgid)
-        if any(not same(n, written[n], v) for n, v in PART_A):
+        if not all(taken):
             raise CameraError(f"the camera did not take {written}")
         pgid = rig.driver.launch("p11_read", [f"settings_file:={NO_FILE}"])
         if rig.driver.init_wait("p11_read") != 0:
@@ -683,7 +736,8 @@ def p11_check(rig: Rig) -> None:
         after["AcquisitionFrameRateEnable"] = cli.get(
             "AcquisitionFrameRateEnable")
         rig.driver.stop(pgid)
-        holds = (all(same(n, after[n], v) for n, v in PART_A)
+        # Compare with the values that the camera held, after its rounding.
+        holds = (all(same(n, after[n], written[n]) for n, _ in PART_A)
                  and after["AcquisitionFrameRateEnable"] is True)
         result.update(holds=holds, written=written, after_restart=after,
                       detail="the values survived the restart" if holds else

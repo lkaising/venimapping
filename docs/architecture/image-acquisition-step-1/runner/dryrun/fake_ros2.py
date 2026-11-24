@@ -130,7 +130,9 @@ def service(args: list[str]) -> int:
             if cam["mode_written"]:
                 fakelib.log("violations.log", "status after a TriggerMode "
                                               "write and before the save")
-            features["TriggerSelector"] = "AcquisitionStart"
+            # The real status call steps through each selector and leaves
+            # the last one, ExposureActive, selected.
+            features["TriggerSelector"] = "ExposureActive"
             return reply(srv_type, streaming=cam["streaming"], width=1296,
                          height=1032, pixel_format=features["PixelFormat"])
         if leaf == "stream_stop":
@@ -143,8 +145,13 @@ def service(args: list[str]) -> int:
             fakelib.save_xml(path, features, scenario.get("xml_denied", False))
             cam["mode_written"] = False
             return reply(srv_type)
-        kind, verb = leaf.split("/", 1)[1].split("_")
         feature = request["feature_name"]
+        if leaf == "features/float_info_get":
+            grid = feature == "ExposureTime" and scenario.get("exposure_grid")
+            return reply(srv_type, min=1.0, max=1e7,
+                         inc=fakelib.EXPOSURE_INC if grid else 0.0,
+                         inc_available=bool(grid))
+        kind, verb = leaf.split("/", 1)[1].split("_")
         key = (f"TriggerMode@{features['TriggerSelector']}"
                if feature == "TriggerMode" else feature)
         if verb == "get":
@@ -166,6 +173,8 @@ def service(args: list[str]) -> int:
         if scenario.get("reject_part_a") and [feature, value] == [
                 "ExposureTime", 10000.0]:
             value = 9000.0
+        if feature == "ExposureTime" and scenario.get("exposure_grid"):
+            value = fakelib.snap_exposure(value)
         features[key] = value
         if feature == "TriggerMode":
             cam["mode_written"] = True
@@ -192,7 +201,7 @@ def param(args: list[str]) -> int:
     if isinstance(value, bool):
         print(f"Boolean value is: {value}")
     elif isinstance(value, list):
-        print(f"String array value is: {value}")
+        print(f"String values are: {value}")
     else:
         print(f"String value is: {value}")
     return 0

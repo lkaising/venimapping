@@ -33,7 +33,7 @@ DEFAULTS = {
     "Height": 1032,
     "TriggerSelector": "FrameStart",
     "TriggerMode@FrameStart": "Off",
-    "TriggerMode@AcquisitionStart": "Off",
+    "TriggerMode@ExposureActive": "Off",
     "ExposureTime": 5000.0,
     "AcquisitionFrameRateEnable": False,
     "AcquisitionFrameRate": 69.71556091308594,
@@ -59,6 +59,9 @@ def camera():
         data = json.loads(path.read_text()) if path.exists() else {
             "features": dict(DEFAULTS), "streaming": False,
             "mode_written": False}
+        if not path.exists() and scenario().get("exposure_grid"):
+            # A real camera reports a value on its grid at power on.
+            data["features"]["ExposureTime"] = ON_EXPOSURE
         yield data
         tmp = path.with_name("camera.json.tmp")
         tmp.write_text(json.dumps(data, indent=2))
@@ -75,6 +78,20 @@ def driver() -> dict | None:
     except (ProcessLookupError, ValueError, json.JSONDecodeError):
         return None
     return record if record.get("ready") else None
+
+
+# The real camera rounds an ExposureTime write to a grid with this increment.
+# 4999.455 is on the grid, and 10000.0 becomes 10004.707.
+EXPOSURE_INC = 13.172
+EXPOSURE_BASE = 4999.455
+
+
+ON_EXPOSURE = round(EXPOSURE_BASE + EXPOSURE_INC, 3)
+
+
+def snap_exposure(value: float) -> float:
+    steps = round((value - EXPOSURE_BASE) / EXPOSURE_INC)
+    return round(EXPOSURE_BASE + steps * EXPOSURE_INC, 3)
 
 
 def rate_max(features: dict) -> float:

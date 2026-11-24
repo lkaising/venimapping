@@ -22,6 +22,12 @@ import sys
 import time
 from pathlib import Path
 
+
+# The power-on ExposureTime of the fake camera, on the grid of the real one.
+ON_EXPOSURE = 5012.627
+# The fake camera rounds the part A write of 10000.0 to this value.
+PART_A_EXPOSURE = 10004.815
+
 # --- Configuration ------------------------------------------------------------
 
 DRYRUN_DIR = Path(__file__).resolve().parent
@@ -83,6 +89,8 @@ def git(*args: str, cwd: Path) -> str:
 
 def setup(root: Path, scenario: dict, accounts: bool = True,
           faults: dict | None = None) -> dict:
+    # Each scenario uses the exposure grid of the real camera by default.
+    scenario.setdefault("camera", {}).setdefault("exposure_grid", True)
     remote, work, driver = root / "remote.git", root / "work", root / "driver"
     state, run_dir, bin_dir = root / "fake-state", root / "run", root / "bin"
     for path in (work, driver, state, bin_dir):
@@ -149,6 +157,7 @@ def setup(root: Path, scenario: dict, accounts: bool = True,
             ["xml_denied_patterns"],
         },
     }
+    settings["camera"].update(scenario.get("camera_settings", {}))
     if accounts:
         work_dir = root / "claude-work"
         work_dir.mkdir()
@@ -444,7 +453,7 @@ def main_scenario(root: Path, c: Checks) -> None:
             "main: recovery adopts the review commit without a second commit")
     left = pids_named("vimbax_camera_node")
     c.check(code == -9 and state["camera"] is not None and left
-            and camera_features(ctx)["ExposureTime"] == 10000.0,
+            and camera_features(ctx)["ExposureTime"] == PART_A_EXPOSURE,
             "main: the kill leaves a driver and the part A values",
             f"drivers {left}")
 
@@ -480,13 +489,16 @@ def main_scenario(root: Path, c: Checks) -> None:
                  if line.startswith("| ") and line.split("|")[1].strip()
                  in [str(i) for i in range(1, 11)]
                  and "PASS" in line]
+    c.check("| Part A step 11 |" in text and str(PART_A_EXPOSURE) in text
+            and "Contradicted" in text,
+            "main: the report lists the part A rounding as a contradiction")
     c.check(len(exit_rows) >= 10 and "| P11 |" in text and "Holds" in text,
             "main: the report shows each exit check item as PASS and P11",
             f"{len(exit_rows)} PASS rows")
     baseline = json.loads((ctx["run_dir"] / "camera-baseline.json")
                           .read_text())
     view = camera_view(ctx)
-    c.check(view == baseline and view["ExposureTime"] == 5000.0
+    c.check(view == baseline and view["ExposureTime"] == ON_EXPOSURE
             and view["AcquisitionFrameRateEnable"] is False,
             "main: the camera ends the run with the baseline values",
             json.dumps(view))
@@ -557,7 +569,7 @@ def init_scenario(root: Path, c: Checks) -> None:
     c.check(not pids_named("vimbax_camera_node") and state["camera"] is None,
             "init: the runner stops the driver and closes the camera stage")
     c.check(not (ctx["state"] / "camera.json").exists()
-            or camera_features(ctx)["ExposureTime"] == 5000.0,
+            or camera_features(ctx)["ExposureTime"] == ON_EXPOSURE,
             "init: the camera is unchanged")
     set_camera(ctx, init_never=False)
     code = run_once(ctx, "run2 (resume with a working driver)")
@@ -578,7 +590,7 @@ def rigfail_scenario(root: Path, c: Checks) -> None:
             and "did not take" in state["stop_reason"],
             "rigfail: a failed part A step 11 stops the run with no repair",
             state.get("stop_reason", "")[:120])
-    c.check(camera_features(ctx)["ExposureTime"] == 5000.0
+    c.check(camera_features(ctx)["ExposureTime"] == ON_EXPOSURE
             and not pids_named("vimbax_camera_node"),
             "rigfail: the camera is restored and no driver is left")
     decoy = subprocess.Popen(
@@ -617,7 +629,7 @@ def p11_scenario(root: Path, c: Checks) -> None:
 
 
 def restore_scenario(root: Path, c: Checks) -> None:
-    ctx = setup(root, {"camera": {"fail_set_once": [["ExposureTime", 5000.0]]}},
+    ctx = setup(root, {"camera": {"fail_set_once": [["ExposureTime", ON_EXPOSURE]]}},
                 accounts=False)
     code = run_once(ctx, "run1 (the restore write fails once)")
     state = state_of(ctx)
@@ -628,7 +640,7 @@ def restore_scenario(root: Path, c: Checks) -> None:
             "restore: the driver is stopped even when the restore fails")
     code = run_once(ctx, "run2 (resume retries the cleanup first)")
     state = state_of(ctx)
-    c.check(code == 0 and camera_features(ctx)["ExposureTime"] == 5000.0
+    c.check(code == 0 and camera_features(ctx)["ExposureTime"] == ON_EXPOSURE
             and outcomes(state, "settings") == ["error", "ok"],
             "restore: the resume restores the camera and completes",
             f"exit {code}")
@@ -662,10 +674,34 @@ def xml_scenario(root: Path, c: Checks) -> None:
     c.check(not committed(ctx, XML) and "GevPersistentIPAddress" in committed(
         ctx, f"{OUT}/settings/settings-a1/camera_settings.saved.xml"),
         "xml: the file is kept in the logs and not put in the package")
+    c.check("xml_denied_policy" in state.get("stop_action", "")
+            and "strip" in state.get("stop_action", ""),
+            "xml: the stop says how to choose the policy",
+            state.get("stop_action", "")[:120])
     calls = [line for line in lines_of(ctx, "launches.log")]
     c.check(not any("camera_settings.xml" in line for line in calls),
             "xml: no driver loaded the file")
     common_end_checks(c, ctx, "xml")
+
+
+def strip_scenario(root: Path, c: Checks) -> None:
+    ctx = setup(root, {"camera": {"xml_denied": True},
+                       "camera_settings": {"xml_denied_policy": "strip"}},
+                accounts=False)
+    code = run_once(ctx, "run1 (strip the IP feature from the package copy)")
+    c.check(code == 0, "strip: the run completes", f"exit {code}")
+    installed = committed(ctx, XML)
+    c.check(bool(installed) and "GevPersistentIPAddress" not in installed
+            and "ExposureTime" in installed,
+            "strip: the package copy has the profile and no IP feature")
+    c.check("GevPersistentIPAddress" in committed(
+        ctx, f"{OUT}/settings/settings-a1/camera_settings.saved.xml"),
+        "strip: the saved file in the logs is unchanged")
+    report_text = committed(ctx, f"{OUT}/report.md")
+    c.check("Policy `strip`" in report_text
+            and "GevPersistentIPAddress" in report_text,
+            "strip: the report names the policy and the removed feature")
+    common_end_checks(c, ctx, "strip")
 
 
 def exhaust_scenario(root: Path, c: Checks) -> None:
@@ -690,6 +726,7 @@ SCENARIOS = {
     "main": main_scenario, "forbidden": forbidden_scenario,
     "init": init_scenario, "rigfail": rigfail_scenario, "p11": p11_scenario,
     "restore": restore_scenario, "decoy": decoy_scenario, "xml": xml_scenario,
+    "strip": strip_scenario,
     "exhaust": exhaust_scenario,
 }
 

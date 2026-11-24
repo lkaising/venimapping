@@ -917,9 +917,31 @@ class Runner:
                                  f"values: {scan['detail']}")
         elif scan["denied"] and settings["xml_denied_policy"] == "stop":
             result.update(passed=False, repairable=False,
-                          detail=f"the saved file holds features that the "
-                                 f"driver would write on each open: "
+                          detail=f"the saved file holds denied features that "
+                                 f"the driver would write on each open: "
                                  f"{scan['denied']}")
+        elif scan["denied"] and settings["xml_denied_policy"] == "strip":
+            target = out_dir / XML
+            removed = checks.strip_denied(
+                save_path, target, settings["xml_denied_patterns"])
+            again = checks.scan_settings(target,
+                                         settings["xml_denied_patterns"])
+            result.update(stripped=removed, scan_after_strip=again)
+            if again.get("missing") or again["denied"]:
+                result.update(passed=False, repairable=False,
+                              detail=f"the stripped file fails the scan: "
+                                     f"{again['detail']}")
+            else:
+                result["passed"] = True
+            session.record("S7b", result["passed"],
+                           f"removed {len(removed)} denied names from the "
+                           f"package copy: {removed}; scan of the copy: "
+                           f"{again['detail']}")
+        elif scan["denied"] and settings["xml_denied_policy"] != "load":
+            raise Stop(f"xml_denied_policy is "
+                       f"{settings['xml_denied_policy']!r}",
+                       "Set camera.xml_denied_policy in settings.json to "
+                       "stop, strip, or load. Then resume.")
         else:
             result["passed"] = True
             target = out_dir / XML
@@ -1340,8 +1362,10 @@ class Runner:
                              "Viewer."),
             ("denied features", "Review the saved file. Decide if the driver "
                                 "may write these features on each open. Then "
-                                "change xml_denied_policy or the pattern list "
-                                "in settings.json."),
+                                "set camera.xml_denied_policy in settings.json "
+                                "to strip (remove them from the package copy) "
+                                "or load (keep them), or change the pattern "
+                                "list."),
         ]
         hint = next((text for key, text in hints if key in detail),
                     "Read the results and the logs. Fix the cause.")
