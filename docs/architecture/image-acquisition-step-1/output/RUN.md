@@ -3,9 +3,9 @@
 The runner writes this file. Do not edit it by hand.
 
 - Status: running
-- Updated: 2026-11-24T08:42:47-05:00
+- Updated: 2026-11-24T08:49:10-05:00
 - Run base commit: 62c32048c48
-- Last completed checkpoint: settings (this commit)
+- Last completed checkpoint: review (this commit)
 - Push pending: False
 
 ## Next step
@@ -28,8 +28,8 @@ If the workstation restarted, run this command from the worktree root. The runne
 |---|---|---|---|---|---|
 | implement | claude | done | 1 |  | 7798e9019c |
 | build-1 | harness | done | 1 | pass | accabf77b5 |
-| settings | harness | done | 1 | pass |  |
-| review | codex | pending | 0 |  |  |
+| settings | harness | done | 1 | pass | ee2b33b352 |
+| review | codex | done | 1 | pass |  |
 | fix | claude | pending | 0 |  |  |
 | build-2 | harness | pending | 0 |  |  |
 | rig-1 | harness | pending | 0 |  |  |
