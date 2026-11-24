@@ -1,0 +1,21 @@
+{
+  "stream_stopped": true,
+  "restore": {
+    "restored": [
+      "ExposureTime",
+      "AcquisitionFrameRateEnable"
+    ],
+    "verified": [
+      "PixelFormat",
+      "Width",
+      "Height",
+      "TriggerSelector",
+      "TriggerMode",
+      "ExposureTime",
+      "AcquisitionFrameRateEnable",
+      "AcquisitionFrameRate"
+    ]
+  },
+  "driver_pids_left": [],
+  "errors": []
+}
