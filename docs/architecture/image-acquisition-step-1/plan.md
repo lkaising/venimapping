@@ -110,11 +110,20 @@ outside the worktree.
    `buffer_count` 7. That driver has no `settings_file`, as v2 asks, and the
    agent files cannot change it.
 8. The runner scans the saved file before any driver loads it. The scan
-   needs each of the seven profile values. It also stops the run if the file
-   holds a feature that matches a denied pattern in `settings.json`, for
-   example `GevPersistentIPAddress` or `UserSetDefault`. The driver writes
-   each feature in the file on each open, so such a feature could change IP
-   settings or user sets.
+   needs each of the seven profile values. It also looks for each feature
+   that matches a denied pattern in `settings.json`, for example
+   `GevPersistentIPAddress` or `UserSetDefault`. The driver writes each
+   feature in the file on each open, so such a feature could change IP
+   settings or user sets. `camera.xml_denied_policy` decides what happens:
+   1. `stop`: the run stops, and the file stays in the logs only.
+   2. `strip`: the runner removes each denied name from the package copy,
+      scans the copy again, and keeps the saved file unchanged in the logs.
+      The report lists each removed name.
+   3. `load`: the package gets the file as saved, and the report lists the
+      denied names.
+   On this camera, the saved file holds 2206 feature entries, among them the
+   IP configuration, the persistent IP, the user set selection, and
+   `DeviceUserID`. So `stop` always stops the run.
 9. At the end of each camera stage, the runner stops each of its driver
    groups, checks that no `vimbax_camera_node` process is left, and stops the
    ROS daemon. At the end of the run, it checks again.
@@ -160,6 +169,13 @@ The runner never edits v2. It records each such result in `output/report.md`.
    the failed-load line and the init line in the control log.
 4. The parameter override order, P2, and the host check. The report gives the
    result of exit checks 4, 5, and 9, and the `sysctl` values.
+5. Part A step 11 asks for a readback within 0.001 of 10000.0 and 20.0. The
+   camera rounds an `ExposureTime` write to its increment of 13.172 us, so
+   10000.0 reads back as 10004.707. The runner passes step 11 when a float
+   readback is within one increment of the written value, as
+   `features/float_info_get` reports it, and differs from the profile value.
+   The report lists each rounding under part A step 11. P11 compares the
+   values after the restart with the values that the camera held.
 
 ## Stop and resume
 
@@ -208,6 +224,15 @@ The scenarios:
 7. decoy: an agent that starts a driver.
 8. xml: a saved file with an IP feature.
 9. exhaust: a repair that changes no file, and a second rig failure.
+
+## Measured on the camera in pass 2
+
+1. A driver without a settings file prints the init line after 13 to 15 s.
+   With the stripped settings file it takes about 21 s.
+2. A `status` call steps through each trigger selector and leaves
+   `ExposureActive` selected. So the baseline selector is `ExposureActive`.
+3. `ExposureTime` has the increment 13.172 us. `AcquisitionFrameRate` has
+   none.
 
 ## What pass 2 must prove on the camera
 
