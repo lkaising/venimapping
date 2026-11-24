@@ -1,0 +1,92 @@
+$ colcon build --symlink-install --packages-select venimapping_bringup --event-handlers console_cohesion+
+Starting >>> venimapping_bringup
+--- output: venimapping_bringup
+-- Install configuration: ""
+-- Execute custom install script
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/config/acquisition_profile.yaml
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/config/camera.yaml
+-- Symlinking: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/config/camera_settings.xml
+-- Symlinking: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/launch/__pycache__/camera.launch.cpython-312.pyc
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/launch/camera.launch.py
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/ament_index/resource_index/package_run_dependencies/venimapping_bringup
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/ament_index/resource_index/parent_prefix_path/venimapping_bringup
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/environment/ament_prefix_path.sh
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/environment/ament_prefix_path.dsv
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/environment/path.sh
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/environment/path.dsv
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/local_setup.bash
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/local_setup.sh
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/local_setup.zsh
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/local_setup.dsv
+-- Symlinking: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/package.dsv
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/ament_index/resource_index/packages/venimapping_bringup
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/cmake/venimapping_bringupConfig.cmake
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/cmake/venimapping_bringupConfig-version.cmake
+-- Up-to-date symlink: /home/labuser/workspace/projects/venimapping-image-acq-step-1/install/venimapping_bringup/share/venimapping_bringup/package.xml
+---
+Finished <<< venimapping_bringup [0.11s]
+
+Summary: 1 package finished [0.21s]
+[exit 0, 0.43 s]
+
+# check E1: PASS colcon build --packages-select venimapping_bringup ended with exit 0
+
+$ colcon test --packages-select venimapping_bringup --return-code-on-test-failure --event-handlers console_cohesion+
+Starting >>> venimapping_bringup
+--- output: venimapping_bringup
+UpdateCTestConfiguration  from :/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/CTestConfiguration.ini
+Parse Config file:/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/CTestConfiguration.ini
+   Site: ws01
+   Build name: (empty)
+ Add coverage exclude regular expressions.
+Create new tag: 20261124-1111 - Experimental
+UpdateCTestConfiguration  from :/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/CTestConfiguration.ini
+Parse Config file:/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/CTestConfiguration.ini
+Test project /home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: test_camera_config
+
+1: Test command: /usr/bin/python3 "-u" "/home/labuser/workspace/upstream/ros2-jazzy/install/ament_cmake_test/share/ament_cmake_test/cmake/run_test.py" "/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/test_results/venimapping_bringup/test_camera_config.xunit.xml" "--package-name" "venimapping_bringup" "--output-file" "/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/ament_cmake_pytest/test_camera_config.txt" "--command" "/usr/bin/python3" "-u" "-m" "pytest" "/home/labuser/workspace/projects/venimapping-image-acq-step-1/src/venimapping_bringup/test/test_camera_config.py" "-o" "cache_dir=/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/ament_cmake_pytest/test_camera_config/.cache" "--junit-xml=/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/test_results/venimapping_bringup/test_camera_config.xunit.xml" "--junit-prefix=venimapping_bringup"
+1: Working Directory: /home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup
+1: Test timeout computed to be: 60
+1: -- run_test.py: invoking following command in '/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup':
+1:  - /usr/bin/python3 -u -m pytest /home/labuser/workspace/projects/venimapping-image-acq-step-1/src/venimapping_bringup/test/test_camera_config.py -o cache_dir=/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/ament_cmake_pytest/test_camera_config/.cache --junit-xml=/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/test_results/venimapping_bringup/test_camera_config.xunit.xml --junit-prefix=venimapping_bringup
+1: ============================= test session starts ==============================
+1: platform linux -- Python 3.12.3, pytest-7.4.4, pluggy-1.4.0
+1: cachedir: build/venimapping_bringup/ament_cmake_pytest/test_camera_config/.cache
+1: rootdir: /home/labuser/workspace/projects/venimapping-image-acq-step-1
+1: plugins: launch-testing-ros-0.26.12, launch-pytest-3.4.11, launch-testing-3.4.11, ament-xmllint-0.17.5, ament-pep257-0.17.5, ament-mypy-0.17.5, ament-flake8-0.17.5, ament-copyright-0.17.5, ament-lint-0.17.5, mock-3.12.0, timeout-2.2.0, rerunfailures-12.0, None-None, colcon-core-0.21.3, cov-4.1.0
+1: collected 3 items
+1: 
+1: ../../src/venimapping_bringup/test/test_camera_config.py ...             [100%]
+1: 
+1: - generated xml file: /home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/test_results/venimapping_bringup/test_camera_config.xunit.xml -
+1: ============================== 3 passed in 0.06s ===============================
+1: -- run_test.py: return code 0
+1: -- run_test.py: verify result file '/home/labuser/workspace/projects/venimapping-image-acq-step-1/build/venimapping_bringup/test_results/venimapping_bringup/test_camera_config.xunit.xml'
+1/1 Test #1: test_camera_config ...............   Passed    0.41 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+pytest    =   0.41 sec*proc (1 test)
+
+Total Test time (real) =   0.41 sec
+---
+Finished <<< venimapping_bringup [0.45s]
+
+Summary: 1 package finished [0.57s]
+[exit 0, 0.76 s]
+
+$ colcon test-result --test-result-base build/venimapping_bringup --verbose
+Summary: 4 tests, 0 errors, 0 failures, 0 skipped
+[exit 0, 0.17 s]
+
+# check E2: PASS colcon test exit 0, test-result exit 0, Summary: 4 tests, 0 errors, 0 failures, 0 skipped, test_camera_config results found: True
+
