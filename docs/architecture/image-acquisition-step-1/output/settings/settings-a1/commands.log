@@ -1,0 +1,230 @@
+$ ros2 run vimbax_camera vimbax_camera_node --ros-args -r __ns:=/vimbax_camera -r __node:=vimbax_camera --params-file /home/labuser/workspace/projects/venimapping-image-acq-step-1-run/bare-params.yaml 2>&1 | tee driver_settings.log  (started in the background)
+
+$ timeout 60 sh -c 'until grep -qF "Initialization done!" "$1"; do sleep 0.5; done' sh driver_settings.log
+
+[exit 0, 14.58 s]
+
+# check S0: PASS init wait on driver_settings.log ended with status 0 after 14.58 s
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_get vimbax_camera_msgs/srv/FeatureEnumGet '{"feature_name": "TriggerSelector"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumGet_Request(feature_name='TriggerSelector', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumGet_Response(value='ExposureActive', error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.59 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_get vimbax_camera_msgs/srv/FeatureEnumGet '{"feature_name": "PixelFormat"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumGet_Request(feature_name='PixelFormat', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumGet_Response(value='Mono8', error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/int_get vimbax_camera_msgs/srv/FeatureIntGet '{"feature_name": "Width"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureIntGet_Request(feature_name='Width', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureIntGet_Response(value=1296, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/int_get vimbax_camera_msgs/srv/FeatureIntGet '{"feature_name": "Height"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureIntGet_Request(feature_name='Height', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureIntGet_Response(value=1032, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_set vimbax_camera_msgs/srv/FeatureEnumSet '{"feature_name": "TriggerSelector", "value": "FrameStart"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumSet_Request(feature_name='TriggerSelector', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value='FrameStart')
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_get vimbax_camera_msgs/srv/FeatureEnumGet '{"feature_name": "TriggerMode"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumGet_Request(feature_name='TriggerMode', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumGet_Response(value='Off', error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_set vimbax_camera_msgs/srv/FeatureEnumSet '{"feature_name": "TriggerSelector", "value": "ExposureActive"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumSet_Request(feature_name='TriggerSelector', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value='ExposureActive')
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/float_get vimbax_camera_msgs/srv/FeatureFloatGet '{"feature_name": "ExposureTime"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureFloatGet_Request(feature_name='ExposureTime', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureFloatGet_Response(value=4999.455, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/bool_get vimbax_camera_msgs/srv/FeatureBoolGet '{"feature_name": "AcquisitionFrameRateEnable"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureBoolGet_Request(feature_name='AcquisitionFrameRateEnable', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureBoolGet_Response(value=False, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/float_get vimbax_camera_msgs/srv/FeatureFloatGet '{"feature_name": "AcquisitionFrameRate"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureFloatGet_Request(feature_name='AcquisitionFrameRate', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureFloatGet_Response(value=69.71556091308594, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/status vimbax_camera_msgs/srv/Status
+requester: making request: vimbax_camera_msgs.srv.Status_Request()
+
+response:
+vimbax_camera_msgs.srv.Status_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''), display_name='Allied Vision Alvium G1-130 VSWIR (DEV_000A471E3D7C)', model_name='Alvium G1-130 VSWIR', device_firmware_version='14.1.D83C7207', device_id='DEV_000A471E3D7C', device_user_id='', device_serial_number='0GPF3', interface_id='enp132s0', transport_layer_id='/home/labuser/workspace/upstream/vimbax-sdk/cti/VimbaGigETL.cti', streaming=False, width=1296, height=1032, frame_rate=69.71556091308594, pixel_format='Mono8', trigger_info=[vimbax_camera_msgs.msg.TriggerInfo(selector='AcquisitionStart', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='AcquisitionEnd', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='AcquisitionActive', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='FrameStart', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='ExposureStart', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='ExposureEnd', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='ExposureActive', mode='Off', source='Software')], ip_address='', mac_address='')
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/status vimbax_camera_msgs/srv/Status
+requester: making request: vimbax_camera_msgs.srv.Status_Request()
+
+response:
+vimbax_camera_msgs.srv.Status_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''), display_name='Allied Vision Alvium G1-130 VSWIR (DEV_000A471E3D7C)', model_name='Alvium G1-130 VSWIR', device_firmware_version='14.1.D83C7207', device_id='DEV_000A471E3D7C', device_user_id='', device_serial_number='0GPF3', interface_id='enp132s0', transport_layer_id='/home/labuser/workspace/upstream/vimbax-sdk/cti/VimbaGigETL.cti', streaming=False, width=1296, height=1032, frame_rate=69.71556091308594, pixel_format='Mono8', trigger_info=[vimbax_camera_msgs.msg.TriggerInfo(selector='AcquisitionStart', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='AcquisitionEnd', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='AcquisitionActive', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='FrameStart', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='ExposureStart', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='ExposureEnd', mode='Off', source='Software'), vimbax_camera_msgs.msg.TriggerInfo(selector='ExposureActive', mode='Off', source='Software')], ip_address='', mac_address='')
+[exit 0, 0.48 s]
+
+# check S0: PASS the driver without settings_file is up and the stream is stopped
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_set vimbax_camera_msgs/srv/FeatureEnumSet '{"feature_name": "PixelFormat", "value": "Mono8"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumSet_Request(feature_name='PixelFormat', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value='Mono8')
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/int_set vimbax_camera_msgs/srv/FeatureIntSet '{"feature_name": "Width", "value": 1296}'
+requester: making request: vimbax_camera_msgs.srv.FeatureIntSet_Request(feature_name='Width', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value=1296)
+
+response:
+vimbax_camera_msgs.srv.FeatureIntSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.49 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/int_set vimbax_camera_msgs/srv/FeatureIntSet '{"feature_name": "Height", "value": 1032}'
+requester: making request: vimbax_camera_msgs.srv.FeatureIntSet_Request(feature_name='Height', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value=1032)
+
+response:
+vimbax_camera_msgs.srv.FeatureIntSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+# check S1: PASS wrote PixelFormat Mono8, Width 1296, Height 1032
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_set vimbax_camera_msgs/srv/FeatureEnumSet '{"feature_name": "TriggerSelector", "value": "FrameStart"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumSet_Request(feature_name='TriggerSelector', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value='FrameStart')
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_set vimbax_camera_msgs/srv/FeatureEnumSet '{"feature_name": "TriggerMode", "value": "Off"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumSet_Request(feature_name='TriggerMode', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value='Off')
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+# check S2: PASS wrote TriggerSelector FrameStart, then TriggerMode Off
+
+$ timeout 20 ros2 service call /vimbax_camera/features/bool_set vimbax_camera_msgs/srv/FeatureBoolSet '{"feature_name": "AcquisitionFrameRateEnable", "value": true}'
+requester: making request: vimbax_camera_msgs.srv.FeatureBoolSet_Request(feature_name='AcquisitionFrameRateEnable', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value=True)
+
+response:
+vimbax_camera_msgs.srv.FeatureBoolSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+# check S3: PASS wrote AcquisitionFrameRateEnable true
+
+$ timeout 20 ros2 service call /vimbax_camera/features/float_set vimbax_camera_msgs/srv/FeatureFloatSet '{"feature_name": "AcquisitionFrameRate", "value": 30.0}'
+requester: making request: vimbax_camera_msgs.srv.FeatureFloatSet_Request(feature_name='AcquisitionFrameRate', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value=30.0)
+
+response:
+vimbax_camera_msgs.srv.FeatureFloatSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+# check S4: PASS wrote AcquisitionFrameRate 30.0
+
+$ timeout 20 ros2 service call /vimbax_camera/features/float_set vimbax_camera_msgs/srv/FeatureFloatSet '{"feature_name": "ExposureTime", "value": 4999.455}'
+requester: making request: vimbax_camera_msgs.srv.FeatureFloatSet_Request(feature_name='ExposureTime', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0), value=4999.455)
+
+response:
+vimbax_camera_msgs.srv.FeatureFloatSet_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+# check S5: PASS wrote ExposureTime 4999.455
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_get vimbax_camera_msgs/srv/FeatureEnumGet '{"feature_name": "PixelFormat"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumGet_Request(feature_name='PixelFormat', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumGet_Response(value='Mono8', error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/int_get vimbax_camera_msgs/srv/FeatureIntGet '{"feature_name": "Width"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureIntGet_Request(feature_name='Width', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureIntGet_Response(value=1296, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/int_get vimbax_camera_msgs/srv/FeatureIntGet '{"feature_name": "Height"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureIntGet_Request(feature_name='Height', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureIntGet_Response(value=1032, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.49 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/enum_get vimbax_camera_msgs/srv/FeatureEnumGet '{"feature_name": "TriggerMode"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureEnumGet_Request(feature_name='TriggerMode', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureEnumGet_Response(value='Off', error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/bool_get vimbax_camera_msgs/srv/FeatureBoolGet '{"feature_name": "AcquisitionFrameRateEnable"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureBoolGet_Request(feature_name='AcquisitionFrameRateEnable', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureBoolGet_Response(value=True, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/float_get vimbax_camera_msgs/srv/FeatureFloatGet '{"feature_name": "AcquisitionFrameRate"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureFloatGet_Request(feature_name='AcquisitionFrameRate', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureFloatGet_Response(value=30.000001907348633, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.58 s]
+
+$ timeout 20 ros2 service call /vimbax_camera/features/float_get vimbax_camera_msgs/srv/FeatureFloatGet '{"feature_name": "ExposureTime"}'
+requester: making request: vimbax_camera_msgs.srv.FeatureFloatGet_Request(feature_name='ExposureTime', feature_module=vimbax_camera_msgs.msg.FeatureModule(id=0))
+
+response:
+vimbax_camera_msgs.srv.FeatureFloatGet_Response(value=4999.455, error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 0.48 s]
+
+# check S6: PASS no status call between steps 2 and 7; the readback matches the profile: {'PixelFormat': 'Mono8', 'Width': 1296, 'Height': 1032, 'TriggerMode': 'Off', 'AcquisitionFrameRateEnable': True, 'AcquisitionFrameRate': 30.000001907348633, 'ExposureTime': 4999.455}
+
+$ timeout 20 ros2 service call /vimbax_camera/settings/save vimbax_camera_msgs/srv/SettingsLoadSave '{"filename": "/home/labuser/workspace/projects/venimapping-image-acq-step-1-run/attempts/settings/1/camera_settings.xml"}'
+requester: making request: vimbax_camera_msgs.srv.SettingsLoadSave_Request(filename='/home/labuser/workspace/projects/venimapping-image-acq-step-1-run/attempts/settings/1/camera_settings.xml')
+
+response:
+vimbax_camera_msgs.srv.SettingsLoadSave_Response(error=vimbax_camera_msgs.msg.Error(code=0, text=''))
+[exit 0, 3.72 s]
+
+# check S7: PASS settings/save wrote /home/labuser/workspace/projects/venimapping-image-acq-step-1-run/attempts/settings/1/camera_settings.xml (339695 bytes)
+
+# stopped driver group 1639220; processes left: []
+
+$ ros2 daemon stop
+The daemon is not running
+[exit 0, 0.26 s]
+
+# check S7b: PASS kept 13 names in the package copy: ['AcquisitionFrameRate', 'AcquisitionFrameRateEnable', 'AcquisitionFrameRateMode', 'ExposureAuto', 'ExposureMode', 'ExposureTime', 'Height', 'OffsetX', 'OffsetY', 'PixelFormat', 'TriggerMode', 'TriggerSelector', 'Width']; removed 208 names; listed but not in the saved file: none; names outside the keep list: none; scan of the copy: 13 features; profile values missing or wrong: none; denied features: none
+
+# check S8: PASS copied the file to src/venimapping_bringup/config/camera_settings.xml
+

@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<ModuleSettings>
+    <SettingsStruct>
+        <PersistType Description="Persist all features except LUTs" Value="2" />
+        <MaxIterations Description="How often implementation shall try to write values to specific feature (due to complex feature dependencies, multiple write operations are sometimes necessary)" Value="10" />
+        <LoggingLevel Description="Warn: Error, Debug and Warn messages are logged" Value="3" />
+    </SettingsStruct>
+    <CameraInfo Id="DEV_000A471E3D7C" Model="Alvium G1-130 VSWIR">
+        <LocalDevice>
+            </LocalDevice>
+        <RemoteDevice>
+            <Feature Name="AcquisitionFrameRate" Value="30" Type="Float" />
+            <Feature Name="AcquisitionFrameRateEnable" Value="1" Type="Bool" />
+            <Feature Name="AcquisitionFrameRateMode" Value="Basic" Type="Enum" />
+            <Feature Name="ExposureAuto" Value="Off" Type="Enum" />
+            <Feature Name="ExposureMode" Value="Timed" Type="Enum" />
+            <Feature Name="ExposureTime" Value="4999.455" Type="Float" />
+            <Feature Name="Height" Value="1032" Type="Int" />
+            <Feature Name="OffsetX" Value="0" Type="Int" />
+            <Feature Name="OffsetY" Value="0" Type="Int" />
+            <Feature Name="PixelFormat" Value="Mono8" Type="Enum" />
+            <SelectorGroup Name="TriggerSelector" Type="Enum" Value="FrameStart">
+                <Feature Name="TriggerMode" Value="Off" Type="Enum" />
+                </SelectorGroup>
+            <Feature Name="TriggerSelector" Value="FrameStart" Type="Enum" />
+            <Feature Name="Width" Value="1296" Type="Int" />
+            </RemoteDevice>
+    </CameraInfo>
+    <Stream Id="DEV_000A471E3D7C-Stream-000" Index="0">
+        </Stream>
+</ModuleSettings>
