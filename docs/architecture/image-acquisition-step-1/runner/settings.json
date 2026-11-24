@@ -41,14 +41,18 @@
     "graph_retry_s": 15,
     "stop_grace_s": 10,
     "probe_timeout_s": 180,
-    "xml_denied_policy": "stop",
+    "xml_denied_policy": "strip",
     "xml_denied_patterns": [
       "^Gev.*(IP|Ip|Address|Subnet|Gateway|DHCP|LLA|Persistent)",
       "IPConfiguration",
       "^UserSet",
       "Firmware",
       "^DeviceReset$",
-      "^DeviceUserID$"
+      "^DeviceUserID$",
+      "^CorrectionSetDefault$",
+      "^(GevSCPSPacketSize|GVSPPacketSize)$",
+      "^TestPendingAck$",
+      "^TLParamsLocked$"
     ]
   }
 }

@@ -38,7 +38,7 @@ DEFAULTS = {
     "AcquisitionFrameRateEnable": False,
     "AcquisitionFrameRate": 69.71556091308594,
 }
-EXTRA = {"DeviceModelName": "Fake G1-130", "GevSCPSPacketSize": "1500"}
+EXTRA = {"DeviceModelName": "Fake G1-130", "DeviceLinkThroughputLimit": "115000000"}
 
 
 def scenario() -> dict:

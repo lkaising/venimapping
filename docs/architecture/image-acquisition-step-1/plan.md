@@ -123,7 +123,8 @@ outside the worktree.
       denied names.
    On this camera, the saved file holds 2206 feature entries, among them the
    IP configuration, the persistent IP, the user set selection, and
-   `DeviceUserID`. So `stop` always stops the run.
+   `DeviceUserID`. So `stop` always stops the run, and `settings.json` sets
+   `strip`.
 9. At the end of each camera stage, the runner stops each of its driver
    groups, checks that no `vimbax_camera_node` process is left, and stops the
    ROS daemon. At the end of the run, it checks again.
@@ -228,11 +229,54 @@ The scenarios:
 ## Measured on the camera in pass 2
 
 1. A driver without a settings file prints the init line after 13 to 15 s.
-   With the stripped settings file it takes about 21 s.
+   With the stripped settings file it takes 19 to 23 s (18.59 s and 22.62 s
+   in rehearsal 5). The load alone takes 6 to 10 s.
 2. A `status` call steps through each trigger selector and leaves
    `ExposureActive` selected. So the baseline selector is `ExposureActive`.
 3. `ExposureTime` has the increment 13.172 us. `AcquisitionFrameRate` has
    none.
+4. No driver loaded the untrimmed saved file on the camera. Rehearsal 2 used
+   `stop` and stopped at the scan. Rehearsals 3 to 5 loaded only the
+   stripped file. The only failed-load lines in pass 2 come from the control
+   and P11 launches, which use `/nonexistent.xml` on purpose (error -3,
+   `VmbErrorNotFound`).
+5. The stripped file loaded with no failed-load line in `driver_a.log` and
+   `driver_b.log`. After the reopen, check E9 read the full profile back from
+   the part A values. See `evidence/rehearsal5-rig-results.json`.
+6. The SDK load returns success although the file holds hundreds of read-only
+   entries, so it skips features that it cannot write. A successful load
+   therefore does not prove that each value took. Only a readback does.
+7. A query-only probe read the write flag and description of each camera
+   feature, with no write: `evidence/featinfo_full.tsv`. Its columns are the
+   module, the name, the data type, the flags (R read, W write, V volatile,
+   M modify write), streamable, visibility, category, tooltip, and
+   description. Commands in the saved file, such as `UserSetSave`,
+   `DeviceReset`, and `LUTSaveAll`, are stored as `IgnoredFeature`.
+8. Pass 2 added these denied patterns. The strip removes each match from the
+   package copy:
+   1. `^CorrectionSetDefault$`: it sets the correction set that the camera
+      uses after a reset, so a load writes power-up behavior.
+   2. `^(GevSCPSPacketSize|GVSPPacketSize)$`: the load runs after the driver
+      adjusts the packet size on open, so the file would replace the
+      adjusted value with a size that fits only a 9000 byte MTU.
+   3. `^TestPendingAck$`: a test feature. A write makes the camera delay its
+      reply by the written value.
+   4. `^TLParamsLocked$`: the transport layer sets it during acquisition. A
+      profile file has no reason to write it.
+
+## Not tested on hardware
+
+These are notes for the later steps. Step 1 does not test them.
+
+1. Cold start after power loss. No check has power cycled the camera. The
+   saved file names the factory `Default` user set as the power-up set. That
+   the stripped file restores the profile from a cold boot is an assumption.
+2. Reconnect and the reload time. No check has pulled the cable. The reload
+   after a reconnect, its time, and the restart that follows are not
+   measured.
+3. Streaming with `net.core.rmem_max` at 4 MB. The stream module asks for a
+   64 MB socket buffer (`GVSPHostReceiveBufferSize` 67108864), and the OS
+   caps it at `rmem_max`. No step 1 check streams.
 
 ## What pass 2 must prove on the camera
 
