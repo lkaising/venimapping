@@ -10,3 +10,8 @@
   ros__parameters:
     camera_id: "0GPF3"
     autostream: 0
+    buffer_count: 7
+    use_ros_time: true
+    use_sim_time: false
+    image_raw:
+      enable_pub_plugins: ["image_transport/raw"]
