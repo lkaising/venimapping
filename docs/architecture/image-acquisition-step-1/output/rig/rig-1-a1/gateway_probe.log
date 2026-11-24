@@ -1,0 +1,33 @@
+[INFO] [1795528477.423558783] [camera_gateway_probe]: probing camera namespace /vimbax_camera with a 2000 ms timeout
+[INFO] [1795528477.427605493] [camera_gateway_probe]: PASS ConnectionStatus: connected
+[INFO] [1795528477.453300935] [camera_gateway_probe]: PASS CameraStatus: model=Alvium G1-130 VSWIR serial=0GPF3 pixel_format=Mono8 frame_rate=30.000002 size=1296x1032 streaming=false
+[INFO] [1795528477.453314917] [camera_gateway_probe]: PASS CameraStatus/identity: display_name=Allied Vision Alvium G1-130 VSWIR (DEV_000A471E3D7C) firmware=14.1.D83C7207 device_id=DEV_000A471E3D7C user_id= interface=enp132s0 transport_layer=/home/labuser/workspace/upstream/vimbax-sdk/cti/VimbaGigETL.cti ip=(none) mac=(none)
+[INFO] [1795528477.453327246] [camera_gateway_probe]: PASS CameraStatus/trigger_info: 7 selector(s) [AcquisitionStart: mode=Off source=Software] [AcquisitionEnd: mode=Off source=Software] [AcquisitionActive: mode=Off source=Software] [FrameStart: mode=Off source=Software] [ExposureStart: mode=Off source=Software] [ExposureEnd: mode=Off source=Software] [ExposureActive: mode=Off source=Software]
+[INFO] [1795528477.453735604] [camera_gateway_probe]: PASS FeatureListGet: 344 features
+[INFO] [1795528477.453745852] [camera_gateway_probe]: PASS FeatureListGet/known-name: ExposureTime is present
+[INFO] [1795528477.453753525] [camera_gateway_probe]: PASS FeatureListGet/absent-name: VeniMappingDeliberatelyAbsentFeature is absent as expected
+[INFO] [1795528477.454100419] [camera_gateway_probe]: PASS FeatureListGet/system: 32 features
+[INFO] [1795528477.454333776] [camera_gateway_probe]: PASS FeatureListGet/interface: 35 features
+[INFO] [1795528477.454429672] [camera_gateway_probe]: PASS FeatureListGet/local-device: 23 features
+[INFO] [1795528477.454505642] [camera_gateway_probe]: PASS FeatureListGet/stream: 46 features
+[INFO] [1795528477.454984310] [camera_gateway_probe]: PASS DriverError/absent-feature: [driver error -3] VmbErrorNotFound
+[INFO] [1795528477.455164314] [camera_gateway_probe]: PASS DriverError/unknown-module: [driver error -7] VmbErrorBadParameter
+[INFO] [1795528477.455340577] [camera_gateway_probe]: PASS FeatureInfoListGet/named: 2 entries [ExposureTime: type=float category=/AcquisitionControl display_name=Exposure Time sfnc_namespace=Standard unit=us flags={none=false read=true write=true volatile=true modify_write=false} polling_time=1500] [PixelFormat: type=enum category=/ImageFormatControl display_name=Pixel Format sfnc_namespace=Standard unit= flags={none=false read=true write=true volatile=false modify_write=false} polling_time=0]
+[INFO] [1795528477.478999669] [camera_gateway_probe]: PASS FeatureInfoListGet/all: 344 features: unknown=0 int=177 float=21 enum=88 string=9 bool=22 command=22 raw=5 none=0
+[INFO] [1795528477.479496742] [camera_gateway_probe]: PASS FeatureAccessModeGet(ExposureTime): readable=true writable=true
+[INFO] [1795528477.479508462] [camera_gateway_probe]: PASS FeatureAccessModeGet(ExposureTime)/flags: static none=false read=true write=true volatile=true modify_write=false
+[INFO] [1795528477.479981373] [camera_gateway_probe]: PASS FeatureIntGet(Width): 1296
+[INFO] [1795528477.481796676] [camera_gateway_probe]: PASS FeatureIntInfoGet(Width): min=8 max=1296 inc=8
+[INFO] [1795528477.482897070] [camera_gateway_probe]: PASS FeatureFloatGet(ExposureTime): 4999.455000
+[INFO] [1795528477.483987937] [camera_gateway_probe]: PASS FeatureFloatInfoGet(ExposureTime): min=20.545000 max=10000001.394000 inc=13.172000
+[INFO] [1795528477.484993356] [camera_gateway_probe]: PASS FeatureStringGet(DeviceModelName): "Alvium G1-130 VSWIR"
+[INFO] [1795528477.485412472] [camera_gateway_probe]: PASS FeatureStringInfoGet(DeviceModelName): max_length=19
+[INFO] [1795528477.486133444] [camera_gateway_probe]: PASS FeatureBoolGet(ChunkModeActive): false
+[INFO] [1795528477.486830641] [camera_gateway_probe]: PASS FeatureEnumInfoGet(PixelFormat): 6 possible, 6 available
+[INFO] [1795528477.487282561] [camera_gateway_probe]: PASS FeatureEnumGet(PixelFormat): Mono8
+[INFO] [1795528477.487755922] [camera_gateway_probe]: PASS FeatureEnumAsIntGet(PixelFormat): Mono8 = 17301505
+[INFO] [1795528477.488112373] [camera_gateway_probe]: PASS FeatureEnumAsStringGet(PixelFormat): 17301505 = Mono8
+[INFO] [1795528477.488426479] [camera_gateway_probe]: PASS FeatureCommandIsDone(FileOperationExecute): is_done=true
+[WARN] [1795528477.488494721] [camera_gateway_probe]: SKIP FeatureRawGet(FileAccessBuffer): feature is not currently readable
+[INFO] [1795528477.488528291] [camera_gateway_probe]: write sequences disabled (enable_writes:=true to run)
+[INFO] [1795528477.488532252] [camera_gateway_probe]: probe complete: all checks passed (1 skipped)
