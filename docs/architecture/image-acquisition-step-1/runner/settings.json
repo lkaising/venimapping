@@ -41,7 +41,16 @@
     "graph_retry_s": 15,
     "stop_grace_s": 10,
     "probe_timeout_s": 180,
-    "xml_denied_policy": "strip",
+    "xml_denied_policy": "keep",
+    "xml_keep_features": [
+      "AcquisitionFrameRateMode", "AcquisitionFrameRate",
+      "AcquisitionFrameRateEnable", "ExposureMode", "ExposureAuto",
+      "ExposureTime", "PixelFormat", "OffsetX", "OffsetY", "Width", "Height",
+      "TriggerSelector"
+    ],
+    "xml_keep_selectors": {
+      "TriggerSelector": {"values": ["FrameStart"], "features": ["TriggerMode"]}
+    },
     "xml_denied_patterns": [
       "^Gev.*(IP|Ip|Address|Subnet|Gateway|DHCP|LLA|Persistent)",
       "IPConfiguration",

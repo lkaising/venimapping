@@ -282,7 +282,9 @@ def camera_features(ctx: dict) -> dict:
 def camera_view(ctx: dict) -> dict:
     """Returns the values that the fake camera reports for each feature."""
     raw = camera_features(ctx)
-    view = {k: v for k, v in raw.items() if "@" not in k}
+    # ExposureMode and ExposureAuto are only read, so the baseline omits them.
+    view = {k: v for k, v in raw.items()
+            if "@" not in k and k not in ("ExposureMode", "ExposureAuto")}
     view["TriggerMode"] = raw["TriggerMode@FrameStart"]
     if not raw["AcquisitionFrameRateEnable"]:
         view["AcquisitionFrameRate"] = min(69.71556091308594,
@@ -704,6 +706,43 @@ def strip_scenario(root: Path, c: Checks) -> None:
     common_end_checks(c, ctx, "strip")
 
 
+def keep_scenario(root: Path, c: Checks) -> None:
+    real = json.loads((RUNNER_DIR / "settings.json").read_text())["camera"]
+    ctx = setup(root, {"camera": {"xml_denied": True},
+                       "camera_settings": {
+                           "xml_denied_policy": "keep",
+                           "xml_keep_features": real["xml_keep_features"],
+                           "xml_keep_selectors": real["xml_keep_selectors"]}},
+                accounts=False)
+    code = run_once(ctx, "run1 (keep only the listed features)")
+    c.check(code == 0, "keep: the run completes", f"exit {code}")
+    installed = committed(ctx, XML)
+    c.check(bool(installed) and "ExposureTime" in installed
+            and "ExposureAuto" in installed
+            and "GevPersistentIPAddress" not in installed
+            and "DeviceLinkThroughputLimit" not in installed
+            and "DeviceModelName" not in installed,
+            "keep: the package copy has the listed features and no other")
+    saved = committed(ctx, f"{OUT}/settings/settings-a1/"
+                           f"camera_settings.saved.xml")
+    c.check("GevPersistentIPAddress" in saved
+            and "DeviceLinkThroughputLimit" in saved,
+            "keep: the saved file in the logs is unchanged")
+    report_text = committed(ctx, f"{OUT}/report.md")
+    c.check("Policy `keep`" in report_text
+            and "| 9b |" in report_text
+            and "`ExposureAuto`" in report_text,
+            "keep: the report names the policy and the kept features")
+    rig = json.loads(committed(ctx, f"{OUT}/rig/rig-1-a1/results.json")
+                     or "{}")
+    found = {x["id"]: x for x in rig.get("checks", [])}
+    c.check(found.get("E9b", {}).get("passed")
+            and "ExposureAuto" in found["E9b"]["detail"],
+            "keep: exit check 9b reads the kept features back",
+            found.get("E9b", {}).get("detail", "no E9b")[:120])
+    common_end_checks(c, ctx, "keep")
+
+
 def exhaust_scenario(root: Path, c: Checks) -> None:
     ctx = setup(root, {"stages": {
         "implement": {"bugs": ["plugins"]},
@@ -726,7 +765,7 @@ SCENARIOS = {
     "main": main_scenario, "forbidden": forbidden_scenario,
     "init": init_scenario, "rigfail": rigfail_scenario, "p11": p11_scenario,
     "restore": restore_scenario, "decoy": decoy_scenario, "xml": xml_scenario,
-    "strip": strip_scenario,
+    "strip": strip_scenario, "keep": keep_scenario,
     "exhaust": exhaust_scenario,
 }
 

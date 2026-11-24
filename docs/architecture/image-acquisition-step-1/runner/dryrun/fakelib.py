@@ -37,6 +37,8 @@ DEFAULTS = {
     "ExposureTime": 5000.0,
     "AcquisitionFrameRateEnable": False,
     "AcquisitionFrameRate": 69.71556091308594,
+    "ExposureMode": "Timed",
+    "ExposureAuto": "Off",
 }
 EXTRA = {"DeviceModelName": "Fake G1-130", "DeviceLinkThroughputLimit": "115000000"}
 
@@ -102,14 +104,21 @@ def rate_max(features: dict) -> float:
 
 
 def save_xml(path: Path, features: dict, denied: bool) -> None:
+    # Like the real save, each trigger selector value has its own
+    # SelectorGroup, and the selected value follows as a Feature.
     root = ElementTree.Element("CameraSettings", Version="1.0")
     group = ElementTree.SubElement(root, "FeatureGroup", Module="RemoteDevice")
-    selector = features["TriggerSelector"]
     values = {k: v for k, v in features.items() if "@" not in k}
-    values["TriggerMode"] = features[f"TriggerMode@{selector}"]
     values.update(EXTRA)
     if denied:
         values["GevPersistentIPAddress"] = "3232235876"
+    for key, value in features.items():
+        if key.startswith("TriggerMode@"):
+            selector = ElementTree.SubElement(
+                group, "SelectorGroup", Name="TriggerSelector",
+                Value=key.split("@", 1)[1])
+            ElementTree.SubElement(selector, "Feature",
+                                   Name="TriggerMode").text = str(value)
     for name, value in values.items():
         text = str(value).lower() if isinstance(value, bool) else str(value)
         ElementTree.SubElement(group, "Feature", Name=name).text = text
@@ -118,10 +127,15 @@ def save_xml(path: Path, features: dict, denied: bool) -> None:
 
 def load_xml(path: Path, features: dict) -> None:
     root = ElementTree.parse(path).getroot()
+    for group in root.iter("SelectorGroup"):
+        for element in group.iter("Feature"):
+            if element.get("Name") == "TriggerMode":
+                features[f"TriggerMode@{group.get('Value')}"] = (
+                    element.text or "")
     for element in root.iter("Feature"):
         name, text = element.get("Name"), element.text or ""
         if name == "TriggerMode":
-            features[f"TriggerMode@{features['TriggerSelector']}"] = text
-        elif name in features:
+            continue
+        if name in features:
             kind = type(DEFAULTS[name])
             features[name] = (text == "true") if kind is bool else kind(text)

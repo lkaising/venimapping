@@ -34,6 +34,8 @@ EXIT_ITEMS = [
     ("8", "No topic starts with `/vimbax_camera/image_raw/`", ["E8"]),
     ("9", "CLI reads of the seven profile values match the profile file",
      ["E9"]),
+    ("9b", "CLI reads of the kept features outside the profile match the "
+           "settings file (a runner check, not in v2)", ["E9b"]),
     ("10", "`camera_gateway_probe` passes", ["E10"]),
 ]
 
@@ -153,9 +155,11 @@ def render(state: dict, settings: dict, out: str, xml: str) -> str:
         "increment of the written value, where v2 asks for 0.001. See the "
         "row for part A step 11 above.",
         f"8. The settings file policy is "
-        f"`{settings['camera']['xml_denied_policy']}`. With `strip`, the "
-        f"package copy has no denied feature, where v2 installs the saved "
-        f"file as it is. See the camera settings file section.",
+        f"`{settings['camera']['xml_denied_policy']}`. With `keep`, the "
+        f"package copy holds only the profile features and the features "
+        f"they depend on. With `strip`, it has no denied feature. v2 "
+        f"installs the saved file as it is. See the camera settings file "
+        f"section.",
         "",
     ]
     return "\n".join(lines)
@@ -193,6 +197,28 @@ def settings_section(stage: dict | None, xml: str) -> list[str]:
                   f"saved file as it is. The package copy holds "
                   f"{after.get('features', '?')} features. Removed: "
                   f"{', '.join(f'`{n}`' for n in stripped)}."]
+    kept = result.get("kept")
+    if kept is not None:
+        after = result.get("scan_after_keep", {})
+        absent = result.get("keep_absent") or []
+        removed = result.get("removed") or []
+        outside = sorted(set(kept) - set((scan.get("profile") or {}))
+                         - {"TriggerSelector"})
+        lines += ["", f"Policy `keep`: the package copy holds only the names "
+                  f"in `camera.xml_keep_features` and "
+                  f"`camera.xml_keep_selectors` of `settings.json`. The "
+                  f"saved file in the logs is unchanged. This differs from "
+                  f"v2 section 10, which installs the saved file as it is. "
+                  f"The package copy holds {after.get('features', '?')} "
+                  f"names: {', '.join(f'`{n}`' for n in kept)}. The runner "
+                  f"removed {len(removed)} names; `results.json` of the "
+                  f"settings stage lists them. Listed but not in the saved "
+                  f"file: {', '.join(absent) or 'none'}.", "",
+                  f"The driver writes these kept features outside the "
+                  f"profile on each open: "
+                  f"{', '.join(f'`{n}`' for n in outside) or 'none'}. Exit "
+                  f"check 9b reads each one back after the reopen."]
+        return lines
     others = scan.get("others") or {}
     lines += ["", f"The driver also writes each other writable feature of the "
               f"file on each open: {len(others)} names. v2 asks for a review "

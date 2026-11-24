@@ -915,6 +915,8 @@ class Runner:
             result.update(passed=False, repairable=False,
                           detail=f"the saved file does not hold the profile "
                                  f"values: {scan['detail']}")
+        elif settings["xml_denied_policy"] == "keep":
+            result.update(self.keep_settings(save_path, out_dir, session))
         elif scan["denied"] and settings["xml_denied_policy"] == "stop":
             result.update(passed=False, repairable=False,
                           detail=f"the saved file holds denied features that "
@@ -941,7 +943,7 @@ class Runner:
             raise Stop(f"xml_denied_policy is "
                        f"{settings['xml_denied_policy']!r}",
                        "Set camera.xml_denied_policy in settings.json to "
-                       "stop, strip, or load. Then resume.")
+                       "keep, stop, strip, or load. Then resume.")
         else:
             result["passed"] = True
             target = out_dir / XML
@@ -950,6 +952,37 @@ class Runner:
         session.record("S8", result["passed"],
                        f"copied the file to {XML}" if result["passed"] else
                        f"did not copy the file to {XML}: {result['detail']}")
+        return result
+
+    def keep_settings(self, save_path: Path, out_dir: Path,
+                      session: rig.Rig) -> dict:
+        """Policy keep: the package copy holds only the listed features."""
+        settings = self.settings["camera"]
+        features = settings["xml_keep_features"]
+        selectors = settings["xml_keep_selectors"]
+        target = out_dir / XML
+        kept, removed = checks.keep_only(save_path, target, features,
+                                         selectors)
+        again = checks.scan_settings(target, settings["xml_denied_patterns"])
+        allowed = set(features) | set(selectors)
+        for rule in selectors.values():
+            allowed |= set(rule["features"])
+        extra = sorted(n for n in checks.xml_features(target)
+                       if n not in allowed)
+        absent = sorted(set(features) - set(kept))
+        passed = not again.get("missing") and not again["denied"] and not extra
+        detail = (f"kept {len(kept)} names in the package copy: {kept}; "
+                  f"removed {len(removed)} names; listed but not in the saved "
+                  f"file: {absent or 'none'}; names outside the keep list: "
+                  f"{extra or 'none'}; scan of the copy: {again['detail']}")
+        session.record("S7b", passed, detail)
+        result = {"kept": kept, "removed": removed, "keep_absent": absent,
+                  "scan_after_keep": again, "passed": passed,
+                  "detail": detail}
+        if not passed:
+            result.update(repairable=False,
+                          detail=f"the package copy fails the keep check: "
+                                 f"{detail}")
         return result
 
     def bare_params(self) -> Path:
@@ -1363,7 +1396,8 @@ class Runner:
             ("denied features", "Review the saved file. Decide if the driver "
                                 "may write these features on each open. Then "
                                 "set camera.xml_denied_policy in settings.json "
-                                "to strip (remove them from the package copy) "
+                                "to keep (only the listed features stay in "
+                                "the package copy), strip (remove them) "
                                 "or load (keep them), or change the pattern "
                                 "list."),
         ]

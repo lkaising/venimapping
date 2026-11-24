@@ -131,6 +131,48 @@ def strip_denied(source: Path, target: Path, denied: list[str]) -> list[str]:
     return sorted(set(removed))
 
 
+def keep_only(source: Path, target: Path, features: list[str],
+              selectors: dict[str, dict]) -> tuple[list[str], list[str]]:
+    """Writes source to target with only the kept features.
+
+    A Feature element stays when its name is in features. A SelectorGroup
+    stays when its selector is in selectors and its value is in the listed
+    values; inside it, only the listed features stay. Each other named
+    element goes, IgnoredFeature entries too. Elements with no name, such as
+    the module containers, stay, so the file keeps the layout of the save.
+    The SDK load writes only the features in the file. Returns the kept and
+    the removed names.
+    """
+    tree = ElementTree.parse(source)
+    kept: set[str] = set()
+    removed: set[str] = set()
+
+    def walk(parent, allowed: set[str]) -> None:
+        for child in list(parent):
+            name = child.get("Name") or child.get("name") or ""
+            if child.tag == "SelectorGroup":
+                rule = selectors.get(name)
+                if rule and child.get("Value") in rule["values"]:
+                    kept.add(name)
+                    walk(child, set(rule["features"]))
+                else:
+                    parent.remove(child)
+                    removed.add(name)
+            elif name:
+                if child.tag == "Feature" and name in allowed:
+                    kept.add(name)
+                else:
+                    parent.remove(child)
+                    removed.add(name)
+            else:
+                walk(child, allowed)
+
+    walk(tree.getroot(), set(features))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(target, encoding="UTF-8", xml_declaration=True)
+    return sorted(kept), sorted(removed - kept)
+
+
 def scan_settings(path: Path, denied: list[str]) -> dict:
     """Checks the profile values in the file and finds denied features."""
     try:

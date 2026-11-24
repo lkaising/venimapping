@@ -115,16 +115,35 @@ outside the worktree.
    `GevPersistentIPAddress` or `UserSetDefault`. The driver writes each
    feature in the file on each open, so such a feature could change IP
    settings or user sets. `camera.xml_denied_policy` decides what happens:
-   1. `stop`: the run stops, and the file stays in the logs only.
-   2. `strip`: the runner removes each denied name from the package copy,
+   1. `keep`: the package copy holds only the features in
+      `camera.xml_keep_features`, and the trigger selector groups in
+      `camera.xml_keep_selectors` with only their listed features. Each other
+      entry goes. The runner scans the copy for the profile values, the
+      denied patterns, and any name outside the keep lists. The saved file
+      stays unchanged in the logs.
+   2. `stop`: the run stops, and the file stays in the logs only.
+   3. `strip`: the runner removes each denied name from the package copy,
       scans the copy again, and keeps the saved file unchanged in the logs.
       The report lists each removed name.
-   3. `load`: the package gets the file as saved, and the report lists the
+   4. `load`: the package gets the file as saved, and the report lists the
       denied names.
    On this camera, the saved file holds 2206 feature entries, among them the
    IP configuration, the persistent IP, the user set selection, and
-   `DeviceUserID`. So `stop` always stops the run, and `settings.json` sets
-   `strip`.
+   `DeviceUserID`. So `stop` always stops the run. The run of 2026-11-24
+   used `strip`. Its package copy still made the driver write 289 features
+   outside the profile on each open, among them the multicast address,
+   gain, lens shading, the other trigger selectors, the I/O lines, and the
+   GigE heartbeat and stream transport values (review findings r1 to r5,
+   commit `94e565c`). So `settings.json` now sets `keep`.
+   The kept features besides the profile are the ones the profile depends
+   on: `ExposureMode` and `ExposureAuto` (`ExposureTime` is writable only
+   with `Timed` and `Off`), `AcquisitionFrameRateMode` (it defines how the
+   rate features interact), `OffsetX` and `OffsetY` (`Width` and `Height`
+   must fit the sensor with them), and the `FrameStart` trigger selector
+   group with only `TriggerMode`. Exit check 9b, a runner check that v2 does
+   not have, reads each kept feature outside the profile back after the
+   reopen. Each feature that the file does not hold keeps the value the
+   camera already has.
 9. At the end of each camera stage, the runner stops each of its driver
    groups, checks that no `vimbax_camera_node` process is left, and stops the
    ROS daemon. At the end of the run, it checks again.
@@ -224,7 +243,8 @@ The scenarios:
 6. restore: a restore write that fails, and the resume.
 7. decoy: an agent that starts a driver.
 8. xml: a saved file with an IP feature.
-9. exhaust: a repair that changes no file, and a second rig failure.
+9. strip and keep: the same file with the policies `strip` and `keep`.
+10. exhaust: a repair that changes no file, and a second rig failure.
 
 ## Measured on the camera in pass 2
 
@@ -270,13 +290,17 @@ These are notes for the later steps. Step 1 does not test them.
 
 1. Cold start after power loss. No check has power cycled the camera. The
    saved file names the factory `Default` user set as the power-up set. That
-   the stripped file restores the profile from a cold boot is an assumption.
+   the kept file restores the profile from a cold boot is an assumption.
 2. Reconnect and the reload time. No check has pulled the cable. The reload
    after a reconnect, its time, and the restart that follows are not
    measured.
 3. Streaming with `net.core.rmem_max` at 4 MB. The stream module asks for a
    64 MB socket buffer (`GVSPHostReceiveBufferSize` 67108864), and the OS
-   caps it at `rmem_max`. No step 1 check streams.
+   caps it at `rmem_max`. No step 1 check streams. With `keep`, the
+   settings file no longer writes this value; the driver and the SDK set it.
+4. Features outside the kept file. The file no longer resets them on each
+   open, so a value that a session changes, for example `Gain`, stays until
+   a power cycle. The camera powers up with the factory `Default` user set.
 
 ## What pass 2 must prove on the camera
 

@@ -54,6 +54,16 @@ FEATURES = {
     "AcquisitionFrameRate": "float",
 }
 
+# Features that the settings file may keep besides the profile. The rig check
+# reads them back after the reopen. The runner never writes them.
+READ_FEATURES = {
+    "AcquisitionFrameRateMode": "enum",
+    "ExposureMode": "enum",
+    "ExposureAuto": "enum",
+    "OffsetX": "int",
+    "OffsetY": "int",
+}
+
 # The phase 1 profile from v2 section 10, "Acquisition profile file". Each row
 # is the camera feature, the profile key, and the value.
 PROFILE = [
@@ -159,7 +169,7 @@ class Cli:
         return ERROR_RE.sub("error=_", response)
 
     def get(self, name: str):
-        kind = FEATURES[name]
+        kind = FEATURES.get(name) or READ_FEATURES[name]
         reply = self.call(f"features/{kind}_get", SERVICE_TYPES[kind][0],
                           {"feature_name": name})
         return parse_value(kind, reply)
@@ -668,6 +678,7 @@ def exit_checks(rig: Rig, profile_file: Path, install_prefix: Path) -> list:
           f"topics under {topic}/: {sorted(set(extra)) or 'none'}", True)
 
     check_profile(rig, profile_file, check)
+    check_kept(rig, Path(param("settings_file")), check)
 
     argv = ["timeout", str(rig.settings["probe_timeout_s"]), "ros2", "run",
             "venimapping_camera", "camera_gateway_probe", "--ros-args",
@@ -709,6 +720,41 @@ def check_profile(rig: Rig, profile_file: Path, check: Callable) -> None:
              if not same(n, camera[n], file_values[n])}
     check("E9", not wrong, f"camera {camera}; differs: {wrong or 'none'}",
           False)
+
+
+def check_kept(rig: Rig, xml_path: Path, check: Callable) -> None:
+    """Check E9b: reads back each kept feature of the file outside the profile.
+
+    The SDK load returns success when it skips a feature, so only a readback
+    shows that the camera holds the value of the file.
+    """
+    import xml.etree.ElementTree as ElementTree
+
+    try:
+        root = ElementTree.parse(xml_path).getroot()
+    except (OSError, ElementTree.ParseError) as error:
+        check("E9b", False, f"cannot read {xml_path}: {error}", False)
+        return
+    expected = {}
+    for element in root.iter("Feature"):
+        name = element.get("Name") or ""
+        if name in READ_FEATURES:
+            expected[name] = (element.get("Value")
+                              or (element.text or "").strip())
+    camera, wrong = {}, {}
+    try:
+        for name, raw in expected.items():
+            camera[name] = rig.cli.get(name)
+            want = int(raw) if READ_FEATURES[name] == "int" else raw
+            if camera[name] != want:
+                wrong[name] = {"file": raw, "camera": camera[name]}
+    except (CameraError, ValueError) as error:
+        check("E9b", False, f"{error}; read so far {camera}", False)
+        return
+    rig.facts["kept_readback"] = camera
+    check("E9b", not wrong,
+          f"kept features outside the profile: {camera or 'none'}; "
+          f"differs: {wrong or 'none'}", False)
 
 
 def p11_check(rig: Rig) -> None:
